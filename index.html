@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>NID Scanner - Family Card Assistant</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+  <div class="app-container">
+    <header class="app-header">
+      <div class="logo-badge">
+        <span class="icon">🪪</span>
+        <div>
+          <h1>NID AI স্ক্যানার</h1>
+          <p>Family Card Assistant Bridge</p>
+        </div>
+      </div>
+      <div id="connectionStatus" class="status-pill status-disconnected">
+        <span class="dot"></span>
+        <span class="label">বিচ্ছিন্ন</span>
+      </div>
+    </header>
+
+    <!-- Pairing & Config Card -->
+    <section class="card pair-card">
+      <div class="form-row">
+        <div class="form-group flex-1">
+          <label for="roomCode">ট্যাবলেট পেয়ারিং কোড (Pair Code)</label>
+          <input type="text" id="roomCode" value="FC-101" placeholder="যেমন: FC-101" maxlength="10">
+        </div>
+        <button id="btnConnect" class="btn btn-secondary">কানেক্ট করুন</button>
+      </div>
+
+      <details class="settings-details">
+        <summary>⚙️ Gemini AI API কী সেটিংস</summary>
+        <div class="settings-body">
+          <label for="apiKey">Gemini API Key (ঐচ্ছিক যদি সার্ভারে সেট থাকে):</label>
+          <input type="password" id="apiKey" placeholder="AIzaSy...">
+          <small>আপনার কি আপনার ব্রাউজারে সুরক্ষিতভাবে সংরক্ষিত থাকবে।</small>
+        </div>
+      </details>
+    </section>
+
+    <!-- Scanner / Upload Area -->
+    <section class="card scanner-card">
+      <div class="scan-mode-tabs">
+        <button id="tabCamera" class="tab-btn active">📸 সরাসরি ক্যামেরা</button>
+        <button id="tabGallery" class="tab-btn">📁 গ্যালারি / ফাইল</button>
+      </div>
+
+      <!-- Live Camera View -->
+      <div id="cameraContainer" class="camera-container">
+        <video id="videoElement" playsinline autoplay muted></video>
+        <div class="card-overlay">
+          <div class="overlay-bracket tl"></div>
+          <div class="overlay-bracket tr"></div>
+          <div class="overlay-bracket bl"></div>
+          <div class="overlay-bracket br"></div>
+          <div class="overlay-hint">এনআইডি কার্ডটি ফ্রেমের মধ্যে রাখুন</div>
+        </div>
+      </div>
+
+      <!-- Hidden Canvas for frame snapshot & compression -->
+      <canvas id="photoCanvas" style="display: none;"></canvas>
+
+      <!-- File Upload Alternative -->
+      <div id="uploadContainer" class="upload-container" style="display: none;">
+        <input type="file" id="fileInput" accept="image/*" capture="environment" style="display: none;">
+        <div id="dropZone" class="drop-zone">
+          <span class="upload-icon">📷</span>
+          <p>ছবি তুলুন অথবা গ্যালারি থেকে সিলেক্ট করুন</p>
+          <button type="button" class="btn btn-outline" onclick="document.getElementById('fileInput').click()">
+            ফাইল বাছাই করুন
+          </button>
+        </div>
+        <div id="filePreviewContainer" style="display: none;">
+          <img id="filePreview" alt="NID Preview">
+        </div>
+      </div>
+
+      <!-- Options for Marital Status & Religion -->
+      <div class="options-bar">
+        <div class="form-row">
+          <div class="form-group flex-1">
+            <label for="maritalStatus">💍 বৈবাহিক অবস্থা*</label>
+            <select id="maritalStatus" class="select-input">
+              <option value="বিবাহিত" selected>বিবাহিত (Default)</option>
+              <option value="অবিবাহিত">অবিবাহিত</option>
+              <option value="বিধবা">বিধবা</option>
+              <option value="বিপত্নীক">বিপত্নীক</option>
+              <option value="তালাকপ্রাপ্ত">তালাকপ্রাপ্ত</option>
+              <option value="পরিত্যক্ত">পরিত্যক্ত</option>
+            </select>
+          </div>
+          <div class="form-group flex-1">
+            <label for="religion">🕌 ধর্ম*</label>
+            <select id="religion" class="select-input">
+              <option value="ইসলাম" selected>ইসলাম (Default)</option>
+              <option value="হিন্দু">হিন্দু</option>
+              <option value="বৌদ্ধ">বৌদ্ধ</option>
+              <option value="খ্রিস্টান">খ্রিস্টান</option>
+              <option value="অন্যান্য">অন্যান্য</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group" style="margin-top: 10px;">
+          <label for="mobileNumber">📱 মোবাইল নম্বর (ঐচ্ছিক - এখানে বা ট্যাবলেটে ম্যানুয়ালি লিখুন):</label>
+          <input type="tel" id="mobileNumber" placeholder="যেমন: 019XXXXXXXX" maxlength="11" class="select-input">
+        </div>
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="action-bar">
+        <button id="btnCapture" class="btn btn-primary btn-large">
+          <span class="btn-icon">⚡</span>
+          <span>ছবি তুলে ট্যাবলেটে পাঠান</span>
+        </button>
+      </div>
+
+      <!-- Live Loading / Status -->
+      <div id="loadingIndicator" class="loading-box" style="display: none;">
+        <div class="spinner"></div>
+        <p id="loadingMsg">Gemini AI দ্বারা NID বিশ্লেষণ করা হচ্ছে...</p>
+      </div>
+    </section>
+
+    <!-- Result Preview Card -->
+    <section id="resultCard" class="card result-card" style="display: none;">
+      <div class="result-header">
+        <h3>✅ এক্সট্রাক্ট করা তথ্য (ট্যাবলেটে পাঠানো হয়েছে)</h3>
+        <button id="btnDismissResult" class="btn-sm">মুছে ফেলুন</button>
+      </div>
+      <div class="result-grid">
+        <div class="result-item">
+          <span class="res-label">বাংলা নাম:</span>
+          <span id="resNameBn" class="res-value">-</span>
+        </div>
+        <div class="result-item">
+          <span class="res-label">English Name:</span>
+          <span id="resNameEn" class="res-value">-</span>
+        </div>
+        <div class="result-item">
+          <span class="res-label">NID নম্বর:</span>
+          <span id="resNid" class="res-value highlight">-</span>
+        </div>
+        <div class="result-item">
+          <span class="res-label">জন্ম তারিখ:</span>
+          <span id="resDob" class="res-value">-</span>
+        </div>
+        <div class="result-item">
+          <span class="res-label">লিঙ্গ:</span>
+          <span id="resGender" class="res-value">-</span>
+        </div>
+        <div class="result-item">
+          <span class="res-label">পিতার নাম (বাংলা):</span>
+          <span id="resFatherBn" class="res-value">-</span>
+        </div>
+        <div class="result-item">
+          <span class="res-label">Father's Name (EN):</span>
+          <span id="resFatherEn" class="res-value highlight" style="color: #0284c7;">-</span>
+        </div>
+        <div class="result-item">
+          <span class="res-label">মাতার নাম (বাংলা):</span>
+          <span id="resMotherBn" class="res-value">-</span>
+        </div>
+        <div class="result-item">
+          <span class="res-label">Mother's Name (EN):</span>
+          <span id="resMotherEn" class="res-value highlight" style="color: #0284c7;">-</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Instructions Footer -->
+    <footer class="app-footer">
+      <p>💡 আপনার ট্যাবলেটে Kiwi Browser-এ <code>fc.bhata.gov.bd</code> ফর্ম পেজ খোলা রাখুন এবং একই পেয়ার কোড ব্যবহার করুন।</p>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

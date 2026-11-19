@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+  <meta charset="UTF-8">
+  <title>NID Auto-Filler Settings</title>
+  <style>
+    body {
+      width: 300px;
+      padding: 14px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      margin: 0;
+      color: #1e293b;
+      background: #f8fafc;
+    }
+    h3 {
+      margin: 0 0 8px 0;
+      font-size: 15px;
+      color: #1c3b68;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .field {
+      margin-bottom: 11px;
+    }
+    label {
+      display: block;
+      font-size: 11.5px;
+      font-weight: 600;
+      color: #475569;
+      margin-bottom: 4px;
+    }
+    input {
+      width: 100%;
+      padding: 7px 9px;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      font-size: 12.5px;
+      box-sizing: border-box;
+      outline: none;
+    }
+    input:focus {
+      border-color: #1976d2;
+    }
+    .btn {
+      width: 100%;
+      padding: 9px;
+      background: #1976d2;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .btn:hover {
+      background: #1565c0;
+    }
+    .footer-note {
+      margin-top: 10px;
+      font-size: 11px;
+      color: #64748b;
+      line-height: 1.4;
+      background: #f1f5f9;
+      padding: 8px;
+      border-radius: 6px;
+    }
+    .status-tag {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: bold;
+      background: #dcfce7;
+      color: #166534;
+      margin-bottom: 10px;
+    }
+    .section-title {
+      font-size: 12px;
+      font-weight: bold;
+      color: #1e3a8a;
+      margin: 10px 0 6px 0;
+      border-bottom: 1px solid #e2e8f0;
+      padding-bottom: 2px;
+    }
+  </style>
+</head>
+<body>
+  <h3>🪪 NID Auto-Filler</h3>
+  <div class="status-tag">সক্রিয় (Active)</div>
+
+  <div class="section-title">📱 Single Device (শুধুমাত্র ট্যাব)</div>
+  <div class="field">
+    <label for="geminiApiKey">Gemini AI API Key (কোন সার্ভার লাগবে না):</label>
+    <input type="password" id="geminiApiKey" placeholder="AIzaSy...">
+  </div>
+
+  <div class="section-title">🔄 Cross-Device (অন্য ফোন দিয়ে স্ক্যান)</div>
+  <div class="field">
+    <label for="serverUrl">রিলে সার্ভার URL (যদি সার্ভার চালান):</label>
+    <input type="text" id="serverUrl" value="http://localhost:3000">
+  </div>
+
+  <div class="field">
+    <label for="roomCode">পেয়ারিং কোড (Pair Code):</label>
+    <input type="text" id="roomCode" value="FC-101">
+  </div>
+
+  <button id="btnSave" class="btn">সেটিংস সংরক্ষণ করুন</button>
+
+  <div class="footer-note">
+    💡 <b>ট্যাবলেটে সরাসরি স্ক্যান:</b> স্ক্রিনে <b>"📸 NID স্ক্যান"</b> বাটনে চাপ দিলে ট্যাবলেটের ক্যামেরা দিয়ে সরাসরি ছবি তুলে এই ফর্মেই পূরণ হবে!
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

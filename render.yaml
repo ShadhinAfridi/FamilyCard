@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: familycard-nid-bridge
+    env: node
+    plan: free
+    buildCommand: npm --prefix server install
+    startCommand: npm --prefix server start
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false

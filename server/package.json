@@ -1,0 +1,16 @@
+{
+  "name": "familycard-nid-sync-server",
+  "version": "1.0.0",
+  "description": "Cross-device NID OCR and auto-fill bridge for Family Card portal",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1"
+  }
+}

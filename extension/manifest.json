@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "Family Card NID AI Auto-Filler",
+  "version": "1.1.0",
+  "description": "AI OCR Scanner & Auto-Filler for Family Card Portal (fc.bhata.gov.bd) - Supports Single Device (Tab) & Cross-device",
+  "permissions": [
+    "storage",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://fc.bhata.gov.bd/*",
+    "https://generativelanguage.googleapis.com/*",
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Family Card NID Auto-Filler Settings"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://fc.bhata.gov.bd/*"
+      ],
+      "js": [
+        "socket.io.min.js",
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
+      "run_at": "document_end"
+    }
+  ]
+}

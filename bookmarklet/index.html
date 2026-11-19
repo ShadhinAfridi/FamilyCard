@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Google Chrome NID Auto-Filler Bookmarklet (No App Needed)</title>
+  <style>
+    :root {
+      --primary: #1976d2;
+      --primary-dark: #0d47a1;
+      --bg: #f8fafc;
+      --card-bg: #ffffff;
+      --text: #1e293b;
+      --text-muted: #64748b;
+      --border: #e2e8f0;
+      --success: #16a34a;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      margin: 0;
+      padding: 16px;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    .container {
+      max-width: 600px;
+      margin: 0 auto;
+    }
+    .header {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    .header h1 {
+      font-size: 20px;
+      color: var(--primary-dark);
+      margin: 0 0 6px 0;
+    }
+    .header p {
+      font-size: 13.5px;
+      color: var(--text-muted);
+      margin: 0;
+    }
+    .badge {
+      display: inline-block;
+      background: #dcfce7;
+      color: #166534;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .card {
+      background: var(--card-bg);
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      padding: 18px;
+      margin-bottom: 16px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+    }
+    .card h2 {
+      font-size: 16px;
+      margin: 0 0 10px 0;
+      color: #0f172a;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 14px;
+      background: var(--primary);
+      color: #ffffff;
+      border: none;
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: 700;
+      text-align: center;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(25, 118, 210, 0.3);
+      transition: background 0.2s, transform 0.1s;
+      box-sizing: border-box;
+      text-decoration: none;
+    }
+    .btn:active {
+      transform: scale(0.98);
+    }
+    .btn-success {
+      background: var(--success);
+      box-shadow: 0 4px 12px rgba(22, 163, 74, 0.3);
+    }
+    .step-box {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 14px;
+      align-items: flex-start;
+    }
+    .step-num {
+      width: 28px;
+      height: 28px;
+      background: #e0f2fe;
+      color: #0369a1;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+    .step-txt {
+      font-size: 13.5px;
+      color: #334155;
+    }
+    .step-txt strong {
+      color: #0f172a;
+    }
+    .code-box {
+      background: #f1f5f9;
+      padding: 10px;
+      border-radius: 8px;
+      font-family: monospace;
+      font-size: 11px;
+      color: #475569;
+      max-height: 80px;
+      overflow-y: auto;
+      word-break: break-all;
+      margin: 10px 0;
+      border: 1px solid #cbd5e1;
+    }
+    .highlight-box {
+      background: #fef3c7;
+      border-left: 4px solid #f59e0b;
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      color: #92400e;
+      margin-top: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="badge">🚀 কোনো অ্যাপ ইনস্টল ছাড়াই ১০০% কাজ করবে</div>
+      <h1>Google Chrome NID Auto-Filler</h1>
+      <p>অ্যান্ড্রয়েড ট্যাবলেটের ডিফল্ট গুগল ক্রোমের জন্য স্পেশাল বুকমার্কলেট</p>
+    </div>
+
+    <!-- Step 1: Copy Code -->
+    <div class="card">
+      <h2>📋 ধাপ ১: বুকমার্কলেট কোড কপি করুন</h2>
+      <p style="font-size: 13px; color: #64748b; margin-top: 0;">
+        নিচের বাটনে চাপ দিলে কোডটি আপনার ট্যাবলেটের ক্লিপবোর্ডে কপি হয়ে যাবে:
+      </p>
+      <button id="btnCopy" class="btn btn-success">
+        <span>📋 বুকমার্ক কোড কপি করুন (Copy Code)</span>
+      </button>
+      <div id="copyMsg" style="display: none; color: #166534; font-weight: bold; font-size: 13px; text-align: center; margin-top: 8px;">
+        ✅ কোড সফলভাবে কপি হয়েছে! এবার নিচের ধাপগুলো অনুসরণ করুন।
+      </div>
+      <div class="code-box" id="codePreview">লোড হচ্ছে...</div>
+    </div>
+
+    <!-- Step 2: How to setup in Chrome -->
+    <div class="card">
+      <h2>⚙️ ধাপ ২: গুগল ক্রোমে সেভ করার নিয়ম (মাত্র ১ বার)</h2>
+      
+      <div class="step-box">
+        <div class="step-num">১</div>
+        <div class="step-txt">
+          গুগল ক্রোমের উপরে ডানপাশে থাকা <strong>৩-ডট মেনু (⋮)</strong>-তে চাপ দিয়ে <strong>Star (⭐) আইকন</strong> চেপে যেকোনো একটি পেজ বুকমার্ক করুন।
+        </div>
+      </div>
+
+      <div class="step-box">
+        <div class="step-num">২</div>
+        <div class="step-txt">
+          আবার ৩-ডট মেনু (⋮) থেকে <strong>Bookmarks (বুকমার্কস)</strong>-এ যান এবং সেই বুকমার্কটির পাশে থাকা ৩-ডট চেপে <strong>Edit</strong> দিন।
+        </div>
+      </div>
+
+      <div class="step-box">
+        <div class="step-num">৩</div>
+        <div class="step-txt">
+          <strong>Name (নাম):</strong> বক্সে লিখুন <code>NID AutoFill</code> (বা সংক্ষেপে <code>nid</code>)
+        </div>
+      </div>
+
+      <div class="step-box">
+        <div class="step-num">৪</div>
+        <div class="step-txt">
+          <strong>URL:</strong> বক্সে যা লেখা আছে সব মুছে দিয়ে আমাদের কপি করা সম্পূর্ণ কোডটি <strong>Paste</strong> করে সেভ (Back/Save) করুন।
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 3: How to run on portal -->
+    <div class="card">
+      <h2>⚡ ধাপ ৩: আবেদন ফর্মে যেভাবে চালাবেন</h2>
+      <div class="step-box">
+        <div class="step-num">১</div>
+        <div class="step-txt">
+          ক্রোমে গিয়ে সরকারি পোর্টালে ঢুকুন: <br>
+          <a href="https://fc.bhata.gov.bd/online-application-family-card" target="_blank" style="color: #1976d2; font-weight: bold; word-break: break-all;">https://fc.bhata.gov.bd/online-application-family-card</a>
+        </div>
+      </div>
+
+      <div class="step-box">
+        <div class="step-num">২</div>
+        <div class="step-txt">
+          আবেদন ফর্মের পেজটি লোড হওয়ার পর ক্রোমের <strong>Address Bar</strong>-এ শুধু লিখুন: <code>nid</code>
+        </div>
+      </div>
+
+      <div class="step-box">
+        <div class="step-num">৩</div>
+        <div class="step-txt">
+          নিচে সাজেশন লিস্টে স্টার ⭐ সহ আপনার সেভ করা বুকমার্কটি দেখতে পাবেন। <strong>সেটিতে চাপ দিন!</strong>
+        </div>
+      </div>
+
+      <div class="step-box">
+        <div class="step-num">৪</div>
+        <div class="step-txt">
+          সাথে সাথে স্ক্রিনের নিচে <strong>"📸 NID স্ক্যান"</strong> বোতাম ভেসে উঠবে! বোতামে চাপ দিয়ে কার্ডের ছবি তুলুন — ২ সেকেন্ডে পুরো ফর্ম নিজে নিজেই পূরণ হয়ে যাবে!
+        </div>
+      </div>
+
+      <div class="highlight-box">
+        💡 <b>টিপস:</b> প্রথমবার ছবি তোলার সময় আপনার ফ্রি Gemini API Key চাইবে। একবার দিয়ে দিলে ট্যাবলেটটি পরবর্তীতে আর কখনো কী চাইবে না!
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let bookmarkletCode = '';
+
+    fetch('bookmarklet.min.js')
+      .then(r => r.text())
+      .then(code => {
+        bookmarkletCode = code;
+        document.getElementById('codePreview').textContent = code.substring(0, 150) + '... (' + code.length + ' chars)';
+      })
+      .catch(() => {
+        document.getElementById('codePreview').textContent = 'Error loading code file.';
+      });
+
+    document.getElementById('btnCopy').addEventListener('click', async () => {
+      if (!bookmarkletCode) return;
+      try {
+        await navigator.clipboard.writeText(bookmarkletCode);
+        const msg = document.getElementById('copyMsg');
+        msg.style.display = 'block';
+        document.getElementById('btnCopy').textContent = '✅ কপি সম্পন্ন হয়েছে! (Copied)';
+        setTimeout(() => {
+          document.getElementById('btnCopy').textContent = '📋 পুনরায় কপি করুন';
+        }, 3000);
+      } catch (err) {
+        // Fallback for older browsers
+        const ta = document.createElement('textarea');
+        ta.value = bookmarkletCode;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        document.getElementById('copyMsg').style.display = 'block';
+      }
+    });
+  </script>
+</body>
+</html>

@@ -142,34 +142,46 @@ async function extractNidWithGemini(base64Image, customApiKey) {
   }
 
   const prompt = `
-You are an expert OCR AI for Bangladeshi National Identity Cards (both Smart NID and Old Laminated/Paper NID).
-Examine the image of the Bangladesh NID carefully.
-Extract the following information accurately. Pay special attention to Bengali spelling and English capital letters:
+You are an expert OCR AI for Bangladeshi Identity Documents:
+1. Bangladeshi National Identity (NID) Cards (both Smart NID and Old Laminated/Paper NID).
+2. Bangladeshi Digital Birth Registration Certificates (ডিজিটাল জন্ম নিবন্ধন সনদপত্র / BRC).
 
-1. name_bn: Complete Bengali name as written on the NID (e.g. মোঃ রহিম মিয়া).
-2. name_en: Complete English name in CAPITAL LETTERS (e.g. MD. RAHIM MIA).
-3. nid_number: CRITICAL BANGLADESH GOVERNMENT RULE:
-   - Only 10-digit (Smart Card) or 17-digit (Old Laminated Card) NIDs are accepted by the portal.
-   - If the NID card has an old 13-digit number, you MUST prepend the 4-digit birth year (from Date of Birth) to make it exactly 17 digits. (e.g., Year 1985 + 13-digit NID = 1985XXXXXXXXXXXXX).
-   - If it is already 10 digits or 17 digits, return it as digits only.
-4. dob: Date of Birth strictly in DD/MM/YYYY format (e.g. 15/08/1985). If the card shows "15 Aug 1985", convert it to "15/08/1985".
-5. gender: "নারী" (Female) or "পুরুষ" (Male) or "অন্যান্য" (Other). Infer from photo or name or gender indicator if visible.
-6. father_name_bn: Complete Father's name in Bengali as written on the NID after "পিতা:" (e.g. সিরাজ ব্যাপারী).
-7. father_name_en: MANDATORY: Transliterate/convert the Father's Bengali name into English in ALL CAPITAL LETTERS using standard Bangladeshi phonetic spelling conventions (e.g., if Bengali is "সিরাজ ব্যাপারী", output "SHIRAJ BEPARI"; if "আব্দুর রহিম", output "ABDUR RAHIM"). Do NOT leave blank if father_name_bn is present!
-8. mother_name_bn: Complete Mother's name in Bengali as written on the NID after "মাতা:" (e.g. নুরজাহান নেছা).
-9. mother_name_en: MANDATORY: Transliterate/convert the Mother's Bengali name into English in ALL CAPITAL LETTERS using standard Bangladeshi phonetic spelling conventions (e.g., if Bengali is "নুরজাহান নেছা", output "NURJAHAN NESA"; if "রাশিদা বেগম", output "RASHIDA BEGUM"). Do NOT leave blank if mother_name_bn is present!
+Examine the image carefully and classify and extract the required information:
+
+DOCUMENT CLASSIFICATION:
+- "doc_type": Identify whether the document is "nid" or "birth_certificate".
+
+EXTRACTION RULES:
+1. "doc_number":
+   - For NID: Extract the National ID number. Only 10-digit (Smart NID) or 17-digit (classic NID) numbers are accepted. If 13-digit legacy NID, prepend 4-digit birth year extracted from Date of Birth to make it 17 digits.
+   - For Birth Certificate: Extract the 17-digit Birth Registration Number (জন্ম নিবন্ধন নম্বর / PIN).
+   - Remove spaces, hyphens, and non-numeric symbols.
+2. "name_bn": Complete Bengali name as written on the document.
+3. "name_en": Complete English name in ALL CAPITAL LETTERS.
+4. "dob": Date of Birth in DD/MM/YYYY format.
+5. "gender": "পুরুষ" (Male), "নারী" (Female), or "তৃতীয় লিঙ্গ" (Transgender / Hijra).
+6. "father_name_bn": Father's Bengali name.
+7. "father_name_en": Father's English name in ALL CAPITAL LETTERS (transliterate from Bengali if only in Bengali).
+8. "mother_name_bn": Mother's Bengali name.
+9. "mother_name_en": Mother's English name in ALL CAPITAL LETTERS (transliterate from Bengali if only in Bengali).
+10. "relation_suggestion": If for family member, suggest relationship relative to household head ("স্বামী", "স্ত্রী", "ছেলে", "মেয়ে", "বাবা", "মা", "ভাই", "বোন", "অন্যান্য").
+11. "marital_status_suggestion": Suggested marital status ("বিবাহিত", "অবিবাহিত", "বিধবা", "বিপত্নীক").
 
 Return ONLY a valid JSON object with these exact keys:
 {
+  "doc_type": "nid" or "birth_certificate",
+  "doc_number": "",
+  "nid_number": "",
   "name_bn": "",
   "name_en": "",
-  "nid_number": "",
   "dob": "",
   "gender": "",
   "father_name_bn": "",
   "father_name_en": "",
   "mother_name_bn": "",
-  "mother_name_en": ""
+  "mother_name_en": "",
+  "relation_suggestion": "",
+  "marital_status_suggestion": ""
 }
 Do not wrap in Markdown code blocks. Return purely the raw JSON object. If any field is missing or unreadable, leave it as an empty string "".
 `;
@@ -225,19 +237,25 @@ Do not wrap in Markdown code blocks. Return purely the raw JSON object. If any f
 
   const data = JSON.parse(cleaned);
 
-  // Normalize Bengali numerals to English and enforce 10 or 17 digit NID rule
-  if (data.nid_number) {
-    let rawDigits = normalizeDigits(data.nid_number).replace(/[^0-9]/g, '');
-    
-    // If 13 digits, extract 4-digit birth year from dob and prefix it
-    if (rawDigits.length === 13) {
-      const yearMatch = String(data.dob || '').match(/\b(19\d{2}|20\d{2})\b/);
-      if (yearMatch) {
-        rawDigits = yearMatch[1] + rawDigits;
-        data.nid_converted_to_17 = true;
-      }
+  // Normalize Bengali numerals to English and enforce 10 or 17 digit NID / 17 digit BRC rule
+  const rawDocNum = data.doc_number || data.nid_number || '';
+  let rawDigits = normalizeDigits(rawDocNum).replace(/[^0-9]/g, '');
+
+  if (data.doc_type === 'birth_certificate' || rawDigits.length === 17) {
+    data.doc_number = rawDigits;
+  } else if (rawDigits.length === 13) {
+    const yearMatch = String(data.dob || '').match(/\b(19\d{2}|20\d{2})\b/);
+    if (yearMatch) {
+      rawDigits = yearMatch[1] + rawDigits;
+      data.nid_converted_to_17 = true;
     }
-    data.nid_number = rawDigits;
+    data.doc_number = rawDigits;
+  } else {
+    data.doc_number = rawDigits;
+  }
+
+  if (data.doc_type === 'nid' || !data.doc_type) {
+    data.nid_number = data.doc_number;
   }
 
   if (data.dob) data.dob = standardizeDate(data.dob);

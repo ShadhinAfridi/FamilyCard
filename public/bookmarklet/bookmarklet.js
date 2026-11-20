@@ -80,36 +80,69 @@
   }
 
   const GEMINI_PROMPT = `
-You are an expert OCR and document understanding system specializing in Bangladeshi National Identity (NID) Cards.
-Analyze the provided image of a Bangladeshi NID card and extract the required information into valid JSON format.
+You are an expert OCR and document understanding system specializing in Bangladeshi identity documents:
+1. Bangladeshi National Identity (NID) Cards (both Smart NID cards and Old Paper/Laminated NID cards).
+2. Bangladeshi Birth Registration Certificates (ডিজিটাল জন্ম নিবন্ধন সনদপত্র / BRC - Online printed or laminated copy with 17-digit registration number).
 
-RULES:
-1. "name_bn": Extract the full name in Bengali exactly as printed under "নাম:".
-2. "name_en": Extract the full name in English exactly as printed under "Name:". Format in UPPERCASE.
-3. "nid_number": Extract the National ID number. 
-   - CRITICAL NID DIGIT RULE: 
-     Only 10-digit (Smart NID) or 17-digit (legacy NID) numbers are accepted by the portal.
-     If the NID is an old 13-digit number, you MUST prepend the 4-digit birth year extracted from the Date of Birth to make it exactly 17 digits.
-     (For example: if Birth year is 1988 and NID is 1234567890123, return "19881234567890123").
-     Remove all spaces or hyphens.
-4. "dob": Extract Date of Birth in DD/MM/YYYY format using standard English numerals (e.g. 15/04/1988).
-5. "gender": Identify whether the person is male ("পুরুষ") or female ("নারী").
-6. "father_name_bn": Extract the Father's name in Bengali as printed under "পিতা:".
-7. "father_name_en": The NID card does NOT print the father's name in English. You MUST translate/transliterate the Bengali father's name into English letters following standard Bangladeshi spelling conventions, formatted in ALL UPPERCASE (e.g., "সিরাজ ব্যাপারী" -> "SHIRAJ BEPARI", "মো: আক্তার হোসেন" -> "MD. AKTER HOSSAIN").
-8. "mother_name_bn": Extract the Mother's name in Bengali as printed under "মাতা:".
-9. "mother_name_en": Translate/transliterate the Bengali mother's name into English letters following standard Bangladeshi spelling conventions, formatted in ALL UPPERCASE (e.g., "নুরজাহান নেছা" -> "NURJAHAN NESA", "মোসা: খাদিজা বেগম" -> "MOSA. KHADIJA BEGUM").
+Analyze the provided image carefully and extract all available data into a valid JSON object.
+
+RULES FOR CLASSIFICATION & EXTRACTION:
+
+A. "doc_type":
+- Identify if the document is "nid" (National Identity Card) or "birth_certificate" (Birth Registration Certificate / জন্ম নিবন্ধন সনদপত্র).
+
+B. "doc_number":
+- If "nid":
+  - Strictly 10 digits (Smart Card) or 17 digits (Old Laminated Card).
+  - CRITICAL: If the NID has an old 13-digit number, PREPEND the 4-digit birth year from Date of Birth to make it exactly 17 digits (e.g. Birth year 1992 + 13-digit NID -> 1992XXXXXXXXXXXXX).
+- If "birth_certificate":
+  - Extract the 17-digit Birth Registration Number (জন্ম নিবন্ধন নম্বর / BR Number). Remove spaces and hyphens. Ensure all digits are converted to English numerals.
+
+C. "name_bn":
+- Complete Bengali name exactly as printed on the document (e.g. "মোসাঃ খাদিজা বেগম", "আব্দুল আলীম").
+
+D. "name_en":
+- Complete English name formatted in ALL CAPITAL LETTERS (e.g. "MOSA. KHADIJA BEGUM", "ABDUL ALIM"). If English name is not printed on an old certificate, transliterate the Bengali name accurately into standard English capital letters.
+
+E. "dob":
+- Date of Birth formatted strictly in DD/MM/YYYY format with standard English digits (e.g. "12/05/1990"). Convert months like "12 May 1990" or "1990-05-12" to "12/05/1990".
+
+F. "gender":
+- Identify gender: "পুরুষ" (Male), "নারী" (Female), or "হিজড়া" (Third Gender). Look for "Sex", "লিঙ্গ", or infer from name/relation/photo.
+
+G. "father_name_bn":
+- Complete Father's name in Bengali as printed under "পিতা:" or "পিতার নাম:".
+
+H. "father_name_en":
+- Transliterate the Father's Bengali name into English in ALL CAPITAL LETTERS using standard Bangladeshi conventions (e.g. "সিরাজ ব্যাপারী" -> "SHIRAJ BEPARI"). Do NOT leave empty if father_name_bn is found.
+
+I. "mother_name_bn":
+- Complete Mother's name in Bengali as printed under "মাতা:" or "মাতার নাম:".
+
+J. "mother_name_en":
+- Transliterate the Mother's Bengali name into English in ALL CAPITAL LETTERS (e.g. "নুরজাহান বেগম" -> "NURJAHAN BEGUM"). Do NOT leave empty if mother_name_bn is found.
+
+K. "relation_suggestion":
+- Suggest the most probable relationship to household head based on the document ("স্বামী", "স্ত্রী", "পুত্র", "কন্যা", "পিতা", "মাতা", "ভাই", "বোন", or "অন্যান্য").
+
+L. "marital_status_suggestion":
+- Suggest marital status: If age < 18 or child, suggest "অবিবাহিত"; if adult spouse, suggest "বিবাহিত"; default "বিবাহিত".
 
 Return ONLY a single valid JSON object with these exact keys:
 {
+  "doc_type": "nid",
+  "doc_number": "...",
+  "nid_number": "...",
   "name_bn": "...",
   "name_en": "...",
-  "nid_number": "...",
   "dob": "DD/MM/YYYY",
   "gender": "...",
   "father_name_bn": "...",
   "father_name_en": "...",
   "mother_name_bn": "...",
-  "mother_name_en": "..."
+  "mother_name_en": "...",
+  "relation_suggestion": "...",
+  "marital_status_suggestion": "..."
 }
 `;
 
@@ -297,10 +330,13 @@ Return ONLY a single valid JSON object with these exact keys:
   `;
   document.head.appendChild(styleEl);
 
+  // Active scan target: 'applicant' or 'member'
+  let activeScanTarget = { type: 'applicant', card: null, index: 1 };
+
   // Inject Floating Action Button
   const fab = document.createElement('div');
   fab.id = 'fc-bm-fab';
-  fab.innerHTML = '<span>📸 NID স্ক্যান</span>';
+  fab.innerHTML = '<span>📸 NID / সদস্য স্ক্যান</span>';
   document.body.appendChild(fab);
 
   // Inject Modal
@@ -312,10 +348,67 @@ Return ONLY a single valid JSON object with these exact keys:
   modal.innerHTML = `
     <div class="fc-bm-card">
       <div class="fc-bm-hdr">
-        <h3>🪪 NID AI সহকারী (v1.3 Production)</h3>
+        <h3>🪪 NID ও জন্ম নিবন্ধন AI সহকারী (v1.4)</h3>
         <span id="fc-bm-close">&times;</span>
       </div>
       <div class="fc-bm-body">
+        <!-- Target Selector: Applicant vs Family Member -->
+        <div style="display: flex; gap: 6px; margin-bottom: 10px; background: #f1f5f9; padding: 4px; border-radius: 8px;">
+          <button type="button" id="fc-bm-target-self-btn" style="flex: 1; padding: 6px 10px; border: none; border-radius: 6px; font-weight: 700; font-size: 11.5px; cursor: pointer; background: #0284c7; color: #fff;">
+            👤 প্রধান আবেদনকারী
+          </button>
+          <button type="button" id="fc-bm-target-member-btn" style="flex: 1; padding: 6px 10px; border: none; border-radius: 6px; font-weight: 700; font-size: 11.5px; cursor: pointer; background: #e2e8f0; color: #334155;">
+            👨‍👩‍👧‍👦 সদস্য (NID / জন্ম নিবন্ধন)
+          </button>
+        </div>
+
+        <!-- Family Member Sub-panel (Shown when member target selected) -->
+        <div id="fc-bm-member-settings" style="display: none; background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 10px; padding: 10px; margin-bottom: 10px; flex-direction: column; gap: 8px;">
+          <div style="font-weight: 700; color: #166534; font-size: 12px; display: flex; justify-content: space-between; align-items: center;">
+            <span>👨‍👩‍👧‍👦 সদস্য স্ক্যান কনফিগারেশন</span>
+            <span id="fc-bm-member-badge" style="font-size: 10.5px; color: #0f766e; font-weight: bold; background: #ccfbf1; padding: 2px 6px; border-radius: 4px;">সদস্য নির্বাচন করুন</span>
+          </div>
+          <div class="fc-bm-row">
+            <div class="fc-bm-col">
+              <label for="fc-bm-member-select">🎯 টার্গেট সদস্য কার্ড*</label>
+              <select id="fc-bm-member-select" style="padding: 4px 6px; border-radius: 6px; border: 1px solid #86efac; font-weight: 600;">
+                <option value="auto">পরবর্তী খালি সদস্য কার্ড</option>
+              </select>
+            </div>
+            <div class="fc-bm-col">
+              <label for="fc-bm-doc-type">📄 সনদের ধরন*</label>
+              <select id="fc-bm-doc-type" style="padding: 4px 6px; border-radius: 6px; border: 1px solid #86efac; font-weight: 600;">
+                <option value="auto">অটো-ডিটেক্ট (NID বা জন্ম সনদ)</option>
+                <option value="nid">জাতীয় পরিচিতি নম্বর (NID)</option>
+                <option value="birth_certificate">জন্ম নিবন্ধন সনদ (BRC)</option>
+              </select>
+            </div>
+          </div>
+          <div class="fc-bm-col">
+            <label for="fc-bm-relation-select">🤝 খানাপ্রধানের সাথে সম্পর্ক* (অটো-ডিটেক্ট হবে)</label>
+            <select id="fc-bm-relation-select" style="padding: 4px 6px; border-radius: 6px; border: 1px solid #86efac; font-weight: 600;">
+              <option value="auto">স্মার্ট অটো-সাজেশন</option>
+              <option value="স্বামী">স্বামী</option>
+              <option value="স্ত্রী">স্ত্রী</option>
+              <option value="পুত্র">পুত্র</option>
+              <option value="কন্যা">কন্যা</option>
+              <option value="পিতা">পিতা</option>
+              <option value="মাতা">মাতা</option>
+              <option value="ভাই">ভাই</option>
+              <option value="বোন">বোন</option>
+              <option value="দাদা">দাদা</option>
+              <option value="দাদী">দাদী</option>
+              <option value="নানা">নানা</option>
+              <option value="নানী">নানী</option>
+              <option value="নাতি">নাতি</option>
+              <option value="নাতনি">নাতনি</option>
+              <option value="শ্বশুর">শ্বশুর</option>
+              <option value="শাশুড়ি">শাশুড়ি</option>
+              <option value="অন্যান্য">অন্যান্য</option>
+            </select>
+          </div>
+        </div>
+
         <input type="file" id="fc-bm-file-input" accept="image/*" capture="environment" style="display: none;">
         
         <div id="fc-bm-viewfinder" class="fc-bm-cam-box" style="display: none;">
@@ -342,56 +435,59 @@ Return ONLY a single valid JSON object with these exact keys:
           </button>
         </div>
 
-        <div class="fc-bm-row">
-          <div class="fc-bm-col">
-            <label for="fc-bm-marital">💍 বৈবাহিক অবস্থা*</label>
-            <select id="fc-bm-marital">
-              <option value="বিবাহিত" selected>বিবাহিত (Default)</option>
-              <option value="অবিবাহিত">অবিবাহিত</option>
-              <option value="বিধবা">বিধবা</option>
-              <option value="বিপত্নীক">বিপত্নীক</option>
-              <option value="তালাকপ্রাপ্ত">তালাকপ্রাপ্ত</option>
-              <option value="পরিত্যক্ত">পরিত্যক্ত</option>
-            </select>
-          </div>
-          <div class="fc-bm-col">
-            <label for="fc-bm-religion">🕌 ধর্ম*</label>
-            <select id="fc-bm-religion">
-              <option value="ইসলাম" selected>ইসলাম (Default)</option>
-              <option value="হিন্দু">হিন্দু</option>
-              <option value="বৌদ্ধ">বৌদ্ধ</option>
-              <option value="খ্রিস্টান">খ্রিস্টান</option>
-              <option value="অন্যান্য">অন্যান্য</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="fc-bm-col">
-          <label for="fc-bm-mobile">📱 মোবাইল নম্বর (ঐচ্ছিক - ট্যাবলেটে ম্যানুয়ালি লিখতে পারেন):</label>
-          <input type="tel" id="fc-bm-mobile" placeholder="যেমন: 019XXXXXXXX" maxlength="11">
-        </div>
-
-        <!-- Section 4 Address Settings (তথ্য সংগ্রহের ঠিকানা) -->
-        <div style="background: #f8fafc; border: 1.5px solid #cbd5e1; border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 8px;">
-          <div style="display: flex; justify-content: space-between; align-items: center;">
-            <label style="font-size: 12px; font-weight: 700; color: #1c3b68;">📍 সেকশন ৪: তথ্য সংগ্রহের ঠিকানা</label>
-            <span style="font-size: 10px; color: #64748b;">(স্থায়ী ঠিকানা অপরিবর্তিত)</span>
-          </div>
+        <!-- Applicant Specific Settings -->
+        <div id="fc-bm-applicant-settings" style="display: flex; flex-direction: column; gap: 8px;">
           <div class="fc-bm-row">
             <div class="fc-bm-col">
-              <label for="fc-bm-postcode">📮 পোস্ট কোড* (ডিফল্ট: 7721)</label>
-              <input type="text" id="fc-bm-postcode" value="${savedPostcode}" placeholder="7721">
+              <label for="fc-bm-marital">💍 বৈবাহিক অবস্থা*</label>
+              <select id="fc-bm-marital">
+                <option value="বিবাহিত" selected>বিবাহিত (Default)</option>
+                <option value="অবিবাহিত">অবিবাহিত</option>
+                <option value="বিধবা">বিধবা</option>
+                <option value="বিপত্নীক">বিপত্নীক</option>
+                <option value="তালাকপ্রাপ্ত">তালাকপ্রাপ্ত</option>
+                <option value="পরিত্যক্ত">পরিত্যক্ত</option>
+              </select>
             </div>
             <div class="fc-bm-col">
-              <label for="fc-bm-village">🏠 গ্রাম নির্বাচন*</label>
-              <select id="fc-bm-village">
-                ${savedVillageList.map(v => `<option value="${v}" ${v === savedDefaultVillage ? 'selected' : ''}>${v}</option>`).join('')}
+              <label for="fc-bm-religion">🕌 ধর্ম*</label>
+              <select id="fc-bm-religion">
+                <option value="ইসলাম" selected>ইসলাম (Default)</option>
+                <option value="হিন্দু">হিন্দু</option>
+                <option value="বৌদ্ধ">বৌদ্ধ</option>
+                <option value="খ্রিস্টান">খ্রিস্টান</option>
+                <option value="অন্যান্য">অন্যান্য</option>
               </select>
             </div>
           </div>
-          <div style="display: flex; gap: 6px;">
-            <input type="text" id="fc-bm-new-village" placeholder="নতুন গ্রামের নাম লিখুন..." style="flex: 1; padding: 6px 10px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 12px;">
-            <button id="fc-bm-btn-add-village" type="button" class="fc-bm-secondary-btn" style="padding: 6px 12px; font-size: 12px; font-weight: 700; background: #0284c7; color: #fff; border: none; border-radius: 8px; cursor: pointer;">+ যোগ</button>
+
+          <div class="fc-bm-col">
+            <label for="fc-bm-mobile">📱 মোবাইল নম্বর (ঐচ্ছিক - ট্যাবলেটে ম্যানুয়ালি লিখতে পারেন):</label>
+            <input type="tel" id="fc-bm-mobile" placeholder="যেমন: 019XXXXXXXX" maxlength="11">
+          </div>
+
+          <!-- Section 4 Address Settings (তথ্য সংগ্রহের ঠিকানা) -->
+          <div style="background: #f8fafc; border: 1.5px solid #cbd5e1; border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 8px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <label style="font-size: 12px; font-weight: 700; color: #1c3b68;">📍 সেকশন ৪: তথ্য সংগ্রহের ঠিকানা</label>
+              <span style="font-size: 10px; color: #64748b;">(স্থায়ী ঠিকানা অপরিবর্তিত)</span>
+            </div>
+            <div class="fc-bm-row">
+              <div class="fc-bm-col">
+                <label for="fc-bm-postcode">📮 পোস্ট কোড* (ডিফল্ট: 7721)</label>
+                <input type="text" id="fc-bm-postcode" value="${savedPostcode}" placeholder="7721">
+              </div>
+              <div class="fc-bm-col">
+                <label for="fc-bm-village">🏠 গ্রাম নির্বাচন*</label>
+                <select id="fc-bm-village">
+                  ${savedVillageList.map(v => `<option value="${v}" ${v === savedDefaultVillage ? 'selected' : ''}>${v}</option>`).join('')}
+                </select>
+              </div>
+            </div>
+            <div style="display: flex; gap: 6px;">
+              <input type="text" id="fc-bm-new-village" placeholder="নতুন গ্রামের নাম লিখুন..." style="flex: 1; padding: 6px 10px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 12px;">
+              <button id="fc-bm-btn-add-village" type="button" class="fc-bm-secondary-btn" style="padding: 6px 12px; font-size: 12px; font-weight: 700; background: #0284c7; color: #fff; border: none; border-radius: 8px; cursor: pointer;">+ যোগ</button>
+            </div>
           </div>
         </div>
 
@@ -402,7 +498,7 @@ Return ONLY a single valid JSON object with these exact keys:
 
         <div id="fc-bm-loading" style="display: none; text-align: center; padding: 10px;">
           <div class="fc-bm-spinner"></div>
-          <p style="margin: 8px 0 0 0; font-size: 13px; font-weight: 600; color: #1976d2;">Gemini AI দিয়ে NID স্ক্যান হচ্ছে...</p>
+          <p id="fc-bm-loading-text" style="margin: 8px 0 0 0; font-size: 13px; font-weight: 600; color: #1976d2;">Gemini AI দিয়ে ডকুমেন্ট স্ক্যান হচ্ছে...</p>
         </div>
       </div>
     </div>
@@ -424,6 +520,72 @@ Return ONLY a single valid JSON object with these exact keys:
   const selectVillage = document.getElementById('fc-bm-village');
   const inputNewVillage = document.getElementById('fc-bm-new-village');
   const btnAddVillage = document.getElementById('fc-bm-btn-add-village');
+
+  // Target toggle elements
+  const btnTargetSelf = document.getElementById('fc-bm-target-self-btn');
+  const btnTargetMember = document.getElementById('fc-bm-target-member-btn');
+  const panelApplicantSettings = document.getElementById('fc-bm-applicant-settings');
+  const panelMemberSettings = document.getElementById('fc-bm-member-settings');
+  const selectTargetMember = document.getElementById('fc-bm-member-select');
+  const badgeTargetMember = document.getElementById('fc-bm-member-badge');
+
+  function updateMemberSelectDropdown(selectedIndex) {
+    if (!selectTargetMember) return;
+    const cards = Array.from(document.querySelectorAll('.fm-members-stack .fm-member-card, [data-family-card-tab="6"] .fm-member-card'));
+    let html = '<option value="auto">পরবর্তী খালি সদস্য কার্ড</option>';
+    cards.forEach((c, i) => {
+      const isSelf = c.classList.contains('fm-member-card--self') || (c.textContent.includes('সদস্য - ১') && c.textContent.includes('নিজ'));
+      if (isSelf) return;
+      const title = c.querySelector('.fm-member-title')?.textContent.trim() || `সদস্য - ${toBnDigits(i + 1)}`;
+      const isSel = (selectedIndex === (i + 1)) ? 'selected' : '';
+      html += `<option value="${i + 1}" ${isSel}>${title}</option>`;
+    });
+    html += '<option value="new">➕ নতুন সদস্য কার্ড যোগ করে ফিল করুন</option>';
+    selectTargetMember.innerHTML = html;
+  }
+
+  function setScanTarget(type, card = null, index = 1) {
+    activeScanTarget = { type, card, index };
+    if (type === 'applicant') {
+      btnTargetSelf.style.background = '#0284c7';
+      btnTargetSelf.style.color = '#fff';
+      btnTargetMember.style.background = '#e2e8f0';
+      btnTargetMember.style.color = '#334155';
+      panelApplicantSettings.style.display = 'flex';
+      panelMemberSettings.style.display = 'none';
+    } else {
+      btnTargetSelf.style.background = '#e2e8f0';
+      btnTargetSelf.style.color = '#334155';
+      btnTargetMember.style.background = '#0d9488';
+      btnTargetMember.style.color = '#fff';
+      panelApplicantSettings.style.display = 'none';
+      panelMemberSettings.style.display = 'flex';
+      updateMemberSelectDropdown(typeof index === 'number' ? index : undefined);
+      if (badgeTargetMember) {
+        badgeTargetMember.textContent = typeof index === 'number' ? `টার্গেট: সদস্য - ${toBnDigits(index)}` : 'টার্গেট: নতুন সদস্য';
+      }
+    }
+  }
+
+  btnTargetSelf.addEventListener('click', () => setScanTarget('applicant', null, 1));
+  btnTargetMember.addEventListener('click', () => setScanTarget('member', null, 2));
+
+  selectTargetMember.addEventListener('change', () => {
+    const val = selectTargetMember.value;
+    if (val === 'new') {
+      activeScanTarget = { type: 'member', card: null, index: 'new' };
+      if (badgeTargetMember) badgeTargetMember.textContent = 'টার্গেট: নতুন সদস্য';
+    } else if (val === 'auto') {
+      activeScanTarget = { type: 'member', card: null, index: 'auto' };
+      if (badgeTargetMember) badgeTargetMember.textContent = 'টার্গেট: পরবর্তী খালি সদস্য';
+    } else {
+      const idx = parseInt(val, 10);
+      const cards = Array.from(document.querySelectorAll('.fm-members-stack .fm-member-card, [data-family-card-tab="6"] .fm-member-card'));
+      const target = cards[idx - 1] || null;
+      activeScanTarget = { type: 'member', card: target, index: idx };
+      if (badgeTargetMember) badgeTargetMember.textContent = `টার্গেট: সদস্য - ${toBnDigits(idx)}`;
+    }
+  });
 
   inputPostcode.addEventListener('change', () => {
     savedPostcode = inputPostcode.value.trim() || '7721';
@@ -449,7 +611,16 @@ Return ONLY a single valid JSON object with these exact keys:
     showToast(`✅ গ্রাম "${newName}" সফলভাবে যোগ করা হয়েছে এবং ডিফল্ট করা হলো!`);
   });
 
-  fab.addEventListener('click', () => { modal.style.display = 'flex'; });
+  fab.addEventListener('click', () => {
+    const tab6 = document.querySelector('[data-family-card-tab="6"]');
+    const isTab6Active = tab6 && (tab6.style.display !== 'none' || tab6.classList.contains('v-expansion-panel--active'));
+    if (isTab6Active) {
+      setScanTarget('member', null, 'auto');
+    } else {
+      setScanTarget('applicant', null, 1);
+    }
+    modal.style.display = 'flex';
+  });
   closeBtn.addEventListener('click', () => {
     stopLiveCamera();
     modal.style.display = 'none';
@@ -646,36 +817,75 @@ Return ONLY a single valid JSON object with these exact keys:
       const data = JSON.parse(cleanText.trim());
 
       // 1. Bengali to English numeral normalization
-      if (data.nid_number) data.nid_number = normalizeDigits(data.nid_number).replace(/[^0-9]/g, '');
+      let num = data.doc_number || data.nid_number || '';
+      num = normalizeDigits(num).replace(/[^0-9]/g, '');
+
+      // Strict NID rule: if NID and 13 digits, prepend birth year
+      if ((data.doc_type === 'nid' || !data.doc_type) && num.length === 13) {
+        const ym = String(data.dob || '').match(/\b(19\d{2}|20\d{2})\b/);
+        if (ym) num = ym[1] + num;
+      }
+      data.doc_number = num;
+      data.nid_number = num;
+
       if (data.dob) data.dob = standardizeDate(data.dob);
 
-      // 2. Strict 10 or 17 digit NID rule (prepend birth year if 13 digits)
-      if (data.nid_number && data.nid_number.length === 13) {
-        const ym = String(data.dob || '').match(/\b(19\d{2}|20\d{2})\b/);
-        if (ym) data.nid_number = ym[1] + data.nid_number;
-      }
-
-      // 3. Uppercase English names
+      // 2. Uppercase English names
       if (data.name_en) data.name_en = String(data.name_en).toUpperCase();
       if (data.father_name_en) data.father_name_en = String(data.father_name_en).toUpperCase();
       if (data.mother_name_en) data.mother_name_en = String(data.mother_name_en).toUpperCase();
 
-      data.marital_status = document.getElementById('fc-bm-marital').value;
-      data.religion = document.getElementById('fc-bm-religion').value;
-      data.mobile_number = normalizeDigits(document.getElementById('fc-bm-mobile').value.trim());
-
-      // 4. Scrape current Family ID from portal DOM
       data.family_id = scrapeFamilyId() || '';
 
-      lastExtractedData = data;
-      modal.style.display = 'none';
+      if (activeScanTarget.type === 'member') {
+        let targetCard = activeScanTarget.card;
+        if (!targetCard) {
+          const cards = Array.from(document.querySelectorAll('.fm-members-stack .fm-member-card, [data-family-card-tab="6"] .fm-member-card'));
+          targetCard = cards.find(c => {
+            const isSelf = c.classList.contains('fm-member-card--self') || (c.textContent.includes('সদস্য - ১') && c.textContent.includes('নিজ'));
+            if (isSelf) return false;
+            const hasName = c.querySelector('input:not([disabled])')?.value;
+            return !hasName && c.dataset.fcMemberAutoFilled !== 'true';
+          });
 
-      // 5. Fill portal fields
-      fillPortalFields(data);
-      showToast('✅ এনআইডি তথ্য সফলভাবে পূরণ হয়েছে!');
+          if (!targetCard) {
+            triggerPortalAddMember();
+            await new Promise(r => setTimeout(r, 450));
+            const updatedCards = Array.from(document.querySelectorAll('.fm-members-stack .fm-member-card, [data-family-card-tab="6"] .fm-member-card'));
+            targetCard = updatedCards[updatedCards.length - 1];
+          }
+        }
 
-      // 6. Asynchronous real-time Firestore sync
-      syncToFirestore(data);
+        const relChoice = document.getElementById('fc-bm-relation-select')?.value;
+        if (relChoice && relChoice !== 'auto') {
+          data.relationship = relChoice;
+        } else if (data.relation_suggestion) {
+          data.relationship = data.relation_suggestion;
+        }
+
+        modal.style.display = 'none';
+        if (targetCard) {
+          await fillMemberCard(targetCard, data);
+          handleSection5AndCrossMatch();
+          const cardIdx = (typeof activeScanTarget.index === 'number') ? activeScanTarget.index : 2;
+          syncMemberToFirestore(data, cardIdx);
+          showToast(`✅ সদস্য (${data.name_bn || data.doc_number}) সফলভাবে পূরণ হয়েছে!`);
+        } else {
+          showToast(`⚠️ সদস্য কার্ড পাওয়া যায়নি। অনুগ্রহ করে প্রথমে '+ নতুন সদস্য' যোগ করুন।`);
+        }
+      } else {
+        // Applicant flow
+        data.marital_status = document.getElementById('fc-bm-marital').value;
+        data.religion = document.getElementById('fc-bm-religion').value;
+        data.mobile_number = normalizeDigits(document.getElementById('fc-bm-mobile').value.trim());
+
+        lastExtractedData = data;
+        modal.style.display = 'none';
+
+        fillPortalFields(data);
+        showToast('✅ এনআইডি তথ্য সফলভাবে পূরণ হয়েছে!');
+        syncToFirestore(data);
+      }
     } catch (err) {
       alert('স্ক্যান ব্যর্থ হয়েছে: ' + err.message);
     } finally {
@@ -718,6 +928,245 @@ Return ONLY a single valid JSON object with these exact keys:
       console.log('[FamilyCard] Firestore synced successfully:', docId);
     } catch (e) {
       console.warn('[FamilyCard] Background Firestore sync notice:', e.message);
+    }
+  }
+
+  // --- SECTION 8: FAMILY MEMBER AUTOMATION HELPERS ---
+  function openMemberScanner(card = null, index = 'auto') {
+    setScanTarget('member', card, index);
+    modal.style.display = 'flex';
+  }
+
+  function triggerPortalAddMember() {
+    const tab6 = document.querySelector('[data-family-card-tab="6"]') || document.querySelector('.fm-members-stack')?.parentElement;
+    if (!tab6) return false;
+    const buttons = Array.from(tab6.querySelectorAll('button'));
+    const addBtn = buttons.find(b => {
+      const t = b.textContent || '';
+      return t.includes('নতুন সদস্য') || t.includes('সদস্য যোগ') || t.includes('যোগ করুন') || b.querySelector('.mdi-plus');
+    });
+    if (addBtn) {
+      addBtn.click();
+      showToast('➕ নতুন সদস্য কার্ড যোগ করা হয়েছে!');
+      setTimeout(() => {
+        injectMemberCardButtons();
+        updateMemberSelectDropdown();
+      }, 350);
+      return true;
+    }
+    showToast('⚠️ পোর্টালের "নতুন সদস্য" বাটন পাওয়া যায়নি, অনুগ্রহ করে ম্যানুয়ালি চাপুন।');
+    return false;
+  }
+
+  async function fillMemberCard(card, data) {
+    if (!card || !data) return;
+
+    // 1. Verification Type Radio (NID vs Birth Certificate)
+    const isBirthReg = data.doc_type === 'birth_certificate';
+    const radios = Array.from(card.querySelectorAll('.v-radio, label'));
+    for (const rl of radios) {
+      const txt = rl.textContent || '';
+      if (isBirthReg && (txt.includes('জন্ম নিবন্ধন') || txt.includes('জন্ম'))) {
+        const r = rl.querySelector('input[type="radio"]') || rl.closest('.v-radio')?.querySelector('input[type="radio"]');
+        if (r) { r.click(); } else rl.click();
+        break;
+      } else if (!isBirthReg && (txt.includes('জাতীয় পরিচিতি') || txt.includes('এনআইডি') || txt.includes('NID'))) {
+        const r = rl.querySelector('input[type="radio"]') || rl.closest('.v-radio')?.querySelector('input[type="radio"]');
+        if (r) { r.click(); } else rl.click();
+        break;
+      }
+    }
+
+    await new Promise(r => setTimeout(r, 120));
+
+    function findCardInput(keywords) {
+      const labels = Array.from(card.querySelectorAll('label'));
+      for (const label of labels) {
+        const text = label.textContent || '';
+        if (keywords.some(k => text.includes(k))) {
+          if (label.htmlFor) {
+            const inp = card.querySelector('#' + label.htmlFor);
+            if (inp && !inp.disabled) return inp;
+          }
+          const parent = label.closest('.col, [class*="col-"], span, div');
+          if (parent) {
+            const inp = parent.querySelector('input:not([type="hidden"]):not([disabled])');
+            if (inp) return inp;
+          }
+        }
+      }
+      return null;
+    }
+
+    async function selectCardDropdown(keywords, candidates) {
+      const labels = Array.from(card.querySelectorAll('label'));
+      let container = null;
+      for (const label of labels) {
+        const text = label.textContent || '';
+        if (keywords.some(k => text.includes(k))) {
+          container = label.closest('.col, [class*="col-"], span, div');
+          break;
+        }
+      }
+      if (!container) return;
+      await selectSingleVuetifyOption(container, candidates);
+    }
+
+    // 2. Identification number
+    const num = data.doc_number || data.nid_number || '';
+    if (num) {
+      const idInp = findCardInput(['জাতীয় পরিচিতি নম্বর', 'এনআইডি', 'জন্ম নিবন্ধন নম্বর', 'নিবন্ধন']);
+      if (idInp) setReactiveValue(idInp, num);
+    }
+
+    // 3. Date of birth
+    if (data.dob) {
+      const dobInp = findCardInput(['জন্ম তারিখ']);
+      if (dobInp) setReactiveValue(dobInp, data.dob);
+    }
+
+    // 4. Name Bangla
+    if (data.name_bn) {
+      const bnInp = findCardInput(['নাম বাংলায়', 'নাম বাংলায়', 'নাম (বাংলা)']);
+      if (bnInp) setReactiveValue(bnInp, data.name_bn);
+    }
+
+    // 5. Name English
+    if (data.name_en) {
+      const enInp = findCardInput(['নাম ইংরেজিতে', 'নাম (ইংরেজি)']);
+      if (enInp) setReactiveValue(enInp, data.name_en.toUpperCase());
+    }
+
+    // 6. Relationship with Household Head
+    const rel = data.relationship || data.relation_suggestion || '';
+    if (rel) {
+      await selectCardDropdown(['সম্পর্ক'], [rel]);
+    }
+
+    // 7. Father's Name Bangla & English
+    if (data.father_name_bn) {
+      const fbn = findCardInput(['পিতার নাম (বাংলা)', 'পিতার নাম বাংলায়']);
+      if (fbn) setReactiveValue(fbn, data.father_name_bn);
+    }
+    if (data.father_name_en) {
+      const fen = findCardInput(['পিতার নাম (ইংরেজি)', 'পিতার নাম ইংরেজিতে']);
+      if (fen) setReactiveValue(fen, data.father_name_en.toUpperCase());
+    }
+
+    // 8. Mother's Name Bangla & English
+    if (data.mother_name_bn) {
+      const mbn = findCardInput(['মাতার নাম (বাংলা)', 'মাতার নাম বাংলায়']);
+      if (mbn) setReactiveValue(mbn, data.mother_name_bn);
+    }
+    if (data.mother_name_en) {
+      const men = findCardInput(['মাতার নাম (ইংরেজি)', 'মাতার নাম ইংরেজিতে']);
+      if (men) setReactiveValue(men, data.mother_name_en.toUpperCase());
+    }
+
+    // 9. Gender
+    if (data.gender) {
+      await selectCardDropdown(['লিঙ্গ'], [data.gender]);
+    }
+
+    // 10. Marital Status
+    const marital = data.marital_status || data.marital_status_suggestion || 'বিবাহিত';
+    await selectCardDropdown(['বৈবাহিক অবস্থা'], [marital]);
+
+    // 11. Religion (Default: ইসলাম)
+    const religion = data.religion || 'ইসলাম';
+    await selectCardDropdown(['ধর্ম'], [religion]);
+
+    // 12. Disability (Default: না)
+    await selectCardDropdown(['প্রতিবন্ধিতা', 'প্রতিবন্ধী'], ['না', 'প্রতিবন্ধী নন']);
+
+    card.dataset.fcMemberAutoFilled = 'true';
+  }
+
+  function injectMemberCardButtons() {
+    const cards = Array.from(document.querySelectorAll('.fm-members-stack .fm-member-card, [data-family-card-tab="6"] .fm-member-card'));
+    cards.forEach((card, idx) => {
+      const isSelf = card.classList.contains('fm-member-card--self') || (card.textContent.includes('সদস্য - ১') && card.textContent.includes('নিজ'));
+      if (isSelf) return;
+
+      const header = card.querySelector('.fm-member-header') || card.firstElementChild;
+      if (!header || header.querySelector('.fc-card-scan-btn')) return;
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'fc-card-scan-btn';
+      btn.style.cssText = 'margin-left: auto; padding: 4px 10px; background: linear-gradient(135deg, #0d9488, #0f766e); color: #fff; font-weight: 700; border: none; border-radius: 6px; font-size: 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);';
+      btn.innerHTML = '<span>📸 NID / জন্ম নিবন্ধন স্ক্যান</span>';
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        openMemberScanner(card, idx + 1);
+      };
+      header.appendChild(btn);
+    });
+  }
+
+  function applySmartDefaultsToAllMembers() {
+    const cards = Array.from(document.querySelectorAll('.fm-members-stack .fm-member-card, [data-family-card-tab="6"] .fm-member-card'));
+    let count = 0;
+    cards.forEach(card => {
+      const isSelf = card.classList.contains('fm-member-card--self') || (card.textContent.includes('সদস্য - ১') && card.textContent.includes('নিজ'));
+      if (isSelf) return;
+
+      const relLabels = Array.from(card.querySelectorAll('label')).filter(l => l.textContent.includes('ধর্ম'));
+      for (const rl of relLabels) {
+        const col = rl.closest('.col, [class*="col-"]');
+        if (col && !col.querySelector('.v-select__selection')?.textContent.trim()) {
+          selectSingleVuetifyOption(col, ['ইসলাম']);
+          count++;
+        }
+      }
+
+      const disLabels = Array.from(card.querySelectorAll('label')).filter(l => l.textContent.includes('প্রতিবন্ধিতা') || l.textContent.includes('প্রতিবন্ধী'));
+      for (const dl of disLabels) {
+        const col = dl.closest('.col, [class*="col-"]');
+        if (col && !col.querySelector('.v-select__selection')?.textContent.trim()) {
+          selectSingleVuetifyOption(col, ['না', 'প্রতিবন্ধী নন']);
+          count++;
+        }
+      }
+    });
+    showToast(`⚡ ${toBnDigits(count)}টি সদস্য ফিল্ডে স্মার্ট ডিফল্ট প্রয়োগ করা হয়েছে!`);
+  }
+
+  async function syncMemberToFirestore(memberData, memberIndex) {
+    try {
+      const rawId = scrapeFamilyId() || (lastExtractedData && lastExtractedData.family_id) || '8743033825';
+      const cleanId = normalizeDigits(rawId).replace(/[^0-9]/g, '') || '8743033825';
+      const memberDocId = `member_${memberIndex}_${memberData.doc_number || Date.now()}`;
+      const url = `https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(cleanId)}/members/${encodeURIComponent(memberDocId)}`;
+
+      const doc = {
+        fields: {
+          member_index: { integerValue: String(memberIndex) },
+          doc_type: { stringValue: memberData.doc_type || 'nid' },
+          doc_number: { stringValue: memberData.doc_number || memberData.nid_number || '' },
+          name_bn: { stringValue: memberData.name_bn || '' },
+          name_en: { stringValue: memberData.name_en || '' },
+          dob: { stringValue: memberData.dob || '' },
+          gender: { stringValue: memberData.gender || '' },
+          relationship: { stringValue: memberData.relationship || memberData.relation_suggestion || '' },
+          father_name_bn: { stringValue: memberData.father_name_bn || '' },
+          father_name_en: { stringValue: memberData.father_name_en || '' },
+          mother_name_bn: { stringValue: memberData.mother_name_bn || '' },
+          mother_name_en: { stringValue: memberData.mother_name_en || '' },
+          marital_status: { stringValue: memberData.marital_status || memberData.marital_status_suggestion || 'বিবাহিত' },
+          religion: { stringValue: memberData.religion || 'ইসলাম' },
+          synced_at: { timestampValue: new Date().toISOString() }
+        }
+      };
+
+      await fetch(url, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(doc)
+      });
+      console.log('[FamilyCard] Member synced to Firestore:', memberDocId);
+    } catch (err) {
+      console.warn('[FamilyCard] Firestore member sync notice:', err.message);
     }
   }
 
@@ -1590,7 +2039,39 @@ Return ONLY a single valid JSON object with these exact keys:
           পু: <b>${toBnDigits(actual.actualMale)}</b> | না: <b>${toBnDigits(actual.actualFemale)}</b> | হি: <b>${toBnDigits(actual.actualTrans)}</b> | মোট: <b>${toBnDigits(actual.totalMembers)}</b>
         </div>
       </div>
+      <div style="display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap;">
+        <button id="fc-s8-scan-member-btn" type="button" style="background: #0284c7; color: #fff; border: none; padding: 6px 12px; border-radius: 6px; font-weight: 700; font-size: 11.5px; cursor: pointer; display: flex; align-items: center; gap: 5px; box-shadow: 0 1px 3px rgba(0,0,0,0.12);">
+          📸 সদস্যের NID / জন্ম নিবন্ধন স্ক্যান
+        </button>
+        <button id="fc-s8-add-member-btn" type="button" style="background: #059669; color: #fff; border: none; padding: 6px 12px; border-radius: 6px; font-weight: 700; font-size: 11.5px; cursor: pointer; display: flex; align-items: center; gap: 5px; box-shadow: 0 1px 3px rgba(0,0,0,0.12);">
+          ➕ নতুন সদস্য যোগ করুন
+        </button>
+        <button id="fc-s8-fill-defaults-btn" type="button" style="background: #7c3aed; color: #fff; border: none; padding: 6px 12px; border-radius: 6px; font-weight: 700; font-size: 11.5px; cursor: pointer; display: flex; align-items: center; gap: 5px; box-shadow: 0 1px 3px rgba(0,0,0,0.12);">
+          ⚡ স্মার্ট ডিফল্ট দিন
+        </button>
+      </div>
     `;
+
+    const scanBtn = banner.querySelector('#fc-s8-scan-member-btn');
+    if (scanBtn) {
+      scanBtn.onclick = () => {
+        setScanTarget('member');
+        const modal = document.getElementById('fc-scanner-modal');
+        if (modal) modal.style.display = 'flex';
+      };
+    }
+    const addBtn = banner.querySelector('#fc-s8-add-member-btn');
+    if (addBtn) {
+      addBtn.onclick = () => {
+        triggerPortalAddMember();
+      };
+    }
+    const defBtn = banner.querySelector('#fc-s8-fill-defaults-btn');
+    if (defBtn) {
+      defBtn.onclick = () => {
+        applySmartDefaultsToAllMembers();
+      };
+    }
   }
 
   async function syncCrossMatchToFirestore(sec5Data, membersData, matchResult) {
@@ -1687,6 +2168,7 @@ Return ONLY a single valid JSON object with these exact keys:
     const stack = document.querySelector('.fm-members-stack') || s6Panel?.querySelector('.v-expansion-panel-content__wrap');
     if (stack) {
       injectTab6Banner(stack, sec5Data, membersData, match);
+      injectMemberCardButtons();
     }
 
     // Update Floating HUD elements

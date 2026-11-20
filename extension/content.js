@@ -8,6 +8,7 @@
   let roomCode = 'FC-101';
   let geminiApiKey = '';
   let lastExtractedData = null;
+  let activeScanTarget = { type: 'applicant', card: null, index: 'self' };
 
   // Retrieve saved settings
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
@@ -154,52 +155,112 @@
     modal.innerHTML = `
       <div class="fc-modal-container">
         <div class="fc-modal-header">
-          <h3>🪪 সরাসরি এনআইডি স্ক্যান (Single Device)</h3>
+          <h3>🪪 সরাসরি NID ও জন্ম নিবন্ধন স্ক্যান (Single Device)</h3>
           <span class="fc-modal-close" id="fc-modal-close-btn">&times;</span>
         </div>
         <div class="fc-modal-body">
-          <input type="file" id="fc-modal-file-input" accept="image/*" capture="environment" style="display: none;">
-          
-          <button id="fc-modal-btn-camera" class="fc-camera-trigger-btn">
-            <span>📷 এনআইডি কার্ডের ছবি তুলুন</span>
-          </button>
-
-          <div id="fc-modal-preview-wrap" class="fc-preview-img-wrap" style="display: none;">
-            <img id="fc-modal-img-preview" alt="NID Preview">
+          <!-- Target Selector: Applicant vs Family Member -->
+          <div style="display: flex; gap: 6px; margin-bottom: 10px; background: #f1f5f9; padding: 4px; border-radius: 8px;">
+            <button type="button" id="fc-modal-target-self-btn" style="flex: 1; padding: 6px 10px; border: none; border-radius: 6px; font-weight: 700; font-size: 11.5px; cursor: pointer; background: #0284c7; color: #fff;">
+              👤 প্রধান আবেদনকারী
+            </button>
+            <button type="button" id="fc-modal-target-member-btn" style="flex: 1; padding: 6px 10px; border: none; border-radius: 6px; font-weight: 700; font-size: 11.5px; cursor: pointer; background: #e2e8f0; color: #334155;">
+              👨‍👩‍👧‍👦 সদস্য (NID / জন্ম নিবন্ধন)
+            </button>
           </div>
 
-          <div class="fc-modal-fields-row">
-            <div class="fc-modal-field">
-              <label for="fc-modal-marital">💍 বৈবাহিক অবস্থা*</label>
-              <select id="fc-modal-marital">
-                <option value="বিবাহিত" selected>বিবাহিত (Default)</option>
-                <option value="অবিবাহিত">অবিবাহিত</option>
-                <option value="বিধবা">বিধবা</option>
-                <option value="বিপত্নীক">বিপত্নীক</option>
-                <option value="তালাকপ্রাপ্ত">তালাকপ্রাপ্ত</option>
-                <option value="পরিত্যক্ত">পরিত্যক্ত</option>
-              </select>
+          <!-- Family Member Sub-panel (Shown when member target selected) -->
+          <div id="fc-modal-member-settings" style="display: none; background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 10px; padding: 10px; margin-bottom: 10px; flex-direction: column; gap: 8px;">
+            <div style="font-weight: 700; color: #166534; font-size: 12px; display: flex; justify-content: space-between; align-items: center;">
+              <span>👨‍👩‍👧‍👦 সদস্য স্ক্যান কনফিগারেশন</span>
+              <span id="fc-modal-member-badge" style="font-size: 10.5px; color: #0f766e; font-weight: bold; background: #ccfbf1; padding: 2px 6px; border-radius: 4px;">সদস্য নির্বাচন করুন</span>
+            </div>
+            <div class="fc-modal-fields-row">
+              <div class="fc-modal-field">
+                <label for="fc-modal-member-select">🎯 টার্গেট সদস্য কার্ড*</label>
+                <select id="fc-modal-member-select" style="padding: 4px 6px; border-radius: 6px; border: 1px solid #86efac; font-weight: 600;">
+                  <option value="auto">পরবর্তী খালি সদস্য কার্ড</option>
+                </select>
+              </div>
+              <div class="fc-modal-field">
+                <label for="fc-modal-doc-type">📄 সনদের ধরন*</label>
+                <select id="fc-modal-doc-type" style="padding: 4px 6px; border-radius: 6px; border: 1px solid #86efac; font-weight: 600;">
+                  <option value="auto">অটো-ডিটেক্ট (NID বা জন্ম সনদ)</option>
+                  <option value="nid">জাতীয় পরিচিতি নম্বর (NID)</option>
+                  <option value="birth_certificate">জন্ম নিবন্ধন সনদ (BRC)</option>
+                </select>
+              </div>
             </div>
             <div class="fc-modal-field">
-              <label for="fc-modal-religion">🕌 ধর্ম*</label>
-              <select id="fc-modal-religion">
-                <option value="ইসলাম" selected>ইসলাম (Default)</option>
-                <option value="হিন্দু">হিন্দু</option>
-                <option value="বৌদ্ধ">বৌদ্ধ</option>
-                <option value="খ্রিস্টান">খ্রিস্টান</option>
+              <label for="fc-modal-relation-select">🤝 খানাপ্রধানের সাথে সম্পর্ক* (অটো-ডিটেক্ট হবে)</label>
+              <select id="fc-modal-relation-select" style="padding: 4px 6px; border-radius: 6px; border: 1px solid #86efac; font-weight: 600;">
+                <option value="auto">স্মার্ট অটো-সাজেশন</option>
+                <option value="স্বামী">স্বামী</option>
+                <option value="স্ত্রী">স্ত্রী</option>
+                <option value="পুত্র">পুত্র</option>
+                <option value="কন্যা">কন্যা</option>
+                <option value="পিতা">পিতা</option>
+                <option value="মাতা">মাতা</option>
+                <option value="ভাই">ভাই</option>
+                <option value="বোন">বোন</option>
+                <option value="দাদা">দাদা</option>
+                <option value="দাদী">দাদী</option>
+                <option value="নানা">নানা</option>
+                <option value="নানী">নানী</option>
+                <option value="নাতি">নাতি</option>
+                <option value="নাতনি">নাতনি</option>
+                <option value="শ্বশুর">শ্বশুর</option>
+                <option value="শাশুড়ি">শাশুড়ি</option>
                 <option value="অন্যান্য">অন্যান্য</option>
               </select>
             </div>
           </div>
 
-          <div class="fc-modal-field">
-            <label for="fc-modal-mobile">📱 মোবাইল নম্বর (ঐচ্ছিক - ট্যাবলেটে ম্যানুয়ালি লিখতে পারেন):</label>
-            <input type="tel" id="fc-modal-mobile" placeholder="যেমন: 019XXXXXXXX" maxlength="11">
+          <input type="file" id="fc-modal-file-input" accept="image/*" capture="environment" style="display: none;">
+          
+          <button id="fc-modal-btn-camera" class="fc-camera-trigger-btn">
+            <span>📷 কার্ড / সনদের ছবি তুলুন</span>
+          </button>
+
+          <div id="fc-modal-preview-wrap" class="fc-preview-img-wrap" style="display: none;">
+            <img id="fc-modal-img-preview" alt="Document Preview">
+          </div>
+
+          <!-- Applicant Specific Settings -->
+          <div id="fc-modal-applicant-settings" style="display: flex; flex-direction: column; gap: 8px;">
+            <div class="fc-modal-fields-row">
+              <div class="fc-modal-field">
+                <label for="fc-modal-marital">💍 বৈবাহিক অবস্থা*</label>
+                <select id="fc-modal-marital">
+                  <option value="বিবাহিত" selected>বিবাহিত (Default)</option>
+                  <option value="অবিবাহিত">অবিবাহিত</option>
+                  <option value="বিধবা">বিধবা</option>
+                  <option value="বিপত্নীক">বিপত্নীক</option>
+                  <option value="তালাকপ্রাপ্ত">তালাকপ্রাপ্ত</option>
+                  <option value="পরিত্যক্ত">পরিত্যক্ত</option>
+                </select>
+              </div>
+              <div class="fc-modal-field">
+                <label for="fc-modal-religion">🕌 ধর্ম*</label>
+                <select id="fc-modal-religion">
+                  <option value="ইসলাম" selected>ইসলাম (Default)</option>
+                  <option value="হিন্দু">হিন্দু</option>
+                  <option value="বৌদ্ধ">বৌদ্ধ</option>
+                  <option value="খ্রিস্টান">খ্রিস্টান</option>
+                  <option value="অন্যান্য">অন্যান্য</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="fc-modal-field">
+              <label for="fc-modal-mobile">📱 মোবাইল নম্বর (ঐচ্ছিক - ট্যাবলেটে ম্যানুয়ালি লিখতে পারেন):</label>
+              <input type="tel" id="fc-modal-mobile" placeholder="যেমন: 019XXXXXXXX" maxlength="11">
+            </div>
           </div>
 
           <div id="fc-modal-loading" class="fc-loading-spinner-wrap" style="display: none;">
             <div class="fc-spinner"></div>
-            <span style="font-weight: 600; color: #1976d2; font-size: 13px;">Gemini AI দ্বারা NID বিশ্লেষণ করা হচ্ছে...</span>
+            <span style="font-weight: 600; color: #1976d2; font-size: 13px;">Gemini AI দ্বারা ডকুমেন্ট বিশ্লেষণ করা হচ্ছে...</span>
           </div>
 
           <button id="fc-modal-btn-submit" class="fc-modal-submit-btn" style="display: none;">
@@ -215,6 +276,29 @@
     const fileInput = document.getElementById('fc-modal-file-input');
     const btnCamera = document.getElementById('fc-modal-btn-camera');
     const btnSubmit = document.getElementById('fc-modal-btn-submit');
+    const btnTargetSelf = document.getElementById('fc-modal-target-self-btn');
+    const btnTargetMember = document.getElementById('fc-modal-target-member-btn');
+    const memberSettings = document.getElementById('fc-modal-member-settings');
+    const applicantSettings = document.getElementById('fc-modal-applicant-settings');
+    const memberSelect = document.getElementById('fc-modal-member-select');
+
+    btnTargetSelf.addEventListener('click', () => setScanTarget('applicant'));
+    btnTargetMember.addEventListener('click', () => setScanTarget('member'));
+
+    if (memberSelect) {
+      memberSelect.addEventListener('change', (e) => {
+        const val = e.target.value;
+        if (val === 'auto') {
+          activeScanTarget.card = null;
+          activeScanTarget.index = 'auto';
+        } else {
+          const cards = Array.from(document.querySelectorAll('.fm-members-stack .fm-member-card, [data-family-card-tab="6"] .fm-member-card'));
+          const idx = parseInt(val, 10);
+          activeScanTarget.card = cards[idx - 1] || null;
+          activeScanTarget.index = idx;
+        }
+      });
+    }
 
     closeBtn.addEventListener('click', closeScannerModal);
     modal.addEventListener('click', (e) => {
@@ -255,14 +339,355 @@
     });
   }
 
+  function updateMemberSelectDropdown() {
+    const sel = document.getElementById('fc-modal-member-select');
+    if (!sel) return;
+
+    const cards = Array.from(document.querySelectorAll('.fm-members-stack .fm-member-card, [data-family-card-tab="6"] .fm-member-card'));
+    let html = '<option value="auto">পরবর্তী খালি সদস্য কার্ড</option>';
+
+    cards.forEach((card, idx) => {
+      const isSelf = card.classList.contains('fm-member-card--self') || (card.textContent.includes('সদস্য - ১') && card.textContent.includes('নিজ'));
+      if (isSelf) return;
+
+      const nameVal = card.querySelector('input:not([disabled])')?.value || '';
+      const label = `সদস্য - ${toBnDigits(idx + 1)}${nameVal ? ' (' + nameVal + ')' : ' (খালি)'}`;
+      html += `<option value="${idx + 1}">${label}</option>`;
+    });
+
+    sel.innerHTML = html;
+  }
+
+  function setScanTarget(target, memberCard = null, memberIdx = null) {
+    activeScanTarget.type = target;
+    activeScanTarget.card = memberCard;
+    activeScanTarget.index = memberIdx || 'auto';
+
+    const btnSelf = document.getElementById('fc-modal-target-self-btn');
+    const btnMember = document.getElementById('fc-modal-target-member-btn');
+    const memberSettings = document.getElementById('fc-modal-member-settings');
+    const applicantSettings = document.getElementById('fc-modal-applicant-settings');
+    const memberBadge = document.getElementById('fc-modal-member-badge');
+
+    if (!btnSelf || !btnMember) return;
+
+    if (target === 'member') {
+      btnSelf.style.background = '#e2e8f0';
+      btnSelf.style.color = '#334155';
+      btnMember.style.background = '#0d9488';
+      btnMember.style.color = '#fff';
+
+      if (memberSettings) memberSettings.style.display = 'flex';
+      if (applicantSettings) applicantSettings.style.display = 'none';
+
+      updateMemberSelectDropdown();
+      if (memberIdx && memberIdx !== 'auto') {
+        const sel = document.getElementById('fc-modal-member-select');
+        if (sel) sel.value = String(memberIdx);
+        if (memberBadge) memberBadge.textContent = `সদস্য - ${toBnDigits(memberIdx)} নির্দিষ্ট`;
+      } else if (memberBadge) {
+        memberBadge.textContent = 'পরবর্তী খালি সদস্য কার্ড';
+      }
+    } else {
+      btnSelf.style.background = '#0284c7';
+      btnSelf.style.color = '#fff';
+      btnMember.style.background = '#e2e8f0';
+      btnMember.style.color = '#334155';
+
+      if (memberSettings) memberSettings.style.display = 'none';
+      if (applicantSettings) applicantSettings.style.display = 'flex';
+    }
+  }
+
   function openScannerModal() {
     const modal = document.getElementById('fc-scanner-modal');
-    if (modal) modal.style.display = 'flex';
+    if (modal) {
+      if (activeScanTarget.type === 'member') {
+        updateMemberSelectDropdown();
+      }
+      modal.style.display = 'flex';
+    }
   }
 
   function closeScannerModal() {
     const modal = document.getElementById('fc-scanner-modal');
     if (modal) modal.style.display = 'none';
+  }
+
+  // --- SECTION 8: FAMILY MEMBER AUTOMATION HELPERS ---
+  function openMemberScanner(card = null, index = 'auto') {
+    setScanTarget('member', card, index);
+    openScannerModal();
+  }
+
+  function triggerPortalAddMember() {
+    const tab6 = document.querySelector('[data-family-card-tab="6"]') || document.querySelector('.fm-members-stack')?.parentElement;
+    if (!tab6) return false;
+    const buttons = Array.from(tab6.querySelectorAll('button'));
+    const addBtn = buttons.find(b => {
+      const t = b.textContent || '';
+      return t.includes('নতুন সদস্য') || t.includes('সদস্য যোগ') || t.includes('যোগ করুন') || b.querySelector('.mdi-plus');
+    });
+    if (addBtn) {
+      addBtn.click();
+      showToast('➕ নতুন সদস্য কার্ড যোগ করা হয়েছে!');
+      setTimeout(() => {
+        injectMemberCardButtons();
+        updateMemberSelectDropdown();
+      }, 350);
+      return true;
+    }
+    showToast('⚠️ পোর্টালের "নতুন সদস্য" বাটন পাওয়া যায়নি, অনুগ্রহ করে ম্যানুয়ালি চাপুন।');
+    return false;
+  }
+
+  async function fillMemberCard(card, data) {
+    if (!card || !data) return;
+
+    // 1. Verification Type Radio (NID vs Birth Certificate)
+    const isBirthReg = data.doc_type === 'birth_certificate';
+    const radios = Array.from(card.querySelectorAll('.v-radio, label'));
+    for (const rl of radios) {
+      const txt = rl.textContent || '';
+      if (isBirthReg && (txt.includes('জন্ম নিবন্ধন') || txt.includes('জন্ম'))) {
+        const r = rl.querySelector('input[type="radio"]') || rl.closest('.v-radio')?.querySelector('input[type="radio"]');
+        if (r) { r.click(); } else rl.click();
+        break;
+      } else if (!isBirthReg && (txt.includes('জাতীয় পরিচিতি') || txt.includes('এনআইডি') || txt.includes('NID'))) {
+        const r = rl.querySelector('input[type="radio"]') || rl.closest('.v-radio')?.querySelector('input[type="radio"]');
+        if (r) { r.click(); } else rl.click();
+        break;
+      }
+    }
+
+    await new Promise(r => setTimeout(r, 120));
+
+    function findCardInput(keywords) {
+      const labels = Array.from(card.querySelectorAll('label'));
+      for (const label of labels) {
+        const text = label.textContent || '';
+        if (keywords.some(k => text.includes(k))) {
+          if (label.htmlFor) {
+            const inp = card.querySelector('#' + label.htmlFor);
+            if (inp && !inp.disabled) return inp;
+          }
+          const parent = label.closest('.col, [class*="col-"], span, div');
+          if (parent) {
+            const inp = parent.querySelector('input:not([type="hidden"]):not([disabled])');
+            if (inp) return inp;
+          }
+        }
+      }
+      return null;
+    }
+
+    async function selectCardDropdown(keywords, candidates) {
+      const labels = Array.from(card.querySelectorAll('label'));
+      let container = null;
+      for (const label of labels) {
+        const text = label.textContent || '';
+        if (keywords.some(k => text.includes(k))) {
+          container = label.closest('.col, [class*="col-"], span, div');
+          break;
+        }
+      }
+      if (!container) return;
+      await selectSingleVuetifyOption(container, candidates);
+    }
+
+    // 2. Identification number
+    const num = data.doc_number || data.nid_number || '';
+    if (num) {
+      const idInp = findCardInput(['জাতীয় পরিচিতি নম্বর', 'এনআইডি', 'জন্ম নিবন্ধন নম্বর', 'নিবন্ধন']);
+      if (idInp) setReactiveValue(idInp, num);
+    }
+
+    // 3. Date of birth
+    if (data.dob) {
+      const dobInp = findCardInput(['জন্ম তারিখ']);
+      if (dobInp) setReactiveValue(dobInp, data.dob);
+    }
+
+    // 4. Name Bangla
+    if (data.name_bn) {
+      const bnInp = findCardInput(['নাম বাংলায়', 'নাম বাংলায়', 'নাম (বাংলা)']);
+      if (bnInp) setReactiveValue(bnInp, data.name_bn);
+    }
+
+    // 5. Name English
+    if (data.name_en) {
+      const enInp = findCardInput(['নাম ইংরেজিতে', 'নাম (ইংরেজি)']);
+      if (enInp) setReactiveValue(enInp, data.name_en.toUpperCase());
+    }
+
+    // 6. Relationship with Household Head
+    const rel = data.relationship || data.relation_suggestion || '';
+    if (rel) {
+      await selectCardDropdown(['সম্পর্ক'], [rel]);
+    }
+
+    // 7. Father's Name Bangla & English
+    if (data.father_name_bn) {
+      const fbn = findCardInput(['পিতার নাম (বাংলা)', 'পিতার নাম বাংলায়']);
+      if (fbn) setReactiveValue(fbn, data.father_name_bn);
+    }
+    if (data.father_name_en) {
+      const fen = findCardInput(['পিতার নাম (ইংরেজি)', 'পিতার নাম ইংরেজিতে']);
+      if (fen) setReactiveValue(fen, data.father_name_en.toUpperCase());
+    }
+
+    // 8. Mother's Name Bangla & English
+    if (data.mother_name_bn) {
+      const mbn = findCardInput(['মাতার নাম (বাংলা)', 'মাতার নাম বাংলায়']);
+      if (mbn) setReactiveValue(mbn, data.mother_name_bn);
+    }
+    if (data.mother_name_en) {
+      const men = findCardInput(['মাতার নাম (ইংরেজি)', 'মাতার নাম ইংরেজিতে']);
+      if (men) setReactiveValue(men, data.mother_name_en.toUpperCase());
+    }
+
+    // 9. Gender
+    if (data.gender) {
+      await selectCardDropdown(['লিঙ্গ'], [data.gender]);
+    }
+
+    // 10. Marital Status
+    const marital = data.marital_status || data.marital_status_suggestion || 'বিবাহিত';
+    await selectCardDropdown(['বৈবাহিক অবস্থা'], [marital]);
+
+    // 11. Religion (Default: ইসলাম)
+    const religion = data.religion || 'ইসলাম';
+    await selectCardDropdown(['ধর্ম'], [religion]);
+
+    // 12. Disability (Default: না)
+    await selectCardDropdown(['প্রতিবন্ধিতা', 'প্রতিবন্ধী'], ['না', 'প্রতিবন্ধী নন']);
+
+    card.dataset.fcMemberAutoFilled = 'true';
+    return true;
+  }
+
+  function injectMemberCardButtons() {
+    const cards = Array.from(document.querySelectorAll('.fm-members-stack .fm-member-card, [data-family-card-tab="6"] .fm-member-card'));
+    cards.forEach((card, idx) => {
+      const isSelf = card.classList.contains('fm-member-card--self') || (card.textContent.includes('সদস্য - ১') && card.textContent.includes('নিজ'));
+      if (isSelf) return;
+
+      const header = card.querySelector('.fm-member-header') || card.firstElementChild;
+      if (!header || header.querySelector('.fc-card-scan-btn')) return;
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'fc-card-scan-btn';
+      btn.style.cssText = 'margin-left: auto; padding: 4px 10px; background: linear-gradient(135deg, #0d9488, #0f766e); color: #fff; font-weight: 700; border: none; border-radius: 6px; font-size: 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);';
+      btn.innerHTML = '<span>📸 NID / জন্ম নিবন্ধন স্ক্যান</span>';
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        openMemberScanner(card, idx + 1);
+      };
+      header.appendChild(btn);
+    });
+  }
+
+  function applySmartDefaultsToAllMembers() {
+    const cards = Array.from(document.querySelectorAll('.fm-members-stack .fm-member-card, [data-family-card-tab="6"] .fm-member-card'));
+    let count = 0;
+    cards.forEach(card => {
+      const isSelf = card.classList.contains('fm-member-card--self') || (card.textContent.includes('সদস্য - ১') && card.textContent.includes('নিজ'));
+      if (isSelf) return;
+
+      const relLabels = Array.from(card.querySelectorAll('label')).filter(l => l.textContent.includes('ধর্ম'));
+      for (const rl of relLabels) {
+        const col = rl.closest('.col, [class*="col-"]');
+        if (col && !col.querySelector('.v-select__selection')?.textContent.trim()) {
+          selectSingleVuetifyOption(col, ['ইসলাম']);
+          count++;
+        }
+      }
+
+      const disLabels = Array.from(card.querySelectorAll('label')).filter(l => l.textContent.includes('প্রতিবন্ধিতা') || l.textContent.includes('প্রতিবন্ধী'));
+      for (const dl of disLabels) {
+        const col = dl.closest('.col, [class*="col-"]');
+        if (col && !col.querySelector('.v-select__selection')?.textContent.trim()) {
+          selectSingleVuetifyOption(col, ['না', 'প্রতিবন্ধী নন']);
+          count++;
+        }
+      }
+    });
+    showToast(`⚡ ${toBnDigits(count)}টি সদস্য ফিল্ডে স্মার্ট ডিফল্ট প্রয়োগ করা হয়েছে!`);
+  }
+
+  async function syncMemberToFirestore(memberData, memberIndex) {
+    try {
+      const rawId = scrapeFamilyId() || (lastExtractedData && lastExtractedData.family_id) || '8743033825';
+      const cleanId = normalizeDigits(rawId).replace(/[^0-9]/g, '') || '8743033825';
+      const memberDocId = `member_${memberIndex}_${memberData.doc_number || Date.now()}`;
+      const url = `https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(cleanId)}/members/${encodeURIComponent(memberDocId)}`;
+
+      const doc = {
+        fields: {
+          member_index: { integerValue: String(memberIndex) },
+          doc_type: { stringValue: memberData.doc_type || 'nid' },
+          doc_number: { stringValue: memberData.doc_number || memberData.nid_number || '' },
+          name_bn: { stringValue: memberData.name_bn || '' },
+          name_en: { stringValue: memberData.name_en || '' },
+          dob: { stringValue: memberData.dob || '' },
+          gender: { stringValue: memberData.gender || '' },
+          relationship: { stringValue: memberData.relationship || memberData.relation_suggestion || '' },
+          father_name_bn: { stringValue: memberData.father_name_bn || '' },
+          father_name_en: { stringValue: memberData.father_name_en || '' },
+          mother_name_bn: { stringValue: memberData.mother_name_bn || '' },
+          mother_name_en: { stringValue: memberData.mother_name_en || '' },
+          marital_status: { stringValue: memberData.marital_status || memberData.marital_status_suggestion || 'বিবাহিত' },
+          religion: { stringValue: memberData.religion || 'ইসলাম' },
+          synced_at: { timestampValue: new Date().toISOString() }
+        }
+      };
+
+      await fetch(url, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(doc)
+      });
+      console.log('[FamilyCard Extension] Member synced to Firestore:', memberDocId);
+    } catch (err) {
+      console.warn('[FamilyCard Extension] Firestore member sync notice:', err.message);
+    }
+  }
+
+  async function syncToFirestore(data) {
+    try {
+      const rawId = scrapeFamilyId() || data.family_id || data.nid_number || '8743033825';
+      const cleanId = normalizeDigits(rawId).replace(/[^0-9]/g, '') || '8743033825';
+      const url = `https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(cleanId)}`;
+
+      const firestoreDoc = {
+        fields: {
+          family_id: { stringValue: cleanId },
+          nid_number: { stringValue: data.nid_number || '' },
+          name_bn: { stringValue: data.name_bn || '' },
+          name_en: { stringValue: data.name_en || '' },
+          dob: { stringValue: data.dob || '' },
+          gender: { stringValue: data.gender || '' },
+          father_name_bn: { stringValue: data.father_name_bn || '' },
+          father_name_en: { stringValue: data.father_name_en || '' },
+          mother_name_bn: { stringValue: data.mother_name_bn || '' },
+          mother_name_en: { stringValue: data.mother_name_en || '' },
+          marital_status: { stringValue: data.marital_status || 'বিবাহিত' },
+          religion: { stringValue: data.religion || 'ইসলাম' },
+          mobile_number: { stringValue: data.mobile_number || '' },
+          synced_at: { timestampValue: new Date().toISOString() }
+        }
+      };
+
+      await fetch(url, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(firestoreDoc)
+      });
+      console.log('[FamilyCard Extension] Applicant synced to Firestore:', cleanId);
+    } catch (e) {
+      console.warn('[FamilyCard Extension] Firestore sync notice:', e.message);
+    }
   }
 
   // Compress image on an off-screen canvas
@@ -303,9 +728,10 @@
     const loading = document.getElementById('fc-modal-loading');
     const btnCamera = document.getElementById('fc-modal-btn-camera');
     const btnSubmit = document.getElementById('fc-modal-btn-submit');
-    const maritalStatus = document.getElementById('fc-modal-marital').value;
-    const religion = document.getElementById('fc-modal-religion').value;
-    const mobileNumber = document.getElementById('fc-modal-mobile').value.trim();
+    const maritalStatus = document.getElementById('fc-modal-marital')?.value || 'বিবাহিত';
+    const religion = document.getElementById('fc-modal-religion')?.value || 'ইসলাম';
+    const mobileNumber = document.getElementById('fc-modal-mobile')?.value?.trim() || '';
+    const docTypeChoice = document.getElementById('fc-modal-doc-type')?.value;
 
     loading.style.display = 'flex';
     btnCamera.style.display = 'none';
@@ -318,8 +744,9 @@
       maritalStatus,
       religion,
       mobileNumber,
+      docType: docTypeChoice,
       apiKey: geminiApiKey
-    }, (response) => {
+    }, async (response) => {
       loading.style.display = 'none';
       btnCamera.style.display = 'flex';
 
@@ -330,12 +757,52 @@
 
       if (response && response.success && response.data) {
         closeScannerModal();
-        lastExtractedData = response.data;
-        updateWidgetPreview(response.data);
-        fillFormFields(response.data);
-        showToast('✅ এনআইডি তথ্য সফলভাবে পূরণ করা হয়েছে!');
+        const data = response.data;
+
+        if (activeScanTarget.type === 'member') {
+          let targetCard = activeScanTarget.card;
+          if (!targetCard) {
+            const cards = Array.from(document.querySelectorAll('.fm-members-stack .fm-member-card, [data-family-card-tab="6"] .fm-member-card'));
+            targetCard = cards.find(c => {
+              const isSelf = c.classList.contains('fm-member-card--self') || (c.textContent.includes('সদস্য - ১') && c.textContent.includes('নিজ'));
+              if (isSelf) return false;
+              const hasName = c.querySelector('input:not([disabled])')?.value;
+              return !hasName && c.dataset.fcMemberAutoFilled !== 'true';
+            });
+
+            if (!targetCard) {
+              triggerPortalAddMember();
+              await new Promise(r => setTimeout(r, 450));
+              const updatedCards = Array.from(document.querySelectorAll('.fm-members-stack .fm-member-card, [data-family-card-tab="6"] .fm-member-card'));
+              targetCard = updatedCards[updatedCards.length - 1];
+            }
+          }
+
+          const relChoice = document.getElementById('fc-modal-relation-select')?.value;
+          if (relChoice && relChoice !== 'auto') {
+            data.relationship = relChoice;
+          } else if (data.relation_suggestion) {
+            data.relationship = data.relation_suggestion;
+          }
+
+          if (targetCard) {
+            await fillMemberCard(targetCard, data);
+            handleSection5AndCrossMatch();
+            const cardIdx = (typeof activeScanTarget.index === 'number') ? activeScanTarget.index : 2;
+            syncMemberToFirestore(data, cardIdx);
+            showToast(`✅ সদস্য (${data.name_bn || data.doc_number}) সফলভাবে পূরণ হয়েছে!`);
+          } else {
+            showToast(`⚠️ সদস্য কার্ড পাওয়া যায়নি। অনুগ্রহ করে প্রথমে '+ নতুন সদস্য' যোগ করুন।`);
+          }
+        } else {
+          lastExtractedData = data;
+          updateWidgetPreview(data);
+          fillFormFields(data);
+          syncToFirestore(data);
+          showToast('✅ এনআইডি তথ্য সফলভাবে পূরণ করা হয়েছে!');
+        }
       } else {
-        alert('এনআইডি বিশ্লেষণ ব্যর্থ: ' + (response?.error || 'সঠিক এনআইডি ছবি পাওয়া যায়নি।'));
+        alert('ডকুমেন্ট বিশ্লেষণ ব্যর্থ: ' + (response?.error || 'সঠিক NID বা জন্ম নিবন্ধন ছবি পাওয়া যায়নি।'));
       }
     });
   }
@@ -1435,7 +1902,38 @@
           পু: <b>${toBnDigits(actual.actualMale)}</b> | না: <b>${toBnDigits(actual.actualFemale)}</b> | হি: <b>${toBnDigits(actual.actualTrans)}</b> | মোট: <b>${toBnDigits(actual.totalMembers)}</b>
         </div>
       </div>
+      <div style="display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap;">
+        <button id="fc-s8-scan-member-btn" type="button" style="background: #0284c7; color: #fff; border: none; padding: 6px 12px; border-radius: 6px; font-weight: 700; font-size: 11.5px; cursor: pointer; display: flex; align-items: center; gap: 5px; box-shadow: 0 1px 3px rgba(0,0,0,0.12);">
+          📸 সদস্যের NID / জন্ম নিবন্ধন স্ক্যান
+        </button>
+        <button id="fc-s8-add-member-btn" type="button" style="background: #059669; color: #fff; border: none; padding: 6px 12px; border-radius: 6px; font-weight: 700; font-size: 11.5px; cursor: pointer; display: flex; align-items: center; gap: 5px; box-shadow: 0 1px 3px rgba(0,0,0,0.12);">
+          ➕ নতুন সদস্য যোগ করুন
+        </button>
+        <button id="fc-s8-fill-defaults-btn" type="button" style="background: #7c3aed; color: #fff; border: none; padding: 6px 12px; border-radius: 6px; font-weight: 700; font-size: 11.5px; cursor: pointer; display: flex; align-items: center; gap: 5px; box-shadow: 0 1px 3px rgba(0,0,0,0.12);">
+          ⚡ স্মার্ট ডিফল্ট দিন
+        </button>
+      </div>
     `;
+
+    const scanBtn = banner.querySelector('#fc-s8-scan-member-btn');
+    if (scanBtn) {
+      scanBtn.onclick = () => {
+        setScanTarget('member');
+        openScannerModal();
+      };
+    }
+    const addBtn = banner.querySelector('#fc-s8-add-member-btn');
+    if (addBtn) {
+      addBtn.onclick = () => {
+        triggerPortalAddMember();
+      };
+    }
+    const defBtn = banner.querySelector('#fc-s8-fill-defaults-btn');
+    if (defBtn) {
+      defBtn.onclick = () => {
+        applySmartDefaultsToAllMembers();
+      };
+    }
   }
 
   async function syncCrossMatchToFirestore(sec5Data, membersData, matchResult) {
@@ -1531,6 +2029,7 @@
     const stack = document.querySelector('.fm-members-stack') || s6Panel?.querySelector('.v-expansion-panel-content__wrap');
     if (stack) {
       injectTab6Banner(stack, sec5Data, membersData, match);
+      injectMemberCardButtons();
     }
 
     const ratioEl = document.getElementById('fc-cm-ratio');

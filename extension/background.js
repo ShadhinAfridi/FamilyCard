@@ -2,36 +2,54 @@
 // Handles direct Gemini 2.0 Flash AI OCR calls from Kiwi Browser with zero CSP issues.
 
 const GEMINI_PROMPT = `
-You are an expert OCR and document understanding system specializing in Bangladeshi National Identity (NID) Cards.
-Analyze the provided image of a Bangladeshi NID card and extract the required information into valid JSON format.
+You are an expert OCR and document understanding system specializing in Bangladeshi identity documents:
+1. Bangladeshi National Identity (NID) Cards (Smart Cards and laminated classic paper NID cards).
+2. Bangladeshi Digital Birth Registration Certificates (ডিজিটাল জন্ম নিবন্ধন সনদপত্র / BRC).
 
-RULES:
-1. "name_bn": Extract the full name in Bengali exactly as printed under "নাম:".
-2. "name_en": Extract the full name in English exactly as printed under "Name:". Format in UPPERCASE.
-3. "nid_number": Extract the National ID number. 
-   - CRITICAL NID DIGIT RULE: 
-     Only 10-digit (Smart NID) or 17-digit (legacy NID) numbers are accepted by the portal.
-     If the NID is an old 13-digit number, you MUST prepend the 4-digit birth year extracted from the Date of Birth to make it exactly 17 digits.
-     (For example: if Birth year is 1988 and NID is 1234567890123, return "19881234567890123").
-     Remove all spaces or hyphens.
-4. "dob": Extract Date of Birth in DD/MM/YYYY format.
-5. "gender": Identify whether the person is male ("পুরুষ") or female ("নারী").
-6. "father_name_bn": Extract the Father's name in Bengali as printed under "পিতা:".
-7. "father_name_en": The NID card does NOT print the father's name in English. You MUST translate/transliterate the Bengali father's name into English letters following standard Bangladeshi spelling conventions, formatted in ALL UPPERCASE (e.g., "সিরাজ ব্যাপারী" -> "SHIRAJ BEPARI", "মো: আক্তার হোসেন" -> "MD. AKTER HOSSAIN").
-8. "mother_name_bn": Extract the Mother's name in Bengali as printed under "মাতা:".
-9. "mother_name_en": Translate/transliterate the Bengali mother's name into English letters following standard Bangladeshi spelling conventions, formatted in ALL UPPERCASE (e.g., "নুরজাহান নেছা" -> "NURJAHAN NESA", "মোসা: খাদিজা বেগম" -> "MOSA. KHADIJA BEGUM").
+Analyze the provided image and extract information into valid JSON format.
+
+DOCUMENT CLASSIFICATION:
+- "doc_type": Identify whether the document is "nid" or "birth_certificate".
+  - If it is an NID Card (Smart Card or laminated paper), set "doc_type": "nid".
+  - If it is a Birth Registration Certificate (জন্ম নিবন্ধন সনদপত্র / Office of the Registrar of Birth and Death), set "doc_type": "birth_certificate".
+
+EXTRACTION RULES:
+1. "doc_number":
+   - For NID:
+     Extract the National ID number. Only 10-digit (Smart NID) or 17-digit (classic NID) numbers are accepted.
+     If the NID is an old 13-digit number, prepend the 4-digit birth year extracted from the Date of Birth to make it exactly 17 digits.
+   - For Birth Certificate:
+     Extract the 17-digit Birth Registration Number (জন্ম নিবন্ধন নম্বর / Personal Identification Number). It MUST be exactly 17 digits.
+   - Remove all spaces, hyphens, or non-numeric characters. Also copy to "nid_number" if doc_type is "nid".
+2. "name_bn": Extract the full Bengali name exactly as printed (under "নাম:" or "নাম").
+3. "name_en": Extract the full English name (under "Name:"). Format in ALL UPPERCASE letters.
+4. "dob": Extract Date of Birth in standard DD/MM/YYYY format.
+5. "gender": Identify gender as "পুরুষ" (Male), "নারী" (Female), or "তৃতীয় লিঙ্গ" (Transgender / Hijra).
+6. "father_name_bn": Extract the Father's name in Bengali as printed under "পিতা:" / "পিতার নাম:".
+7. "father_name_en": Translate or transliterate Father's name into English letters in ALL UPPERCASE (e.g. "MD. ABDUL HOQUE").
+8. "mother_name_bn": Extract the Mother's name in Bengali as printed under "মাতা:" / "মাতার নাম:".
+9. "mother_name_en": Translate or transliterate Mother's name into English letters in ALL UPPERCASE (e.g. "ROKEYA BEGUM").
+10. "relation_suggestion": If this document is for a family member, suggest the relationship relative to the household head ("স্বামী", "স্ত্রী", "ছেলে", "মেয়ে", "বাবা", "মা", "ভাই", "বোন", "অন্যান্য").
+11. "marital_status_suggestion":
+    - If age is under 18 or unmarried, suggest "অবিবাহিত".
+    - If adult with spouse or children or typical married adult, suggest "বিবাহিত".
+    - If widowed, suggest "বিধবা" / "বিপত্নীক".
 
 Return ONLY a single valid JSON object with these exact keys:
 {
+  "doc_type": "nid" or "birth_certificate",
+  "doc_number": "...",
+  "nid_number": "...",
   "name_bn": "...",
   "name_en": "...",
-  "nid_number": "...",
   "dob": "DD/MM/YYYY",
   "gender": "...",
   "father_name_bn": "...",
   "father_name_en": "...",
   "mother_name_bn": "...",
-  "mother_name_en": "..."
+  "mother_name_en": "...",
+  "relation_suggestion": "...",
+  "marital_status_suggestion": "..."
 }
 `;
 
@@ -158,14 +176,22 @@ async function handleDirectOCR(req) {
 
   const parsedData = JSON.parse(cleanText.trim());
 
-  // 10 or 17 digit NID rule validation & transformation
-  if (parsedData.nid_number) {
-    let cleanNid = normalizeDigits(parsedData.nid_number).replace(/[^0-9]/g, '');
-    if (cleanNid.length === 13) {
-      const yearMatch = String(parsedData.dob || '').match(/\b(19\d{2}|20\d{2})\b/);
-      if (yearMatch) cleanNid = yearMatch[1] + cleanNid;
-    }
-    parsedData.nid_number = cleanNid;
+  // 10 or 17 digit NID / 17 digit BRC rule validation & transformation
+  const rawDocNum = parsedData.doc_number || parsedData.nid_number || '';
+  let cleanDocNum = normalizeDigits(rawDocNum).replace(/[^0-9]/g, '');
+
+  if (parsedData.doc_type === 'birth_certificate' || cleanDocNum.length === 17) {
+    parsedData.doc_number = cleanDocNum;
+  } else if (cleanDocNum.length === 13) {
+    const yearMatch = String(parsedData.dob || '').match(/\b(19\d{2}|20\d{2})\b/);
+    if (yearMatch) cleanDocNum = yearMatch[1] + cleanDocNum;
+    parsedData.doc_number = cleanDocNum;
+  } else {
+    parsedData.doc_number = cleanDocNum;
+  }
+
+  if (parsedData.doc_type === 'nid' || !parsedData.doc_type) {
+    parsedData.nid_number = parsedData.doc_number;
   }
 
   if (parsedData.dob) {
@@ -178,8 +204,8 @@ async function handleDirectOCR(req) {
   if (parsedData.mother_name_en) parsedData.mother_name_en = String(parsedData.mother_name_en).toUpperCase().trim();
 
   // Attach user options
-  parsedData.marital_status = maritalStatus;
-  parsedData.religion = religion;
+  parsedData.marital_status = maritalStatus || parsedData.marital_status_suggestion || 'বিবাহিত';
+  parsedData.religion = religion || 'ইসলাম';
   parsedData.mobile_number = mobileNumber ? normalizeDigits(mobileNumber).trim() : '';
 
   return {

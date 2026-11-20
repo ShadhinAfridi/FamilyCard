@@ -23,6 +23,9 @@
   let lastExtractedData = null;
   let savedApiKey = localStorage.getItem('fc_gemini_api_key') || '';
   let activeMediaStream = null;
+  let savedPostcode = localStorage.getItem('fc_default_postcode') || '7721';
+  let savedVillageList = JSON.parse(localStorage.getItem('fc_village_list') || '["বসাকুষ্টিয়া", "চর কলিমহর"]');
+  let savedDefaultVillage = localStorage.getItem('fc_default_village') || savedVillageList[0] || 'বসাকুষ্টিয়া';
 
   // --- Utility: Bengali-to-English Digit Normalizer ---
   function normalizeDigits(str) {
@@ -308,6 +311,30 @@ Return ONLY a single valid JSON object with these exact keys:
           <input type="tel" id="fc-bm-mobile" placeholder="যেমন: 019XXXXXXXX" maxlength="11">
         </div>
 
+        <!-- Section 4 Address Settings (তথ্য সংগ্রহের ঠিকানা) -->
+        <div style="background: #f8fafc; border: 1.5px solid #cbd5e1; border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 8px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <label style="font-size: 12px; font-weight: 700; color: #1c3b68;">📍 সেকশন ৪: তথ্য সংগ্রহের ঠিকানা</label>
+            <span style="font-size: 10px; color: #64748b;">(স্থায়ী ঠিকানা অপরিবর্তিত)</span>
+          </div>
+          <div class="fc-bm-row">
+            <div class="fc-bm-col">
+              <label for="fc-bm-postcode">📮 পোস্ট কোড* (ডিফল্ট: 7721)</label>
+              <input type="text" id="fc-bm-postcode" value="${savedPostcode}" placeholder="7721">
+            </div>
+            <div class="fc-bm-col">
+              <label for="fc-bm-village">🏠 গ্রাম নির্বাচন*</label>
+              <select id="fc-bm-village">
+                ${savedVillageList.map(v => `<option value="${v}" ${v === savedDefaultVillage ? 'selected' : ''}>${v}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+          <div style="display: flex; gap: 6px;">
+            <input type="text" id="fc-bm-new-village" placeholder="নতুন গ্রামের নাম লিখুন..." style="flex: 1; padding: 6px 10px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 12px;">
+            <button id="fc-bm-btn-add-village" type="button" class="fc-bm-secondary-btn" style="padding: 6px 12px; font-size: 12px; font-weight: 700; background: #0284c7; color: #fff; border: none; border-radius: 8px; cursor: pointer;">+ যোগ</button>
+          </div>
+        </div>
+
         <div class="fc-bm-col">
           <label for="fc-bm-apikey">⚙️ Gemini API Key:</label>
           <input type="password" id="fc-bm-apikey" placeholder="AIzaSy..." value="${savedApiKey}">
@@ -333,6 +360,34 @@ Return ONLY a single valid JSON object with these exact keys:
   const imgPreview = document.getElementById('fc-bm-img');
   const viewFinder = document.getElementById('fc-bm-viewfinder');
   const videoElem = document.getElementById('fc-bm-video');
+  const inputPostcode = document.getElementById('fc-bm-postcode');
+  const selectVillage = document.getElementById('fc-bm-village');
+  const inputNewVillage = document.getElementById('fc-bm-new-village');
+  const btnAddVillage = document.getElementById('fc-bm-btn-add-village');
+
+  inputPostcode.addEventListener('change', () => {
+    savedPostcode = inputPostcode.value.trim() || '7721';
+    localStorage.setItem('fc_default_postcode', savedPostcode);
+  });
+
+  selectVillage.addEventListener('change', () => {
+    savedDefaultVillage = selectVillage.value;
+    localStorage.setItem('fc_default_village', savedDefaultVillage);
+  });
+
+  btnAddVillage.addEventListener('click', () => {
+    const newName = inputNewVillage.value.trim();
+    if (!newName) return;
+    if (!savedVillageList.includes(newName)) {
+      savedVillageList.push(newName);
+      localStorage.setItem('fc_village_list', JSON.stringify(savedVillageList));
+    }
+    savedDefaultVillage = newName;
+    localStorage.setItem('fc_default_village', savedDefaultVillage);
+    selectVillage.innerHTML = savedVillageList.map(v => `<option value="${v}" ${v === savedDefaultVillage ? 'selected' : ''}>${v}</option>`).join('');
+    inputNewVillage.value = '';
+    showToast(`✅ গ্রাম "${newName}" সফলভাবে যোগ করা হয়েছে এবং ডিফল্ট করা হলো!`);
+  });
 
   fab.addEventListener('click', () => { modal.style.display = 'flex'; });
   closeBtn.addEventListener('click', () => {
@@ -707,6 +762,9 @@ Return ONLY a single valid JSON object with these exact keys:
     if (data.mobile_number) {
       setReactiveValue(findInputByLabel(['মোবাইল নম্বর']) || document.getElementById('input-1294') || document.getElementById('input-250'), data.mobile_number);
     }
+
+    // Step 4: Collection Address Auto-fill
+    handleSection4Address();
   }
 
   // --- SECTION 3: IMAGE GUARDIAN & COMPLIANCE SYSTEM ---
@@ -1009,7 +1067,119 @@ Return ONLY a single valid JSON object with these exact keys:
     }
   }
 
-  // MutationObserver to watch Step 1 and Section 3 activation
+  // --- SECTION 4: ADDRESS (যোগাযোগের তথ্য - ফ্যামিলি কার্ড তথ্য সংগ্রহের ঠিকানা) ---
+  // Rules:
+  // 1. Post code: defaults to "7721", customizable by user.
+  // 2. Village: dropdown of village names ("বসাকুষ্টিয়া", "চর কলিমহর", etc.). Default persists across all forms.
+  // 3. Strictly IGNORES "স্থায়ী ঠিকানা" (Permanent Address) - leaves 100% for manual activity.
+
+  function getSection4CollectionInputs() {
+    const allChips = Array.from(document.querySelectorAll('.v-chip, .v-chip__content, span, h3, h4, div'));
+    const collectionChip = allChips.find(el => el.textContent.trim() === 'ফ্যামিলি কার্ড তথ্য সংগ্রহের ঠিকানা');
+    if (!collectionChip) return { postCodeInput: null, villageInput: null };
+
+    const permanentChip = allChips.find(el => el.textContent.trim() === 'স্থায়ী ঠিকানা' || el.textContent.trim() === 'স্থায়ী ঠিকানা');
+
+    const allInputs = Array.from(document.querySelectorAll('input:not([type="hidden"]):not([disabled])'));
+
+    const collectionInputs = allInputs.filter(inp => {
+      const isAfterCollection = (inp.compareDocumentPosition(collectionChip) & Node.DOCUMENT_POSITION_PRECEDING) !== 0;
+      const isBeforePermanent = !permanentChip || ((inp.compareDocumentPosition(permanentChip) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0);
+      return isAfterCollection && isBeforePermanent;
+    });
+
+    let postCodeInput = null;
+    let villageInput = null;
+
+    for (const inp of collectionInputs) {
+      const parentCol = inp.closest('.col, [class*="col-"], .v-input, div');
+      const labelText = parentCol?.querySelector('label')?.textContent || '';
+      if (labelText.includes('পোস্ট কোড')) {
+        postCodeInput = inp;
+      } else if (labelText.includes('গ্রাম') || labelText.includes('বাড়ি নং') || labelText.includes('সেকশন')) {
+        villageInput = inp;
+      }
+    }
+
+    return { postCodeInput, villageInput };
+  }
+
+  function handleSection4Address() {
+    const { postCodeInput, villageInput } = getSection4CollectionInputs();
+    if (!postCodeInput && !villageInput) return;
+
+    const currentPostcode = localStorage.getItem('fc_default_postcode') || '7721';
+    const villageList = JSON.parse(localStorage.getItem('fc_village_list') || '["বসাকুষ্টিয়া", "চর কলিমহর"]');
+    const currentVillage = localStorage.getItem('fc_default_village') || villageList[0] || 'বসাকুষ্টিয়া';
+
+    if (postCodeInput && !postCodeInput.value) {
+      setReactiveValue(postCodeInput, currentPostcode);
+      console.log('[FamilyCard] Section 4 Post Code filled with default:', currentPostcode);
+    }
+
+    if (villageInput) {
+      if (!villageInput.value) {
+        setReactiveValue(villageInput, currentVillage);
+        console.log('[FamilyCard] Section 4 Village filled with default:', currentVillage);
+      }
+      injectInlineVillageToolbar(villageInput, villageList, currentVillage, currentPostcode);
+    }
+  }
+
+  function injectInlineVillageToolbar(villageInput, villageList, currentVillage, currentPostcode) {
+    const parentContainer = villageInput.closest('.col, [class*="col-"]') || villageInput.parentElement;
+    if (!parentContainer || parentContainer.querySelector('#fc-inline-village-bar')) return;
+
+    const bar = document.createElement('div');
+    bar.id = 'fc-inline-village-bar';
+    bar.style.cssText = 'margin-bottom: 6px; padding: 6px 10px; background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; font-family: -apple-system, sans-serif; box-shadow: 0 2px 5px rgba(0,0,0,0.05);';
+
+    let optionsHtml = villageList.map(v => `<option value="${v}" ${v === currentVillage ? 'selected' : ''}>${v}</option>`).join('');
+    optionsHtml += '<option value="__ADD_NEW__">➕ নতুন গ্রাম যোগ করুন...</option>';
+
+    bar.innerHTML = `
+      <div style="display: flex; align-items: center; gap: 6px; font-weight: 700; color: #166534;">
+        <span>🏠 গ্রাম:</span>
+        <select id="fc-inline-village-select" style="padding: 3px 8px; border-radius: 6px; border: 1.5px solid #16a34a; font-size: 12px; font-weight: 700; background: #ffffff; color: #166534; cursor: pointer;">
+          ${optionsHtml}
+        </select>
+      </div>
+      <div style="font-size: 11px; color: #15803d; font-weight: 600;">
+        📮 পোস্ট কোড: <b>${currentPostcode}</b> (তথ্য সংগ্রহের ঠিকানা)
+      </div>
+    `;
+
+    parentContainer.insertBefore(bar, parentContainer.firstChild);
+
+    const sel = bar.querySelector('#fc-inline-village-select');
+    sel.addEventListener('change', () => {
+      if (sel.value === '__ADD_NEW__') {
+        const newName = prompt('নতুন গ্রামের নাম লিখুন:');
+        if (newName && newName.trim()) {
+          const trimmed = newName.trim();
+          let list = JSON.parse(localStorage.getItem('fc_village_list') || '["বসাকুষ্টিয়া", "চর কলিমহর"]');
+          if (!list.includes(trimmed)) {
+            list.push(trimmed);
+            localStorage.setItem('fc_village_list', JSON.stringify(list));
+          }
+          localStorage.setItem('fc_default_village', trimmed);
+          setReactiveValue(villageInput, trimmed);
+          showToast(`✅ নতুন গ্রাম "${trimmed}" যোগ করা হয়েছে এবং ডিফল্ট করা হলো!`);
+          bar.remove();
+          injectInlineVillageToolbar(villageInput, list, trimmed, currentPostcode);
+        } else {
+          sel.value = currentVillage;
+        }
+      } else {
+        const chosen = sel.value;
+        localStorage.setItem('fc_default_village', chosen);
+        setReactiveValue(villageInput, chosen);
+        showToast(`✅ গ্রাম "${chosen}" সেট করা হয়েছে (সব ফর্মে প্রযোজ্য)!`);
+      }
+    });
+  }
+
+  // MutationObserver to watch Step 1, Section 3, and Section 4 activation
   const observer = new MutationObserver(() => {
     if (lastExtractedData) {
       const tab1 = document.querySelector('[data-family-card-tab="1"]') || document.querySelector('.v-expansion-panel--active');
@@ -1020,11 +1190,15 @@ Return ONLY a single valid JSON object with these exact keys:
       }
     }
     traceSection3Media();
+    handleSection4Address();
   });
   observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class'] });
 
-  // Periodic polling for Section 3 (guarantees zero latency on slow tablets)
-  setInterval(traceSection3Media, 1500);
+  // Periodic polling for Section 3 & Section 4 (guarantees zero latency on slow tablets)
+  setInterval(() => {
+    traceSection3Media();
+    handleSection4Address();
+  }, 1500);
 
   function showToast(msg) {
     const existing = document.querySelector('.fc-bm-toast');

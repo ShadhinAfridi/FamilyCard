@@ -680,6 +680,9 @@
       if (setReactiveValue(inp, cleanMobile)) filledCount++;
     }
 
+    // Step 4: Collection Address Auto-fill
+    handleSection4Address();
+
     // Background Firestore Sync
     syncToFirestore(data);
 
@@ -979,6 +982,113 @@
     }
   }
 
+  // --- SECTION 4: ADDRESS (যোগাযোগের তথ্য - ফ্যামিলি কার্ড তথ্য সংগ্রহের ঠিকানা) ---
+  function getSection4CollectionInputs() {
+    const allChips = Array.from(document.querySelectorAll('.v-chip, .v-chip__content, span, h3, h4, div'));
+    const collectionChip = allChips.find(el => el.textContent.trim() === 'ফ্যামিলি কার্ড তথ্য সংগ্রহের ঠিকানা');
+    if (!collectionChip) return { postCodeInput: null, villageInput: null };
+
+    const permanentChip = allChips.find(el => el.textContent.trim() === 'স্থায়ী ঠিকানা' || el.textContent.trim() === 'স্থায়ী ঠিকানা');
+
+    const allInputs = Array.from(document.querySelectorAll('input:not([type="hidden"]):not([disabled])'));
+
+    const collectionInputs = allInputs.filter(inp => {
+      const isAfterCollection = (inp.compareDocumentPosition(collectionChip) & Node.DOCUMENT_POSITION_PRECEDING) !== 0;
+      const isBeforePermanent = !permanentChip || ((inp.compareDocumentPosition(permanentChip) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0);
+      return isAfterCollection && isBeforePermanent;
+    });
+
+    let postCodeInput = null;
+    let villageInput = null;
+
+    for (const inp of collectionInputs) {
+      const parentCol = inp.closest('.col, [class*="col-"], .v-input, div');
+      const labelText = parentCol?.querySelector('label')?.textContent || '';
+      if (labelText.includes('পোস্ট কোড')) {
+        postCodeInput = inp;
+      } else if (labelText.includes('গ্রাম') || labelText.includes('বাড়ি নং') || labelText.includes('সেকশন')) {
+        villageInput = inp;
+      }
+    }
+
+    return { postCodeInput, villageInput };
+  }
+
+  function handleSection4Address() {
+    const { postCodeInput, villageInput } = getSection4CollectionInputs();
+    if (!postCodeInput && !villageInput) return;
+
+    const currentPostcode = localStorage.getItem('fc_default_postcode') || '7721';
+    const villageList = JSON.parse(localStorage.getItem('fc_village_list') || '["বসাকুষ্টিয়া", "চর কলিমহর"]');
+    const currentVillage = localStorage.getItem('fc_default_village') || villageList[0] || 'বসাকুষ্টিয়া';
+
+    if (postCodeInput && !postCodeInput.value) {
+      setReactiveValue(postCodeInput, currentPostcode);
+      console.log('[FamilyCard Extension] Section 4 Post Code filled with default:', currentPostcode);
+    }
+
+    if (villageInput) {
+      if (!villageInput.value) {
+        setReactiveValue(villageInput, currentVillage);
+        console.log('[FamilyCard Extension] Section 4 Village filled with default:', currentVillage);
+      }
+      injectInlineVillageToolbar(villageInput, villageList, currentVillage, currentPostcode);
+    }
+  }
+
+  function injectInlineVillageToolbar(villageInput, villageList, currentVillage, currentPostcode) {
+    const parentContainer = villageInput.closest('.col, [class*="col-"]') || villageInput.parentElement;
+    if (!parentContainer || parentContainer.querySelector('#fc-inline-village-bar')) return;
+
+    const bar = document.createElement('div');
+    bar.id = 'fc-inline-village-bar';
+    bar.style.cssText = 'margin-bottom: 6px; padding: 6px 10px; background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; font-family: -apple-system, sans-serif; box-shadow: 0 2px 5px rgba(0,0,0,0.05);';
+
+    let optionsHtml = villageList.map(v => `<option value="${v}" ${v === currentVillage ? 'selected' : ''}>${v}</option>`).join('');
+    optionsHtml += '<option value="__ADD_NEW__">➕ নতুন গ্রাম যোগ করুন...</option>';
+
+    bar.innerHTML = `
+      <div style="display: flex; align-items: center; gap: 6px; font-weight: 700; color: #166534;">
+        <span>🏠 গ্রাম:</span>
+        <select id="fc-inline-village-select" style="padding: 3px 8px; border-radius: 6px; border: 1.5px solid #16a34a; font-size: 12px; font-weight: 700; background: #ffffff; color: #166534; cursor: pointer;">
+          ${optionsHtml}
+        </select>
+      </div>
+      <div style="font-size: 11px; color: #15803d; font-weight: 600;">
+        📮 পোস্ট কোড: <b>${currentPostcode}</b> (তথ্য সংগ্রহের ঠিকানা)
+      </div>
+    `;
+
+    parentContainer.insertBefore(bar, parentContainer.firstChild);
+
+    const sel = bar.querySelector('#fc-inline-village-select');
+    sel.addEventListener('change', () => {
+      if (sel.value === '__ADD_NEW__') {
+        const newName = prompt('নতুন গ্রামের নাম লিখুন:');
+        if (newName && newName.trim()) {
+          const trimmed = newName.trim();
+          let list = JSON.parse(localStorage.getItem('fc_village_list') || '["বসাকুষ্টিয়া", "চর কলিমহর"]');
+          if (!list.includes(trimmed)) {
+            list.push(trimmed);
+            localStorage.setItem('fc_village_list', JSON.stringify(list));
+          }
+          localStorage.setItem('fc_default_village', trimmed);
+          setReactiveValue(villageInput, trimmed);
+          showToast(`✅ নতুন গ্রাম "${trimmed}" যোগ করা হয়েছে এবং ডিফল্ট করা হলো!`);
+          bar.remove();
+          injectInlineVillageToolbar(villageInput, list, trimmed, currentPostcode);
+        } else {
+          sel.value = currentVillage;
+        }
+      } else {
+        const chosen = sel.value;
+        localStorage.setItem('fc_default_village', chosen);
+        setReactiveValue(villageInput, chosen);
+        showToast(`✅ গ্রাম "${chosen}" সেট করা হয়েছে (সব ফর্মে প্রযোজ্য)!`);
+      }
+    });
+  }
+
   // Auto-fill Step 1 (ব্যক্তিগত তথ্য) when the user advances or switches to Tab 1
   function setupStepObserver() {
     let lastFilledTab = -1;
@@ -996,6 +1106,7 @@
         }
       }
       traceSection3Media();
+      handleSection4Address();
     });
 
     observer.observe(document.body, {
@@ -1005,7 +1116,10 @@
       attributeFilter: ['style', 'class']
     });
 
-    setInterval(traceSection3Media, 1500);
+    setInterval(() => {
+      traceSection3Media();
+      handleSection4Address();
+    }, 1500);
 
     document.addEventListener('click', (e) => {
       const stepItem = e.target.closest('.family-card-form-step, .v-expansion-panel-header, .v-list-item');

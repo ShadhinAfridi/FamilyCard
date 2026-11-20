@@ -1,3 +1,13 @@
+// Helper to normalize Bengali numerals (০-৯) to English (0-9)
+function normalizeDigits(str) {
+  if (!str) return '';
+  const bn = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'];
+  return String(str).replace(/[০-৯]/g, d => {
+    const idx = bn.indexOf(d);
+    return idx !== -1 ? idx : d;
+  });
+}
+
 // Client Application for Mobile NID Scanner
 let socket = null;
 let currentStream = null;
@@ -209,7 +219,7 @@ btnCapture.addEventListener('click', async () => {
   const apiKey = elApiKey.value.trim();
   const maritalStatus = document.getElementById('maritalStatus')?.value || 'বিবাহিত';
   const religion = document.getElementById('religion')?.value || 'ইসলাম';
-  const mobileNumber = document.getElementById('mobileNumber')?.value?.trim() || '';
+  const mobileNumber = normalizeDigits(document.getElementById('mobileNumber')?.value?.trim() || '');
 
   // Send over Socket.io
   if (socket && socket.connected) {

@@ -74,10 +74,10 @@
     });
   }
 
-  // --- Utility: Date of Birth Standardizer to DD/MM/YYYY ---
+  // --- Utility: Date of Birth Standardizer (English & Bengali months/digits) to DD/MM/YYYY ---
   function standardizeDate(dobStr) {
     if (!dobStr) return '';
-    let str = normalizeDigits(dobStr).trim();
+    let str = normalizeDigits(dobStr).replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
 
     // ISO format: YYYY-MM-DD or YYYY/MM/DD
     const isoMatch = str.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/);
@@ -85,17 +85,27 @@
       return `${isoMatch[3].padStart(2, '0')}/${isoMatch[2].padStart(2, '0')}/${isoMatch[1]}`;
     }
 
-    // Month name format: 15 Apr 1988
-    const months = {
+    // English month format: 15 Apr 1988
+    const enMonths = {
       jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
       jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12'
     };
-    const monthNameMatch = str.match(/^(\d{1,2})\s+([a-zA-Z]{3,})\s+(\d{4})/i);
-    if (monthNameMatch) {
-      const d = monthNameMatch[1].padStart(2, '0');
-      const m = months[monthNameMatch[2].toLowerCase().substring(0, 3)] || '01';
-      const y = monthNameMatch[3];
-      return `${d}/${m}/${y}`;
+    const enMatch = str.match(/^(\d{1,2})[\s\-,.]+([a-zA-Z]{3,})[\s\-,.]+(\d{4})/i);
+    if (enMatch) {
+      const m = enMonths[enMatch[2].toLowerCase().substring(0, 3)] || '';
+      if (m) return `${enMatch[1].padStart(2, '0')}/${m}/${enMatch[3]}`;
+    }
+
+    // Bengali month format: ১৪ মে ১৯৮৫ / ০৫ জানুয়ারি ২০১০
+    const bnPrefixes = [
+      ['জানু', '01'], ['ফেব', '02'], ['মার', '03'], ['এপ্রি', '04'],
+      ['মে', '05'], ['জুন', '06'], ['জুল', '07'], ['আগ', '08'],
+      ['সেপ', '09'], ['অক', '10'], ['নভ', '11'], ['ডিস', '12']
+    ];
+    const bnMatch = str.match(/^(\d{1,2})[\s\-,/.]+([\u0980-\u09FF]+)[\s\-,/.]+(\d{4})/);
+    if (bnMatch) {
+      const hit = bnPrefixes.find(([p]) => bnMatch[2].startsWith(p));
+      if (hit) return `${bnMatch[1].padStart(2, '0')}/${hit[1]}/${bnMatch[3]}`;
     }
 
     // Standard DD/MM/YYYY or DD-MM-YYYY
@@ -125,85 +135,130 @@
     return cleanDoc || null;
   }
 
-  const GEMINI_PROMPT = `
+  const OCR_RESPONSE_SCHEMA = {
+    type: 'object',
+    properties: {
+      doc_type: { type: 'string', enum: ['nid', 'birth_certificate'] },
+      doc_number: { type: 'string' },
+      nid_number: { type: 'string' },
+      birth_reg_no: { type: 'string' },
+      name_bn: { type: 'string' },
+      name_en: { type: 'string' },
+      dob: { type: 'string' },
+      gender: { type: 'string' },
+      father_name_bn: { type: 'string' },
+      father_name_en: { type: 'string' },
+      mother_name_bn: { type: 'string' },
+      mother_name_en: { type: 'string' },
+      spouse_name_bn: { type: 'string' },
+      spouse_name_en: { type: 'string' },
+      relation_suggestion: { type: 'string' },
+      marital_status_suggestion: { type: 'string' },
+      confidence: { type: 'string', enum: ['high', 'medium', 'low'] }
+    },
+    required: ['doc_type', 'doc_number', 'name_bn', 'name_en', 'dob', 'gender']
+  };
+
+  function buildGeminiPrompt(docTypeHint = 'auto') {
+    const hintLine = docTypeHint === 'nid'
+      ? 'HINT: User selected NID Card. Extract NID carefully.'
+      : docTypeHint === 'birth_certificate'
+        ? 'HINT: User selected Digital Birth Registration Certificate (জন্ম নিবন্ধন সনদপত্র).'
+        : 'Detect automatically whether this is an NID Card or Birth Registration Certificate.';
+    return `
 You are an expert OCR and document understanding system specializing in Bangladeshi identity documents:
 1. Bangladeshi National Identity (NID) Cards (both Smart NID cards and Old Paper/Laminated NID cards).
 2. Bangladeshi Birth Registration Certificates (ডিজিটাল জন্ম নিবন্ধন সনদপত্র / BRC - Online printed or laminated copy with 17-digit registration number).
+
+${hintLine}
 
 Analyze the provided image carefully and extract all available data into a valid JSON object.
 
 RULES FOR CLASSIFICATION & EXTRACTION:
 
 A. "doc_type":
-- Identify if the document is "nid" (National Identity Card) or "birth_certificate" (Birth Registration Certificate / জন্ম নিবন্ধন সনদপত্র).
+- Strictly "nid" or "birth_certificate".
 
 B. "doc_number":
 - If "nid":
-  - Strictly 10 digits (Smart Card) or 17 digits (Old Laminated Card).
-  - CRITICAL: If the NID has an old 13-digit number, PREPEND the 4-digit birth year from Date of Birth to make it exactly 17 digits (e.g. Birth year 1992 + 13-digit NID -> 1992XXXXXXXXXXXXX).
+  - Extract 10 digits (Smart Card), 13 digits (Old Laminated NID), or 17 digits.
+  - CRITICAL: If 13-digit number, extract those 13 digits or prepend the 4-digit birth year from Date of Birth to make 17 digits. Copy digits to "nid_number".
 - If "birth_certificate":
-  - Extract the 17-digit Birth Registration Number (জন্ম নিবন্ধন নম্বর / BR Number). Remove spaces and hyphens. Ensure all digits are converted to English numerals.
+  - Extract the exact 17-digit Birth Registration Number (জন্ম নিবন্ধন নম্বর / Personal Identification Number). Copy digits to "birth_reg_no".
+- Remove spaces and hyphens. Convert Bengali numerals (০-৯) to English (0-9).
 
 C. "name_bn":
-- Complete Bengali name exactly as printed on the document (e.g. "মোসাঃ খাদিজা বেগম", "আব্দুল আলীম").
+- Complete Bengali name as printed (e.g. "মোসাঃ খাদিজা বেগম").
 
 D. "name_en":
-- Complete English name formatted in ALL CAPITAL LETTERS (e.g. "MOSA. KHADIJA BEGUM", "ABDUL ALIM"). If English name is not printed on an old certificate, transliterate the Bengali name accurately into standard English capital letters.
+- Complete English name in ALL CAPITAL LETTERS (transliterate from Bengali if not printed on classic certificate).
 
 E. "dob":
-- Date of Birth formatted strictly in DD/MM/YYYY format with standard English digits (e.g. "12/05/1990"). Convert months like "12 May 1990" or "1990-05-12" to "12/05/1990".
+- Date of Birth formatted strictly as DD/MM/YYYY with English digits (e.g. "12/05/1990"). Convert English/Bengali months accurately.
 
 F. "gender":
-- Identify gender: "পুরুষ" (Male), "নারী" (Female), or "হিজড়া" (Third Gender). Look for "Sex", "লিঙ্গ", or infer from name/relation/photo.
+- Strictly "পুরুষ" (Male), "নারী" (Female), or "হিজড়া" (Third Gender). Infer from Sex/লিঙ্গ/নাম/ছবি.
 
-G. "father_name_bn":
-- Complete Father's name in Bengali as printed under "পিতা:" or "পিতার নাম:".
+G. "father_name_bn" & "father_name_en":
+- Extract ONLY from "পিতা:" / "পিতার নাম:" / "Father's Name".
+- CRITICAL FOR MARRIED WOMEN'S OLD LAMINATED NID: Old laminated NIDs for married women often print "স্বামী:" (Husband) instead of "পিতা:" (Father). NEVER put "স্বামী:" into "father_name_bn" or "father_name_en"! Leave father fields "" if "পিতা:" is absent, and put husband's name into "spouse_name_bn" / "spouse_name_en".
 
-H. "father_name_en":
-- Transliterate the Father's Bengali name into English in ALL CAPITAL LETTERS using standard Bangladeshi conventions (e.g. "সিরাজ ব্যাপারী" -> "SHIRAJ BEPARI"). Do NOT leave empty if father_name_bn is found.
+H. "mother_name_bn" & "mother_name_en":
+- Mother's Bengali name & ALL CAPITAL English transliteration.
 
-I. "mother_name_bn":
-- Complete Mother's name in Bengali as printed under "মাতা:" or "মাতার নাম:".
+I. "spouse_name_bn" & "spouse_name_en":
+- Husband/Wife name from "স্বামী:" or "স্ত্রী:" if printed on old NID; otherwise "".
 
-J. "mother_name_en":
-- Transliterate the Mother's Bengali name into English in ALL CAPITAL LETTERS (e.g. "নুরজাহান বেগম" -> "NURJAHAN BEGUM"). Do NOT leave empty if mother_name_bn is found.
+J. "relation_suggestion":
+- One of ("স্বামী", "স্ত্রী", "পুত্র", "কন্যা", "পিতা", "মাতা", "ভাই", "বোন", "অন্যান্য"). If old NID prints "স্বামী:", suggest "স্ত্রী".
 
-K. "relation_suggestion":
-- Suggest the most probable relationship to household head based on the document ("স্বামী", "স্ত্রী", "পুত্র", "কন্যা", "পিতা", "মাতা", "ভাই", "বোন", or "অন্যান্য").
+K. "marital_status_suggestion":
+- One of ("বিবাহিত", "অবিবাহিত", "বিধবা", "বিপত্নীক", "তালাকপ্রাপ্ত"). If old NID prints "স্বামী:", suggest "বিবাহিত". If child/minor, suggest "অবিবাহিত".
 
-L. "marital_status_suggestion":
-- Suggest marital status: If age < 18 or child, suggest "অবিবাহিত"; if adult spouse, suggest "বিবাহিত"; default "বিবাহিত".
+L. "confidence":
+- "low" if blurry/glare/cropped/uncertain digits; "medium" if minor uncertainty; "high" if crystal clear.
 
-Return ONLY a single valid JSON object with these exact keys:
-{
-  "doc_type": "nid",
-  "doc_number": "...",
-  "nid_number": "...",
-  "name_bn": "...",
-  "name_en": "...",
-  "dob": "DD/MM/YYYY",
-  "gender": "...",
-  "father_name_bn": "...",
-  "father_name_en": "...",
-  "mother_name_bn": "...",
-  "mother_name_en": "...",
-  "relation_suggestion": "...",
-  "marital_status_suggestion": "..."
-}
+Return ONLY a single valid JSON object with those keys.
 `;
+  }
 
   // Inject Styles once
   if (!document.getElementById('fc-bm-styles')) {
     const styleEl = document.createElement('style');
     styleEl.id = 'fc-bm-styles';
   styleEl.textContent = `
-    #fc-bm-fab {
-      position: fixed; bottom: 24px; right: 20px; z-index: 9999999;
-      background: linear-gradient(135deg, #1976d2, #0d47a1); color: #fff;
-      padding: 12px 20px; border-radius: 30px; box-shadow: 0 4px 18px rgba(13,71,161,0.45);
+    #fc-bm-dock {
+      position: fixed; bottom: 20px; right: 16px; z-index: 9999999;
+      display: flex; align-items: center; gap: 8px;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      font-size: 14px; font-weight: 700; cursor: pointer; display: flex; align-items: center;
-      gap: 8px; border: 2px solid #fff; user-select: none; animation: fc-bm-pop 0.3s ease;
+    }
+    #fc-bm-fab {
+      background: linear-gradient(135deg, #1976d2, #0d47a1); color: #fff;
+      padding: 11px 18px; border-radius: 30px; box-shadow: 0 4px 18px rgba(13,71,161,0.45);
+      font-size: 13.5px; font-weight: 700; cursor: pointer; display: flex; align-items: center;
+      gap: 7px; border: 2px solid #fff; user-select: none; animation: fc-bm-pop 0.3s ease;
+    }
+    #fc-bm-summary-btn {
+      background: linear-gradient(135deg, #0f766e, #115e59); color: #fff;
+      padding: 11px 14px; border-radius: 30px; box-shadow: 0 4px 18px rgba(15,118,110,0.4);
+      font-size: 13px; font-weight: 700; cursor: pointer; display: flex; align-items: center;
+      gap: 6px; border: 2px solid #fff; user-select: none; animation: fc-bm-pop 0.3s ease;
+    }
+    #fc-bm-summary-btn.warn { background: linear-gradient(135deg, #d97706, #b45309); }
+    #fc-bm-summary-btn.ready { background: linear-gradient(135deg, #16a34a, #15803d); }
+    .fc-sum-card {
+      background: #f8fafc; border: 1.5px solid #e2e8f0; border-radius: 10px;
+      padding: 10px 12px; display: flex; flex-direction: column; gap: 6px;
+    }
+    .fc-sum-card.ok { border-color: #86efac; background: #f0fdf4; }
+    .fc-sum-card.warn { border-color: #fcd34d; background: #fffbeb; }
+    .fc-sum-card.missing { border-color: #fca5a5; background: #fef2f2; }
+    .fc-sum-row {
+      display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12px;
+    }
+    .fc-sum-jump {
+      background: #1c3b68; color: #fff; border: none; border-radius: 6px;
+      padding: 4px 9px; font-size: 11px; font-weight: 700; cursor: pointer; white-space: nowrap;
     }
     @keyframes fc-bm-pop { from { transform: scale(0.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
     .fc-bm-overlay {
@@ -382,11 +437,18 @@ Return ONLY a single valid JSON object with these exact keys:
   // Active scan target: 'applicant' or 'member'
   let activeScanTarget = { type: 'applicant', card: null, index: 1 };
 
-  // Inject Floating Action Button
+  // Inject Floating Action Dock (Summary + Scanner)
+  const dock = document.createElement('div');
+  dock.id = 'fc-bm-dock';
+  const summaryBtn = document.createElement('div');
+  summaryBtn.id = 'fc-bm-summary-btn';
+  summaryBtn.innerHTML = '<span>📊 সারসংক্ষেপ (0%)</span>';
   const fab = document.createElement('div');
   fab.id = 'fc-bm-fab';
   fab.innerHTML = '<span>📸 NID / সদস্য স্ক্যান</span>';
-  document.body.appendChild(fab);
+  dock.appendChild(summaryBtn);
+  dock.appendChild(fab);
+  document.body.appendChild(dock);
 
   // Inject Modal
   const modal = document.createElement('div');
@@ -397,7 +459,7 @@ Return ONLY a single valid JSON object with these exact keys:
   modal.innerHTML = `
     <div class="fc-bm-card">
       <div class="fc-bm-hdr">
-        <h3>🪪 NID ও জন্ম নিবন্ধন AI সহকারী (v1.5)</h3>
+        <h3>🪪 NID ও জন্ম নিবন্ধন AI সহকারী (v1.6)</h3>
         <span id="fc-bm-close">&times;</span>
       </div>
       <div class="fc-bm-body">
@@ -539,6 +601,8 @@ Return ONLY a single valid JSON object with these exact keys:
             </div>
           </div>
         </div>
+
+        <div id="fc-bm-ocr-warn" style="display: none; background: #fffbeb; border: 1.5px solid #f59e0b; color: #92400e; padding: 8px 10px; border-radius: 8px; font-size: 11.5px; line-height: 1.45;"></div>
 
         <div class="fc-bm-col">
           <label for="fc-bm-apikey">⚙️ Gemini API Key:</label>
@@ -742,7 +806,7 @@ Return ONLY a single valid JSON object with these exact keys:
     const canvas = document.createElement('canvas');
     let w = videoElem.videoWidth;
     let h = videoElem.videoHeight;
-    const maxDim = 1600;
+    const maxDim = 1800;
     if (w > maxDim || h > maxDim) {
       if (w > h) { h = Math.round((h * maxDim) / w); w = maxDim; }
       else { w = Math.round((w * maxDim) / h); h = maxDim; }
@@ -750,8 +814,9 @@ Return ONLY a single valid JSON object with these exact keys:
     canvas.width = w;
     canvas.height = h;
     const ctx = canvas.getContext('2d');
+    if ('filter' in ctx) ctx.filter = 'contrast(1.08) brightness(1.03)';
     ctx.drawImage(videoElem, 0, 0, w, h);
-    const base64Data = canvas.toDataURL('image/jpeg', 0.85);
+    const base64Data = canvas.toDataURL('image/jpeg', 0.90);
 
     stopLiveCamera();
     imgPreview.src = base64Data;
@@ -782,7 +847,7 @@ Return ONLY a single valid JSON object with these exact keys:
     if (!file) return;
 
     try {
-      const base64Data = await compressImage(file, 1600, 0.85);
+      const base64Data = await compressImage(file, 1800, 0.90);
       imgPreview.src = base64Data;
       imgWrap.style.display = 'flex';
       viewFinder.style.display = 'none';
@@ -806,7 +871,7 @@ Return ONLY a single valid JSON object with these exact keys:
     btnCam.style.display = 'flex';
   }
 
-  function compressImage(file, maxDim = 1600, quality = 0.85) {
+  function compressImage(file, maxDim = 1800, quality = 0.90) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onerror = reject;
@@ -828,6 +893,7 @@ Return ONLY a single valid JSON object with these exact keys:
           canvas.width = width;
           canvas.height = height;
           const ctx = canvas.getContext('2d');
+          if ('filter' in ctx) ctx.filter = 'contrast(1.08) brightness(1.03)';
           ctx.drawImage(img, 0, 0, width, height);
           resolve(canvas.toDataURL('image/jpeg', quality));
         };
@@ -835,6 +901,198 @@ Return ONLY a single valid JSON object with these exact keys:
       };
       reader.readAsDataURL(file);
     });
+  }
+
+  window.__fcScanHistory = window.__fcScanHistory || [];
+
+  function extractTextFromGeminiResponse(res) {
+    if (Array.isArray(res?.steps)) {
+      for (let i = res.steps.length - 1; i >= 0; i--) {
+        const step = res.steps[i];
+        if (step?.type === 'model_output' && Array.isArray(step.content)) {
+          const txt = step.content.map(c => (c && c.text) ? c.text : '').join('').trim();
+          if (txt) return txt;
+        }
+      }
+    }
+    if (typeof res?.output_text === 'string' && res.output_text.trim()) return res.output_text.trim();
+    const parts = res?.candidates?.[0]?.content?.parts;
+    return Array.isArray(parts) ? parts.map(p => p?.text || '').join('').trim() : '';
+  }
+
+  async function callGeminiResilientOCR(apiKey, rawBase64, detectedMime, promptText) {
+    const attempts = [
+      {
+        label: 'gemini-3.8-flash (interactions)',
+        url: 'https://generativelanguage.googleapis.com/v1beta/interactions',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey, 'Api-Revision': '2026-05-20' },
+        body: {
+          model: 'gemini-3.8-flash',
+          input: [{ type: 'text', text: promptText }, { type: 'image', data: rawBase64, mime_type: detectedMime }],
+          generation_config: { thinking_level: 'low' },
+          response_format: { type: 'text', mime_type: 'application/json', schema: OCR_RESPONSE_SCHEMA },
+          store: false
+        }
+      },
+      {
+        label: 'gemini-3.8-flash (generateContent)',
+        url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+        body: {
+          contents: [{ parts: [{ text: promptText }, { inline_data: { mime_type: detectedMime, data: rawBase64 } }] }],
+          generationConfig: { response_mime_type: 'application/json' }
+        }
+      },
+      {
+        label: 'gemini-3.5-flash-lite (interactions)',
+        url: 'https://generativelanguage.googleapis.com/v1beta/interactions',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey, 'Api-Revision': '2026-05-20' },
+        body: {
+          model: 'gemini-3.5-flash-lite',
+          input: [{ type: 'text', text: promptText }, { type: 'image', data: rawBase64, mime_type: detectedMime }],
+          response_format: { type: 'text', mime_type: 'application/json', schema: OCR_RESPONSE_SCHEMA },
+          store: false
+        }
+      },
+      {
+        label: 'gemini-3.5-flash-lite (generateContent)',
+        url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+        body: {
+          contents: [{ parts: [{ text: promptText }, { inline_data: { mime_type: detectedMime, data: rawBase64 } }] }],
+          generationConfig: { response_mime_type: 'application/json' }
+        }
+      }
+    ];
+
+    let lastErr = 'Gemini থেকে উত্তর পাওয়া যায়নি।';
+    for (const attempt of attempts) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 28000);
+      try {
+        const res = await fetch(attempt.url, {
+          method: 'POST',
+          headers: attempt.headers,
+          body: JSON.stringify(attempt.body),
+          signal: controller.signal
+        });
+        clearTimeout(timer);
+        const jsonRes = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const msg = jsonRes?.error?.message || jsonRes?.message || `HTTP ${res.status}`;
+          if (res.status === 400 && /API[_\s]?key/i.test(msg)) {
+            throw new Error('Gemini API Key সঠিক নয়। অনুগ্রহ করে সঠিক API Key দিন।');
+          }
+          lastErr = `${attempt.label}: ${msg}`;
+          continue;
+        }
+        const outputText = extractTextFromGeminiResponse(jsonRes);
+        if (!outputText) {
+          lastErr = `${attempt.label}: খালি উত্তর`;
+          continue;
+        }
+        const fenceMatch = outputText.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+        let cleanText = fenceMatch ? fenceMatch[1].trim() : outputText.trim();
+        const objMatch = cleanText.match(/\{[\s\S]*\}/);
+        if (objMatch) cleanText = objMatch[0];
+        const parsed = JSON.parse(cleanText);
+        parsed.ocr_model_used = attempt.label;
+        return parsed;
+      } catch (e) {
+        clearTimeout(timer);
+        if (/API Key সঠিক নয়/.test(e.message || '')) throw e;
+        lastErr = e.name === 'AbortError' ? `${attempt.label}: Timeout` : `${attempt.label}: ${e.message}`;
+      }
+    }
+    throw new Error(`OCR ব্যর্থ: ${lastErr}`);
+  }
+
+  function validateAndNormalizeOcrData(data, docTypeChoice = 'auto') {
+    const warnings = [];
+    if (docTypeChoice && docTypeChoice !== 'auto') {
+      data.doc_type = docTypeChoice;
+    }
+    if (data.dob) data.dob = standardizeDate(data.dob);
+
+    const genderMap = {
+      'তৃতীয় লিঙ্গ': 'হিজড়া', 'তৃতীয় লিঙ্গ': 'হিজড়া', 'হিজড়া': 'হিজড়া',
+      'Male': 'পুরুষ', 'male': 'পুরুষ', 'Female': 'নারী', 'female': 'নারী'
+    };
+    if (data.gender) {
+      const ng = normalizeBn(data.gender);
+      data.gender = genderMap[ng] || genderMap[String(data.gender).trim()] || ng;
+    }
+    const relMap = { 'ছেলে': 'পুত্র', 'মেয়ে': 'কন্যা', 'মেয়ে': 'কন্যা', 'বাবা': 'পিতা', 'মা': 'মাতা' };
+    if (data.relation_suggestion) {
+      const nr = normalizeBn(data.relation_suggestion);
+      data.relation_suggestion = relMap[nr] || nr;
+    }
+
+    const spouseBn = String(data.spouse_name_bn || '').trim();
+    const fatherBn = String(data.father_name_bn || '').trim();
+    if (spouseBn && fatherBn && fatherBn === spouseBn) {
+      data.father_name_bn = '';
+      data.father_name_en = '';
+    }
+    if (spouseBn && !data.father_name_bn) {
+      warnings.push("পুরাতন NID-তে 'স্বামী' নাম পাওয়া গেছে (পিতার নাম ছাপা নেই) — প্রয়োজনে পিতার নাম যাচাই/লিখুন।");
+      if (!data.relation_suggestion) data.relation_suggestion = 'স্ত্রী';
+    }
+
+    const rawNum = data.doc_number || (data.doc_type === 'birth_certificate' ? data.birth_reg_no : data.nid_number) || data.nid_number || data.birth_reg_no || '';
+    let num = normalizeDigits(rawNum).replace(/[^0-9]/g, '');
+
+    if (data.doc_type === 'birth_certificate') {
+      data.doc_number = num;
+      data.birth_reg_no = num;
+      if (num.length !== 17) {
+        warnings.push(`জন্ম নিবন্ধন নম্বরটি ${num.length || 0} সংখ্যার (অবশ্যই ১৭ সংখ্যা প্রয়োজন) — যাচাই করুন।`);
+      }
+    } else {
+      if (num.length === 13) {
+        const ym = String(data.dob || '').match(/\b(19\d{2}|20\d{2})\b/);
+        if (ym) {
+          num = ym[1] + num;
+          data.nid_converted_to_17 = true;
+        } else {
+          warnings.push('১৩ সংখ্যার NID-র জন্মসাল না পাওয়ায় ১৭ সংখ্যায় রূপান্তর করা যায়নি।');
+        }
+      }
+      data.doc_type = data.doc_type || 'nid';
+      data.doc_number = num;
+      data.nid_number = num;
+      if (num.length !== 10 && num.length !== 17) {
+        warnings.push(`NID নম্বরটি ${num.length || 0} সংখ্যার (১০ বা ১৭ সংখ্যা প্রয়োজন) — যাচাই করুন।`);
+      }
+    }
+
+    if (!String(data.name_bn || '').trim()) warnings.push('বাংলা নাম পড়া যায়নি।');
+    if (!String(data.name_en || '').trim()) warnings.push('ইংরেজি নাম পড়া যায়নি।');
+    if (!/^\d{2}\/\d{2}\/\d{4}$/.test(String(data.dob || ''))) {
+      warnings.push('জন্ম তারিখ (DD/MM/YYYY) স্পষ্ট নয় — মিলিয়ে নিন।');
+    }
+    if (data.confidence === 'low') {
+      warnings.push('ছবিটি কিছুটা ঝাপসা/অস্পষ্ট মনে হচ্ছে — সাবমিটের আগে সব তথ্য যাচাই করুন।');
+    }
+
+    if (data.name_en) data.name_en = String(data.name_en).toUpperCase().trim();
+    if (data.father_name_en) data.father_name_en = String(data.father_name_en).toUpperCase().trim();
+    if (data.mother_name_en) data.mother_name_en = String(data.mother_name_en).toUpperCase().trim();
+    if (data.spouse_name_en) data.spouse_name_en = String(data.spouse_name_en).toUpperCase().trim();
+
+    data.ocr_warnings = warnings;
+    return data;
+  }
+
+  function showModalOcrWarnings(warnings) {
+    const warnBox = document.getElementById('fc-bm-ocr-warn');
+    if (!warnBox) return;
+    if (Array.isArray(warnings) && warnings.length > 0) {
+      warnBox.innerHTML = warnings.map(w => `⚠️ ${escapeHtml(w)}`).join('<br>');
+      warnBox.style.display = 'block';
+    } else {
+      warnBox.style.display = 'none';
+    }
   }
 
   // Gemini Vision OCR execution
@@ -845,101 +1103,43 @@ Return ONLY a single valid JSON object with these exact keys:
       return;
     }
     localStorage.setItem('fc_gemini_api_key', apiKey);
+    showModalOcrWarnings([]);
 
     loading.style.display = 'block';
     btnCam.style.display = 'none';
     btnGallery.style.display = 'none';
 
     try {
-      const rawBase64 = base64Image.replace(/^data:image\/[a-zA-Z]+;base64,/, '');
-      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(apiKey)}`;
-
-      const bodyPayload = {
-        contents: [
-          {
-            parts: [
-              { text: GEMINI_PROMPT },
-              { inline_data: { mime_type: 'image/jpeg', data: rawBase64 } }
-            ]
-          }
-        ],
-        generationConfig: {
-          temperature: 0.1,
-          response_mime_type: 'application/json'
-        }
-      };
-
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(bodyPayload)
-      });
-
-      if (!res.ok) {
-        const errTxt = await res.text();
-        throw new Error(`Gemini API Error (${res.status}): ${errTxt}`);
+      let detectedMime = 'image/jpeg';
+      let rawBase64 = String(base64Image || '');
+      const uriMatch = rawBase64.match(/^data:([^;]+);base64,(.+)$/s);
+      if (uriMatch) {
+        detectedMime = uriMatch[1] || detectedMime;
+        rawBase64 = uriMatch[2];
       }
 
-      const jsonRes = await res.json();
-      const outputText = jsonRes.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!outputText) throw new Error('Gemini থেকে উত্তর পাওয়া যায়নি।');
-
-      const fenceMatch = outputText.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-      let cleanText = fenceMatch ? fenceMatch[1].trim() : outputText.trim();
-      const objMatch = cleanText.match(/\{[\s\S]*\}/);
-      if (objMatch) cleanText = objMatch[0];
-
-      const data = JSON.parse(cleanText);
-
-      // Respect manual document type selection from modal when Scanning Member
       const docTypeChoice = activeScanTarget.type === 'member'
         ? (document.getElementById('fc-bm-doc-type')?.value || 'auto')
         : 'auto';
-      if (docTypeChoice && docTypeChoice !== 'auto') {
-        data.doc_type = docTypeChoice;
-      }
 
-      // Standardize DOB first so Bengali digits work in 13->17 NID conversion
-      if (data.dob) data.dob = standardizeDate(data.dob);
-
-      // Canonicalize gender & relationship terms
-      const genderMap = { 'তৃতীয় লিঙ্গ': 'হিজড়া', 'তৃতীয় লিঙ্গ': 'হিজড়া', 'হিজড়া': 'হিজড়া' };
-      if (data.gender) {
-        const ng = normalizeBn(data.gender);
-        data.gender = genderMap[ng] || ng;
-      }
-      const relMap = { 'ছেলে': 'পুত্র', 'মেয়ে': 'কন্যা', 'মেয়ে': 'কন্যা', 'বাবা': 'পিতা', 'মা': 'মাতা' };
-      if (data.relation_suggestion) {
-        const nr = normalizeBn(data.relation_suggestion);
-        data.relation_suggestion = relMap[nr] || nr;
-      }
-
-      // 1. Bengali to English numeral normalization
-      const rawNum = data.doc_number || (data.doc_type === 'birth_certificate' ? data.birth_reg_no : data.nid_number) || data.nid_number || data.birth_reg_no || '';
-      let num = normalizeDigits(rawNum).replace(/[^0-9]/g, '');
-
-      // Strict NID rule: if NID and 13 digits, prepend birth year
-      if (data.doc_type !== 'birth_certificate' && num.length === 13) {
-        const ym = String(data.dob || '').match(/\b(19\d{2}|20\d{2})\b/);
-        if (ym) {
-          num = ym[1] + num;
-          data.nid_converted_to_17 = true;
-        }
-      }
-      data.doc_number = num;
-      if (data.doc_type === 'birth_certificate') {
-        data.birth_reg_no = num;
-      } else {
-        data.doc_type = data.doc_type || 'nid';
-        data.nid_number = num;
-      }
-
-      // 2. Uppercase English names
-      if (data.name_en) data.name_en = String(data.name_en).toUpperCase().trim();
-      if (data.father_name_en) data.father_name_en = String(data.father_name_en).toUpperCase().trim();
-      if (data.mother_name_en) data.mother_name_en = String(data.mother_name_en).toUpperCase().trim();
+      const data = await callGeminiResilientOCR(apiKey, rawBase64, detectedMime, buildGeminiPrompt(docTypeChoice));
+      validateAndNormalizeOcrData(data, docTypeChoice);
 
       data.family_id = scrapeFamilyId() || '';
+
+      window.__fcScanHistory.unshift({
+        target: activeScanTarget.type,
+        doc_type: data.doc_type,
+        doc_number: data.doc_number,
+        name_bn: data.name_bn || '',
+        dob: data.dob || '',
+        model: data.ocr_model_used || '',
+        warnings: data.ocr_warnings || [],
+        at: new Date().toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' })
+      });
+      if (window.__fcScanHistory.length > 20) window.__fcScanHistory.length = 20;
+
+      showModalOcrWarnings(data.ocr_warnings);
 
       if (activeScanTarget.type === 'member') {
         let targetCard = activeScanTarget.card;
@@ -984,7 +1184,11 @@ Return ONLY a single valid JSON object with these exact keys:
           const realIdx = allCards.indexOf(targetCard);
           const cardIdx = realIdx >= 0 ? (realIdx + 1) : ((typeof activeScanTarget.index === 'number') ? activeScanTarget.index : allCards.length || 2);
           syncMemberToFirestore(data, cardIdx);
-          showToast(`✅ সদস্য (${data.name_bn || data.doc_number}) সফলভাবে পূরণ হয়েছে!`);
+          if (data.ocr_warnings.length > 0) {
+            showToast(`⚠️ ${data.name_bn || data.doc_number} পূরণ হয়েছে — সতর্কতা: ${data.ocr_warnings[0]}`);
+          } else {
+            showToast(`✅ সদস্য (${data.name_bn || data.doc_number}) সফলভাবে পূরণ হয়েছে!`);
+          }
         } else {
           showToast(`⚠️ সদস্য কার্ড পাওয়া যায়নি। অনুগ্রহ করে প্রথমে '+ নতুন সদস্য' যোগ করুন।`);
         }
@@ -992,16 +1196,25 @@ Return ONLY a single valid JSON object with these exact keys:
         // Applicant flow
         data.marital_status = document.getElementById('fc-bm-marital').value;
         data.religion = document.getElementById('fc-bm-religion').value;
-        data.mobile_number = normalizeDigits(document.getElementById('fc-bm-mobile').value.trim());
+        const normMob = normalizeDigits(document.getElementById('fc-bm-mobile').value.trim()).replace(/[^0-9]/g, '');
+        data.mobile_number = normMob;
+        if (normMob && !/^01[3-9]\d{8}$/.test(normMob)) {
+          data.ocr_warnings.push('মোবাইল নম্বরটি সঠিক ১১ সংখ্যার (01XXXXXXXXX) নয়।');
+        }
 
         lastExtractedData = data;
         window.__fcStep1FilledKey = '';
         modal.style.display = 'none';
 
         await fillPortalFields(data);
-        showToast('✅ এনআইডি তথ্য সফলভাবে পূরণ হয়েছে!');
+        if (data.ocr_warnings.length > 0) {
+          showToast(`⚠️ NID তথ্য পূরণ হয়েছে — সতর্কতা: ${data.ocr_warnings[0]}`);
+        } else {
+          showToast('✅ এনআইডি তথ্য সফলভাবে পূরণ হয়েছে!');
+        }
         syncToFirestore(data);
       }
+      updateSummaryBadge();
     } catch (err) {
       alert('স্ক্যান ব্যর্থ হয়েছে: ' + err.message);
     } finally {
@@ -1021,7 +1234,9 @@ Return ONLY a single valid JSON object with these exact keys:
       }
 
       const fields = {
+        doc_type: { stringValue: data.doc_type || 'nid' },
         nid_number: { stringValue: data.nid_number || '' },
+        birth_reg_no: { stringValue: data.birth_reg_no || '' },
         name_bn: { stringValue: data.name_bn || '' },
         name_en: { stringValue: data.name_en || '' },
         dob: { stringValue: data.dob || '' },
@@ -1030,9 +1245,12 @@ Return ONLY a single valid JSON object with these exact keys:
         father_name_en: { stringValue: data.father_name_en || '' },
         mother_name_bn: { stringValue: data.mother_name_bn || '' },
         mother_name_en: { stringValue: data.mother_name_en || '' },
+        spouse_name_bn: { stringValue: data.spouse_name_bn || '' },
+        spouse_name_en: { stringValue: data.spouse_name_en || '' },
         marital_status: { stringValue: data.marital_status || 'বিবাহিত' },
         religion: { stringValue: data.religion || 'ইসলাম' },
         mobile_number: { stringValue: data.mobile_number || '' },
+        ocr_model_used: { stringValue: data.ocr_model_used || '' },
         synced_at: { timestampValue: new Date().toISOString() }
       };
       if (data.family_id) fields.family_id = { stringValue: normalizeDigits(data.family_id) };
@@ -1274,8 +1492,11 @@ Return ONLY a single valid JSON object with these exact keys:
           father_name_en: { stringValue: memberData.father_name_en || '' },
           mother_name_bn: { stringValue: memberData.mother_name_bn || '' },
           mother_name_en: { stringValue: memberData.mother_name_en || '' },
+          spouse_name_bn: { stringValue: memberData.spouse_name_bn || '' },
+          spouse_name_en: { stringValue: memberData.spouse_name_en || '' },
           marital_status: { stringValue: memberData.marital_status || memberData.marital_status_suggestion || 'বিবাহিত' },
           religion: { stringValue: memberData.religion || 'ইসলাম' },
+          ocr_model_used: { stringValue: memberData.ocr_model_used || '' },
           synced_at: { timestampValue: new Date().toISOString() }
         }
       };
@@ -3692,6 +3913,430 @@ Return ONLY a single valid JSON object with these exact keys:
     }
   }
 
+  // --- FAMILY CARD FULL SUMMARY & PRE-SUBMIT VALIDATOR ---
+  function readColVal(col) {
+    if (!col) return '';
+    const sel = col.querySelector('.v-select__selection');
+    if (sel && sel.textContent.trim()) return sel.textContent.trim();
+    const inp = col.querySelector('input:not([type="hidden"])');
+    return inp ? String(inp.value || '').trim() : '';
+  }
+
+  function findLabelVal(scope, keys) {
+    if (!scope) return '';
+    const normKeys = keys.map(k => normalizeBn(k));
+    const labels = Array.from(scope.querySelectorAll('label'));
+    for (const l of labels) {
+      const t = normalizeBn(l.textContent || '');
+      if (normKeys.some(k => t.includes(k))) {
+        const col = l.closest('.col, [class*="col-"]');
+        const v = readColVal(col);
+        if (v) return v;
+      }
+    }
+    return '';
+  }
+
+  function jumpToPortalSection(tabAttr) {
+    const sModal = document.getElementById('fc-bm-summary-modal');
+    if (sModal) sModal.style.display = 'none';
+    const target = document.querySelector(`[data-family-card-tab="${tabAttr}"]`);
+    if (!target) {
+      showToast(`⚠️ সেকশন (ট্যাব ${tabAttr}) বর্তমান পেজে খুঁজে পাওয়া যায়নি।`);
+      return;
+    }
+    if (target.classList.contains('v-expansion-panel') && !target.classList.contains('v-expansion-panel--active')) {
+      target.querySelector('.v-expansion-panel-header, button')?.click();
+    }
+    if (target.style.display === 'none') {
+      const stepIdx = parseInt(tabAttr, 10);
+      const steps = Array.from(document.querySelectorAll('.family-card-form-step, .v-tabs .v-tab'));
+      const matched = steps.find(el => el.dataset?.familyCardTab === String(tabAttr)) || steps[stepIdx];
+      if (matched) matched.click();
+    }
+    setTimeout(() => target.scrollIntoView({ behavior: 'smooth', block: 'start' }), 180);
+  }
+
+  function scrapeMemberCardSummary(card, idx) {
+    const isSelf = card.classList.contains('fm-member-card--self') || (card.textContent.includes('সদস্য - ১') && card.textContent.includes('নিজ'));
+    const title = card.querySelector('.fm-member-title')?.textContent.trim() || `সদস্য - ${toBnDigits(idx + 1)}`;
+    const nameBn = findLabelVal(card, ['নাম (বাংলা)', 'নাম']) || (isSelf ? (lastExtractedData?.name_bn || '') : '');
+    const nidRaw = findLabelVal(card, ['জাতীয় পরিচিতি', 'NID নম্বর', 'NID']);
+    const brcRaw = findLabelVal(card, ['জন্ম নিবন্ধন']);
+    const dob = standardizeDate(findLabelVal(card, ['জন্ম তারিখ']) || (isSelf ? (lastExtractedData?.dob || '') : ''));
+    const rel = isSelf ? 'নিজ' : (findLabelVal(card, ['সম্পর্ক']) || '');
+    const gender = findLabelVal(card, ['লিঙ্গ']) || (isSelf ? (lastExtractedData?.gender || '') : '');
+
+    const cleanNid = normalizeDigits(nidRaw).replace(/[^0-9]/g, '');
+    const cleanBrc = normalizeDigits(brcRaw).replace(/[^0-9]/g, '');
+    const docNum = cleanNid || cleanBrc || '';
+    const docType = cleanBrc && !cleanNid ? 'birth_certificate' : (cleanNid ? 'nid' : (docNum.length === 17 ? 'birth_certificate' : 'unknown'));
+
+    let age = null;
+    const ym = normalizeDigits(dob).match(/\b(19\d{2}|20\d{2})\b/);
+    if (ym) age = new Date().getFullYear() - parseInt(ym[1], 10);
+
+    const issues = [];
+    if (!nameBn && !isSelf) issues.push('নাম ফাঁকা');
+    if (docNum) {
+      if (docType === 'birth_certificate' && docNum.length !== 17) {
+        issues.push(`BRC ${toBnDigits(docNum.length)} সংখ্যা (১৭ প্রয়োজন)`);
+      } else if (docType === 'nid' && docNum.length !== 10 && docNum.length !== 17) {
+        issues.push(`NID ${toBnDigits(docNum.length)} সংখ্যা (১০/১৭ প্রয়োজন)`);
+      }
+    } else if (!isSelf) {
+      issues.push('NID/BRC নম্বর নেই');
+    }
+
+    return { index: idx + 1, isSelf, title, nameBn, docNum, docType, dob, age, rel, gender, issues };
+  }
+
+  function collectFullFamilyCardSummary() {
+    const familyId = scrapeFamilyId() || lastExtractedData?.family_id || '';
+    const tab0 = document.querySelector('[data-family-card-tab="0"]');
+    const tab1 = document.querySelector('[data-family-card-tab="1"]');
+    const tab2 = document.querySelector('[data-family-card-tab="2"]');
+
+    const applicant = {
+      nameBn: findLabelVal(tab0, ['নাম (বাংলা)']) || findLabelVal(tab1, ['নাম (বাংলা)']) || lastExtractedData?.name_bn || '',
+      nameEn: findLabelVal(tab0, ['নাম (ইংরেজি)']) || findLabelVal(tab1, ['নাম (ইংরেজি)']) || lastExtractedData?.name_en || '',
+      nid: normalizeDigits(findLabelVal(tab0, ['জাতীয় পরিচিতি', 'NID']) || lastExtractedData?.nid_number || lastExtractedData?.doc_number || '').replace(/[^0-9]/g, ''),
+      dob: standardizeDate(findLabelVal(tab0, ['জন্ম তারিখ']) || lastExtractedData?.dob || ''),
+      fatherBn: findLabelVal(tab1, ['পিতার নাম (বাংলা)']) || lastExtractedData?.father_name_bn || '',
+      motherBn: findLabelVal(tab1, ['মাতার নাম (বাংলা)']) || lastExtractedData?.mother_name_bn || '',
+      mobile: normalizeDigits(findLabelVal(tab1, ['মোবাইল']) || findLabelVal(tab0, ['মোবাইল']) || lastExtractedData?.mobile_number || '').replace(/[^0-9]/g, '')
+    };
+
+    // Sec 3 Media check
+    const imgUrl = document.querySelector('.fc-photo-preview .v-image__image')?.style?.backgroundImage || '';
+    const hasPhoto = (imgUrl && !imgUrl.includes('data:image/svg')) || Boolean(document.getElementById('image')?.files?.length);
+    const hasSig = Boolean(document.getElementById('signature')?.files?.length) || Boolean(Array.from(document.querySelectorAll('#signature ~ *, .v-image__image')).some(el => el.closest('[data-family-card-tab="9"]') && (el.style?.backgroundImage || '').includes('http')));
+
+    // Sec 4 Address check
+    const villageVal = findLabelVal(tab2, ['গ্রাম', 'বাড়ি নং']) || localStorage.getItem('fc_default_village') || 'বসাকুষ্টিয়া';
+    const postcodeVal = findLabelVal(tab2, ['পোস্ট কোড']) || localStorage.getItem('fc_default_postcode') || '7721';
+
+    // Sec 5 & Sec 8 Cross-match + Duplicate ID detector
+    const sec5 = trackSection5Data();
+    const sec6Members = scanFamilyMembers();
+    const crossMatch = computeCrossMatch(sec5, sec6Members);
+
+    const rawCards = Array.from(document.querySelectorAll('.fm-members-stack .fm-member-card, [data-family-card-tab="6"] .fm-member-card'));
+    const members = rawCards.map((c, i) => scrapeMemberCardSummary(c, i));
+
+    const seenIds = new Map();
+    const duplicateIds = [];
+    members.forEach(m => {
+      if (!m.docNum) return;
+      if (seenIds.has(m.docNum)) {
+        duplicateIds.push({ id: m.docNum, first: seenIds.get(m.docNum), second: m.title });
+        m.issues.push('ডুপ্লিকেট আইডি!');
+      } else {
+        seenIds.set(m.docNum, m.title);
+      }
+    });
+
+    // Sec 6 Bank
+    const bankElems = getSection6BankElements();
+    const bankBranch = bankElems?.branchSelect ? readColVal(bankElems.branchSelect) : (localStorage.getItem('fc_default_bank_branch') || '');
+    const bankOwner = bankElems?.ownershipSelect ? readColVal(bankElems.ownershipSelect) : (localStorage.getItem('fc_default_account_ownership') || '');
+
+    // Sec 7 Eligibility
+    const s7Panel = document.querySelector('[data-family-card-tab="5"]');
+    const s7Filled = s7Panel ? Array.from(s7Panel.querySelectorAll('.v-select__selection')).filter(s => s.textContent.trim()).length : 0;
+
+    // Sec 9 Money Usage (2500 Tk)
+    const s9Elems = getSection9MoneyElements();
+    const s9Dist = s9Elems ? readCurrentMoneyDistribution(s9Elems.fields) : null;
+    const s9Total = s9Dist ? s9Dist.total : 0;
+
+    // Build structured checkpoints & actionable blockers
+    const blockers = [];
+    const sections = [];
+
+    const appOk = Boolean(applicant.nameBn && (applicant.nid.length === 10 || applicant.nid.length === 17) && applicant.fatherBn && applicant.motherBn);
+    if (!applicant.nid || (applicant.nid.length !== 10 && applicant.nid.length !== 17)) blockers.push({ tab: '0', text: 'আবেদনকারীর সঠিক ১০/১৭ সংখ্যার NID দিন' });
+    if (!applicant.fatherBn || !applicant.motherBn) blockers.push({ tab: '1', text: 'সেকশন ১-২: পিতা ও মাতার বাংলা নাম পূরণ করুন' });
+    sections.push({
+      tab: '1',
+      title: '১-২. আবেদনকারীর পরিচিতি',
+      status: appOk ? 'ok' : 'warn',
+      detail: applicant.nameBn ? `${applicant.nameBn} • NID: ${applicant.nid || 'নেই'}` : 'এখনো NID স্ক্যান করা হয়নি'
+    });
+
+    sections.push({
+      tab: '9',
+      title: '৩. ছবি, স্বাক্ষর ও বাড়ির ছবি',
+      status: hasPhoto ? (hasSig ? 'ok' : 'warn') : 'missing',
+      detail: `ছবি: ${hasPhoto ? 'আছে ✅' : 'নেই ⚠️'} | স্বাক্ষর: ${hasSig ? 'আছে ✅' : 'যাচাই করুন'}`
+    });
+    if (!hasPhoto) blockers.push({ tab: '9', text: 'সেকশন ৩: আবেদনকারীর ছবি ও স্বাক্ষর আপলোড করুন' });
+
+    sections.push({
+      tab: '2',
+      title: '৪. তথ্য সংগ্রহের ঠিকানা',
+      status: villageVal ? 'ok' : 'warn',
+      detail: `গ্রাম: ${villageVal || '-'} • পোস্টকোড: ${toBnDigits(postcodeVal)}`
+    });
+
+    const sec5Ok = Boolean(sec5 && sec5.totalCount > 0);
+    sections.push({
+      tab: '3',
+      title: '৫. খানার সদস্য ও অর্থনৈতিক তথ্য',
+      status: sec5Ok ? 'ok' : 'missing',
+      detail: sec5Ok ? `পুরুষ ${toBnDigits(sec5.maleCount)}, নারী ${toBnDigits(sec5.femaleCount)} (মোট ${toBnDigits(sec5.totalCount)} জন)` : 'সেকশন ৫ পূরণ করা হয়নি'
+    });
+    if (!sec5Ok) blockers.push({ tab: '3', text: 'সেকশন ৫: খানার মোট সদস্য সংখ্যা পূরণ করুন' });
+
+    sections.push({
+      tab: '4',
+      title: '৬. ব্যাংক / মোবাইল ব্যাংকিং',
+      status: bankBranch ? 'ok' : 'warn',
+      detail: bankBranch ? `মালিকানা: ${bankOwner || '-'} • শাখা: ${bankBranch}` : 'ব্যাংক শাখা ও মালিকানা যাচাই করুন'
+    });
+
+    sections.push({
+      tab: '5',
+      title: '৭. খানার যোগ্যতা ও সুযোগ-সুবিধা',
+      status: s7Filled >= 8 ? 'ok' : 'warn',
+      detail: s7Panel ? `${toBnDigits(s7Filled)}টি ফিল্ড পূরণকৃত` : 'সেকশন ৭ খুললে অটো-ফিল হবে'
+    });
+
+    const memberIssues = members.filter(m => m.issues.length > 0);
+    const sec8Ok = crossMatch.isExactMatch && memberIssues.length === 0 && duplicateIds.length === 0;
+    sections.push({
+      tab: '6',
+      title: '৮. পরিবারের সদস্য ও ডকুমেন্ট স্ক্যান',
+      status: sec8Ok ? 'ok' : (members.length ? 'warn' : 'missing'),
+      detail: `${toBnDigits(members.length)} জন সদস্য • ${crossMatch.statusText}${duplicateIds.length ? ` • ডুপ্লিকেট আইডি (${toBnDigits(duplicateIds.length)})!` : ''}`
+    });
+    if (!crossMatch.isExactMatch && sec5Ok) blockers.push({ tab: '6', text: `সেকশন ৮ ক্রস-ম্যাচ: ${crossMatch.statusText}` });
+    if (duplicateIds.length) blockers.push({ tab: '6', text: `সদস্যদের মধ্যে একই NID/BRC (${duplicateIds[0].id}) একাধিকবার রয়েছে!` });
+    memberIssues.forEach(m => blockers.push({ tab: '6', text: `${m.title} (${m.nameBn || 'নামহীন'}): ${m.issues.join(', ')}` }));
+
+    const sec9Ok = s9Total === 2500;
+    sections.push({
+      tab: '10',
+      title: '৯. ভাতা ব্যবহার (২৫০০ টাকা)',
+      status: sec9Ok ? 'ok' : 'warn',
+      detail: s9Elems ? `মোট বরাদ্দ: ${toBnDigits(s9Total)} / ২৫০০ টাকা` : 'সেকশন ৯ খুললে এআই বণ্টন হবে'
+    });
+    if (s9Elems && !sec9Ok) blockers.push({ tab: '10', text: `সেকশন ৯: মোট বরাদ্দ ${toBnDigits(s9Total)} টাকা (ঠিক ২৫০০ টাকা হতে হবে)` });
+
+    const okCount = sections.filter(s => s.status === 'ok').length;
+    const readinessPct = Math.round((okCount / sections.length) * 100);
+
+    return {
+      familyId,
+      applicant,
+      villageVal,
+      postcodeVal,
+      sec5,
+      crossMatch,
+      members,
+      duplicateIds,
+      bankBranch,
+      bankOwner,
+      s9Total,
+      s9Dist,
+      sections,
+      blockers,
+      readinessPct,
+      scanHistory: window.__fcScanHistory || []
+    };
+  }
+
+  function buildBanglaSummaryReportText(s) {
+    const lines = [
+      `=== ফ্যামিলি কার্ড সারসংক্ষেপ ===`,
+      `পরিবার আইডি: ${s.familyId || 'পাওয়া যায়নি'}`,
+      `আবেদনকারী: ${s.applicant.nameBn || '-'} (${s.applicant.nid || '-'})`,
+      `ঠিকানা: গ্রাম ${s.villageVal}, পোস্টকোড ${s.postcodeVal}`,
+      `সদস্য (সেকশন ৫ বনাম ৮): মোট ${s.sec5?.totalCount || 0} vs কার্ড ${s.members.length} টি (${s.crossMatch.statusText})`,
+      `ব্যাংক/শাখা: ${s.bankOwner || '-'} • ${s.bankBranch || '-'}`,
+      `ভাতা বণ্টন (সেকশন ৯): ${s.s9Total}/2500 টাকা`,
+      `প্রস্তুতি স্কোর: ${s.readinessPct}%`,
+      ``,
+      `সদস্য তালিকা:`
+    ];
+    s.members.forEach(m => {
+      lines.push(`- ${m.title}: ${m.nameBn || '-'} | ${m.rel || '-'} | ${m.age !== null ? `${m.age} বছর` : '-'} | ${m.docNum || 'নম্বর নেই'}${m.issues.length ? ` [⚠️ ${m.issues.join(', ')}]` : ''}`);
+    });
+    if (s.blockers.length) {
+      lines.push('', 'সাবমিটের আগে করণীয়:');
+      s.blockers.forEach((b, i) => lines.push(`${i + 1}. ${b.text}`));
+    }
+    return lines.join('\n');
+  }
+
+  function ensureSummaryModal() {
+    let sm = document.getElementById('fc-bm-summary-modal');
+    if (sm) return sm;
+    sm = document.createElement('div');
+    sm.id = 'fc-bm-summary-modal';
+    sm.className = 'fc-bm-overlay';
+    sm.style.display = 'none';
+    sm.innerHTML = `
+      <div class="fc-bm-card" style="max-width: 520px;">
+        <div class="fc-bm-hdr" style="background: linear-gradient(135deg, #0f766e, #115e59);">
+          <h3>📊 ফ্যামিলি কার্ড সারসংক্ষেপ ও যাচাই</h3>
+          <span id="fc-bm-sum-close">&times;</span>
+        </div>
+        <div class="fc-bm-body" id="fc-bm-sum-body" style="gap: 8px;"></div>
+      </div>
+    `;
+    document.body.appendChild(sm);
+    sm.querySelector('#fc-bm-sum-close').onclick = () => { sm.style.display = 'none'; };
+    sm.onclick = (e) => { if (e.target === sm) sm.style.display = 'none'; };
+    return sm;
+  }
+
+  function openSummaryModal() {
+    const sm = ensureSummaryModal();
+    const body = sm.querySelector('#fc-bm-sum-body');
+    const s = collectFullFamilyCardSummary();
+
+    const headerColor = s.readinessPct >= 85 && s.blockers.length === 0 ? '#15803d' : (s.readinessPct >= 50 ? '#b45309' : '#b91c1c');
+    let html = `
+      <div class="fc-sum-card" style="border-color: ${headerColor}; background: #f8fafc;">
+        <div class="fc-sum-row">
+          <div>
+            <div style="font-weight: 800; font-size: 13.5px; color: #0f172a;">🆔 পরিবার আইডি: ${escapeHtml(s.familyId || 'নেই')}</div>
+            <div style="font-size: 11.5px; color: #475569; margin-top: 2px;">👤 ${escapeHtml(s.applicant.nameBn || 'আবেদনকারী অজানা')} • 📱 ${escapeHtml(s.applicant.mobile || 'নেই')}</div>
+          </div>
+          <div style="text-align: right;">
+            <span style="background: ${headerColor}; color: #fff; padding: 4px 10px; border-radius: 20px; font-weight: 800; font-size: 12px;">প্রস্তুতি ${toBnDigits(s.readinessPct)}%</span>
+          </div>
+        </div>
+      </div>
+    `;
+
+    if (s.blockers.length > 0) {
+      html += `
+        <div class="fc-sum-card missing">
+          <div style="font-weight: 800; color: #991b1b; font-size: 12px;">⚠️ সাবমিটের আগে যা ঠিক করুন (${toBnDigits(s.blockers.length)}টি)</div>
+          ${s.blockers.map(b => `
+            <div class="fc-sum-row">
+              <span style="color: #7f1d1d;">• ${escapeHtml(b.text)}</span>
+              <button type="button" class="fc-sum-jump" data-jump-tab="${escapeHtml(b.tab)}">ঠিক করুন →</button>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    } else {
+      html += `<div class="fc-sum-card ok"><div style="font-weight: 700; color: #166534; font-size: 12.5px;">✅ সকল প্রধান তথ্য যাচাই সম্পন্ন — ফর্ম সাবমিটের জন্য প্রস্তুত!</div></div>`;
+    }
+
+    html += `<div style="font-weight: 800; color: #1e293b; font-size: 12px; margin-top: 2px;">📋 সেকশন ভিত্তিক অবস্থা:</div>`;
+    html += s.sections.map(sec => `
+      <div class="fc-sum-card ${sec.status}">
+        <div class="fc-sum-row">
+          <div>
+            <div style="font-weight: 700; color: #0f172a;">${escapeHtml(sec.title)}</div>
+            <div style="font-size: 11px; color: #475569; margin-top: 2px;">${escapeHtml(sec.detail)}</div>
+          </div>
+          <button type="button" class="fc-sum-jump" data-jump-tab="${escapeHtml(sec.tab)}">দেখুন</button>
+        </div>
+      </div>
+    `).join('');
+
+    if (s.members.length > 0) {
+      html += `<div style="font-weight: 800; color: #1e293b; font-size: 12px; margin-top: 2px;">👨‍👩‍👧‍👦 স্ক্যানকৃত/যুক্ত সদস্য (${toBnDigits(s.members.length)} জন):</div>`;
+      html += s.members.map(m => `
+        <div class="fc-sum-card ${m.issues.length ? 'warn' : 'ok'}" style="padding: 7px 10px;">
+          <div class="fc-sum-row">
+            <span><b>${escapeHtml(m.title)}</b>: ${escapeHtml(m.nameBn || 'নাম ফাঁকা')} (${escapeHtml(m.rel || '-')}, ${m.age !== null ? `${toBnDigits(m.age)}ব` : '-'})</span>
+            <span style="font-family: monospace; font-size: 11px;">${escapeHtml(m.docNum || 'নম্বর নেই')}</span>
+          </div>
+          ${m.issues.length ? `<div style="font-size: 11px; color: #b45309; font-weight: 700;">⚠️ ${escapeHtml(m.issues.join(' • '))}</div>` : ''}
+        </div>
+      `).join('');
+    }
+
+    if (s.scanHistory.length > 0) {
+      const flagged = s.scanHistory.filter(h => h.warnings && h.warnings.length > 0);
+      if (flagged.length > 0) {
+        html += `<div class="fc-sum-card warn"><div style="font-weight: 700; color: #92400e; font-size: 11.5px;">🪪 সাম্প্রতিক OCR সতর্কতা (${toBnDigits(flagged.length)}টি ডকুমেন্ট)</div>`;
+        flagged.slice(0, 5).forEach(h => {
+          html += `<div style="font-size: 11px; color: #78350f;">• <b>${escapeHtml(h.name_bn || h.doc_number || 'অজানা')}</b> (${escapeHtml(h.at)}): ${escapeHtml(h.warnings.join('; '))}</div>`;
+        });
+        html += `</div>`;
+      }
+    }
+
+    html += `
+      <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px;">
+        <button type="button" id="fc-sum-copy-btn" style="flex: 1; background: #1976d2; color: #fff; border: none; border-radius: 8px; padding: 9px; font-weight: 700; font-size: 12px; cursor: pointer;">📋 রিপোর্ট কপি</button>
+        <button type="button" id="fc-sum-cloud-btn" style="flex: 1; background: #0f766e; color: #fff; border: none; border-radius: 8px; padding: 9px; font-weight: 700; font-size: 12px; cursor: pointer;">☁️ ক্লাউড সিঙ্ক</button>
+        <button type="button" id="fc-sum-scan-btn" style="flex: 1; background: #7c3aed; color: #fff; border: none; border-radius: 8px; padding: 9px; font-weight: 700; font-size: 12px; cursor: pointer;">📸 সদস্য স্ক্যান</button>
+      </div>
+    `;
+
+    body.innerHTML = html;
+    body.querySelectorAll('[data-jump-tab]').forEach(btn => {
+      btn.onclick = () => jumpToPortalSection(btn.getAttribute('data-jump-tab'));
+    });
+
+    body.querySelector('#fc-sum-copy-btn').onclick = async () => {
+      const txt = buildBanglaSummaryReportText(s);
+      try {
+        await navigator.clipboard.writeText(txt);
+        showToast('📋 পূর্ণাঙ্গ বাংলা সারসংক্ষেপ ক্লিপবোর্ডে কপি হয়েছে!');
+      } catch (_) {
+        prompt('রিপোর্ট কপি করুন:', txt);
+      }
+    };
+
+    body.querySelector('#fc-sum-cloud-btn').onclick = async () => {
+      const docId = s.familyId || s.applicant.nid;
+      if (!docId) {
+        alert('পরিবার আইডি বা NID পাওয়া যায়নি!');
+        return;
+      }
+      const reportText = buildBanglaSummaryReportText(s);
+      const fields = {
+        summary_readiness_pct: { integerValue: String(s.readinessPct) },
+        summary_member_count: { integerValue: String(s.members.length) },
+        summary_money_total: { integerValue: String(s.s9Total) },
+        summary_report_text: { stringValue: reportText },
+        summary_synced_at: { timestampValue: new Date().toISOString() }
+      };
+      const mask = Object.keys(fields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
+      try {
+        const resp = await fetch(`https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(docId)}?${mask}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fields })
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        showToast(`☁️ সারসংক্ষেপ ক্লাউডে সংরক্ষিত (আইডি: ${docId})`);
+      } catch (err) {
+        alert('ক্লাউড সিঙ্ক ব্যর্থ: ' + err.message);
+      }
+    };
+
+    body.querySelector('#fc-sum-scan-btn').onclick = () => {
+      sm.style.display = 'none';
+      openMemberScanner(null, 'auto');
+    };
+
+    sm.style.display = 'flex';
+  }
+
+  summaryBtn.addEventListener('click', openSummaryModal);
+
+  function updateSummaryBadge() {
+    if (!summaryBtn) return;
+    const s = collectFullFamilyCardSummary();
+    const label = `📊 সারসংক্ষেপ (${toBnDigits(s.readinessPct)}%)`;
+    const cls = (s.readinessPct >= 85 && s.blockers.length === 0) ? 'ready' : (s.blockers.length > 0 ? 'warn' : '');
+    if (summaryBtn.dataset.lastLabel !== label) {
+      summaryBtn.dataset.lastLabel = label;
+      summaryBtn.innerHTML = `<span>${label}</span>`;
+    }
+    if (summaryBtn.className !== cls) summaryBtn.className = cls;
+  }
+
   function runPortalAutomations() {
     if (document.hidden || activeMediaStream) return;
     if (lastExtractedData) {
@@ -3711,6 +4356,7 @@ Return ONLY a single valid JSON object with these exact keys:
     handleSection6Bank();
     handleSection7Eligibility();
     handleSection9MoneyUsage();
+    updateSummaryBadge();
   }
 
   // Debounced MutationObserver (ignores assistant UI & ripple animations for lag-free scrolling/tapping)
@@ -3740,5 +4386,5 @@ Return ONLY a single valid JSON object with these exact keys:
     setTimeout(() => { t.remove(); }, 4000);
   }
 
-  showToast('🚀 Family Card সহকারী (v1.5) প্রস্তুত! "📸 NID স্ক্যান" বাটনে চাপুন।');
+  showToast('🚀 Family Card সহকারী (v1.6) প্রস্তুত! স্ক্যান বা সারসংক্ষেপ বাটনে চাপুন।');
 })();

@@ -77,9 +77,14 @@
     const widget = document.createElement('div');
     widget.id = 'fc-assistant-widget';
     widget.innerHTML = `
-      <!-- Single Device Instant Scan Button (Tablet-Friendly) -->
-      <div id="fc-fab-scan-btn" title="ট্যাবলেটের ক্যামেরা দিয়ে সরাসরি স্ক্যান করুন">
-        <span>📸 NID স্ক্যান</span>
+      <!-- Single Device Instant Actions (Tablet-Friendly) -->
+      <div class="fc-fab-row">
+        <div id="fc-summary-btn" title="পূর্ণাঙ্গ ফ্যামিলি কার্ড সারসংক্ষেপ দেখুন">
+          <span>📊 সারসংক্ষেপ (0%)</span>
+        </div>
+        <div id="fc-fab-scan-btn" title="ট্যাবলেটের ক্যামেরা দিয়ে সরাসরি স্ক্যান করুন">
+          <span>📸 NID স্ক্যান</span>
+        </div>
       </div>
 
       <div id="fc-assistant-card" class="hidden">
@@ -155,6 +160,7 @@
     const card = document.getElementById('fc-assistant-card');
     const closeBtn = document.getElementById('fc-close-card');
     const fabBtn = document.getElementById('fc-fab-scan-btn');
+    const summaryBtn = document.getElementById('fc-summary-btn');
     const directScanBtn = document.getElementById('fc-btn-direct-scan');
 
     badge.addEventListener('click', () => card.classList.toggle('hidden'));
@@ -162,6 +168,8 @@
       e.stopPropagation();
       card.classList.add('hidden');
     });
+
+    if (summaryBtn) summaryBtn.addEventListener('click', openSummaryModal);
 
     fabBtn.addEventListener('click', () => {
       const tab6 = document.querySelector('[data-family-card-tab="6"]');
@@ -354,6 +362,8 @@
             </div>
           </div>
 
+          <div id="fc-modal-ocr-warn" style="display: none; background: #fffbeb; border: 1.5px solid #f59e0b; color: #92400e; padding: 8px 10px; border-radius: 8px; font-size: 11.5px; line-height: 1.45;"></div>
+
           <div id="fc-modal-loading" class="fc-loading-spinner-wrap" style="display: none;">
             <div class="fc-spinner"></div>
             <span style="font-weight: 600; color: #1976d2; font-size: 13px;">Gemini AI দ্বারা ডকুমেন্ট বিশ্লেষণ করা হচ্ছে...</span>
@@ -482,15 +492,17 @@
         const canvas = document.createElement('canvas');
         let w = videoElem.videoWidth;
         let h = videoElem.videoHeight;
-        const maxDim = 1600;
+        const maxDim = 1800;
         if (w > maxDim || h > maxDim) {
           if (w > h) { h = Math.round((h * maxDim) / w); w = maxDim; }
           else { w = Math.round((w * maxDim) / h); h = maxDim; }
         }
         canvas.width = w;
         canvas.height = h;
-        canvas.getContext('2d').drawImage(videoElem, 0, 0, w, h);
-        currentCompressedBase64 = canvas.toDataURL('image/jpeg', 0.85);
+        const ctx = canvas.getContext('2d');
+        if ('filter' in ctx) ctx.filter = 'contrast(1.08) brightness(1.03)';
+        ctx.drawImage(videoElem, 0, 0, w, h);
+        currentCompressedBase64 = canvas.toDataURL('image/jpeg', 0.90);
         stopLiveCamera();
 
         const previewWrap = document.getElementById('fc-modal-preview-wrap');
@@ -517,7 +529,7 @@
       const imgPreview = document.getElementById('fc-modal-img-preview');
 
       try {
-        currentCompressedBase64 = await compressImageFile(file, 1600, 0.85);
+        currentCompressedBase64 = await compressImageFile(file, 1800, 0.90);
         imgPreview.src = currentCompressedBase64;
         previewWrap.style.display = 'flex';
         btnCamera.textContent = '🔄 পুনরায় ছবি তুলুন';
@@ -866,8 +878,11 @@
           father_name_en: { stringValue: memberData.father_name_en || '' },
           mother_name_bn: { stringValue: memberData.mother_name_bn || '' },
           mother_name_en: { stringValue: memberData.mother_name_en || '' },
+          spouse_name_bn: { stringValue: memberData.spouse_name_bn || '' },
+          spouse_name_en: { stringValue: memberData.spouse_name_en || '' },
           marital_status: { stringValue: memberData.marital_status || memberData.marital_status_suggestion || 'বিবাহিত' },
           religion: { stringValue: memberData.religion || 'ইসলাম' },
+          ocr_model_used: { stringValue: memberData.ocr_model_used || '' },
           synced_at: { timestampValue: new Date().toISOString() }
         }
       };
@@ -883,8 +898,8 @@
     }
   }
 
-  // Compress image on an off-screen canvas
-  function compressImageFile(file, maxDimension = 1600, quality = 0.85) {
+  // Compress & enhance document image on an off-screen canvas
+  function compressImageFile(file, maxDimension = 1800, quality = 0.90) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onerror = reject;
@@ -907,6 +922,7 @@
           canvas.width = width;
           canvas.height = height;
           const ctx = canvas.getContext('2d');
+          if ('filter' in ctx) ctx.filter = 'contrast(1.08) brightness(1.03)';
           ctx.drawImage(img, 0, 0, width, height);
           resolve(canvas.toDataURL('image/jpeg', quality));
         };
@@ -914,6 +930,19 @@
       };
       reader.readAsDataURL(file);
     });
+  }
+
+  window.__fcScanHistory = window.__fcScanHistory || [];
+
+  function showModalOcrWarnings(warnings) {
+    const box = document.getElementById('fc-modal-ocr-warn');
+    if (!box) return;
+    if (Array.isArray(warnings) && warnings.length > 0) {
+      box.innerHTML = warnings.map(w => `⚠️ ${escapeHtml(w)}`).join('<br>');
+      box.style.display = 'block';
+    } else {
+      box.style.display = 'none';
+    }
   }
 
   // Trigger Gemini OCR via Background Service Worker
@@ -924,16 +953,23 @@
     const maritalStatus = document.getElementById('fc-modal-marital')?.value || 'বিবাহিত';
     const religion = document.getElementById('fc-modal-religion')?.value || 'ইসলাম';
     const mobileNumber = document.getElementById('fc-modal-mobile')?.value?.trim() || '';
-    const docTypeChoice = document.getElementById('fc-modal-doc-type')?.value;
+    const docTypeChoice = activeScanTarget.type === 'member'
+      ? (document.getElementById('fc-modal-doc-type')?.value || 'auto')
+      : 'auto';
 
+    showModalOcrWarnings([]);
     loading.style.display = 'flex';
     btnCamera.style.display = 'none';
     btnSubmit.style.display = 'none';
 
+    let detectedMime = 'image/jpeg';
+    const mimeMatch = String(base64Data || '').match(/^data:([^;]+);base64,/);
+    if (mimeMatch) detectedMime = mimeMatch[1] || 'image/jpeg';
+
     chrome.runtime.sendMessage({
       action: 'ocr_nid_direct',
       imageBase64: base64Data,
-      mimeType: 'image/jpeg',
+      mimeType: detectedMime,
       maritalStatus,
       religion,
       mobileNumber,
@@ -949,8 +985,23 @@
       }
 
       if (response && response.success && response.data) {
-        closeScannerModal();
         const data = response.data;
+        const warnings = Array.isArray(data.ocr_warnings) ? data.ocr_warnings : [];
+
+        window.__fcScanHistory.unshift({
+          target: activeScanTarget.type,
+          doc_type: data.doc_type,
+          doc_number: data.doc_number,
+          name_bn: data.name_bn || '',
+          dob: data.dob || '',
+          model: data.ocr_model_used || '',
+          warnings,
+          at: new Date().toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' })
+        });
+        if (window.__fcScanHistory.length > 20) window.__fcScanHistory.length = 20;
+
+        showModalOcrWarnings(warnings);
+        closeScannerModal();
 
         if (activeScanTarget.type === 'member') {
           let targetCard = activeScanTarget.card;
@@ -994,7 +1045,11 @@
             const realIdx = allCards.indexOf(targetCard);
             const cardIdx = realIdx >= 0 ? (realIdx + 1) : ((typeof activeScanTarget.index === 'number') ? activeScanTarget.index : allCards.length || 2);
             syncMemberToFirestore(data, cardIdx);
-            showToast(`✅ সদস্য (${data.name_bn || data.doc_number}) সফলভাবে পূরণ হয়েছে!`);
+            if (warnings.length > 0) {
+              showToast(`⚠️ সদস্য (${data.name_bn || data.doc_number}) পূরণ হয়েছে — সতর্কতা: ${warnings[0]}`);
+            } else {
+              showToast(`✅ সদস্য (${data.name_bn || data.doc_number}) সফলভাবে পূরণ হয়েছে!`);
+            }
           } else {
             showToast(`⚠️ সদস্য কার্ড পাওয়া যায়নি। অনুগ্রহ করে প্রথমে '+ নতুন সদস্য' যোগ করুন।`);
           }
@@ -1004,8 +1059,13 @@
           updateWidgetPreview(data);
           await fillFormFields(data);
           syncToFirestore(data);
-          showToast('✅ এনআইডি তথ্য সফলভাবে পূরণ করা হয়েছে!');
+          if (warnings.length > 0) {
+            showToast(`⚠️ NID তথ্য পূরণ হয়েছে — সতর্কতা: ${warnings[0]}`);
+          } else {
+            showToast('✅ এনআইডি তথ্য সফলভাবে পূরণ করা হয়েছে!');
+          }
         }
+        updateSummaryBadge();
       } else {
         alert('ডকুমেন্ট বিশ্লেষণ ব্যর্থ: ' + (response?.error || 'সঠিক NID বা জন্ম নিবন্ধন ছবি পাওয়া যায়নি।'));
       }
@@ -1161,10 +1221,10 @@
     });
   }
 
-  // Helper to standardize Date of Birth to DD/MM/YYYY
+  // Helper to standardize Date of Birth (supports English & Bengali months/digits) to DD/MM/YYYY
   function standardizeDate(dobStr) {
     if (!dobStr) return '';
-    let str = normalizeDigits(dobStr).trim();
+    let str = normalizeDigits(dobStr).replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
 
     // ISO: YYYY-MM-DD or YYYY/MM/DD
     const isoMatch = str.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/);
@@ -1172,17 +1232,27 @@
       return `${isoMatch[3].padStart(2, '0')}/${isoMatch[2].padStart(2, '0')}/${isoMatch[1]}`;
     }
 
-    // Month names: 15 Aug 1985
+    // English month names: 15 Aug 1985
     const months = {
       jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
       jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12'
     };
-    const monthMatch = str.match(/^(\d{1,2})\s+([a-zA-Z]{3,})\s+(\d{4})/i);
+    const monthMatch = str.match(/^(\d{1,2})[\s\-,.]+([a-zA-Z]{3,})[\s\-,.]+(\d{4})/i);
     if (monthMatch) {
-      const d = monthMatch[1].padStart(2, '0');
-      const m = months[monthMatch[2].toLowerCase().substring(0, 3)] || '01';
-      const y = monthMatch[3];
-      return `${d}/${m}/${y}`;
+      const m = months[monthMatch[2].toLowerCase().substring(0, 3)] || '';
+      if (m) return `${monthMatch[1].padStart(2, '0')}/${m}/${monthMatch[3]}`;
+    }
+
+    // Bengali month names: ১৪ মে ১৯৮৫ / ০৫ জানুয়ারি ২০১০
+    const bnPrefixes = [
+      ['জানু', '01'], ['ফেব', '02'], ['মার', '03'], ['এপ্রি', '04'],
+      ['মে', '05'], ['জুন', '06'], ['জুল', '07'], ['আগ', '08'],
+      ['সেপ', '09'], ['অক', '10'], ['নভ', '11'], ['ডিস', '12']
+    ];
+    const bnMatch = str.match(/^(\d{1,2})[\s\-,/.]+([\u0980-\u09FF]+)[\s\-,/.]+(\d{4})/);
+    if (bnMatch) {
+      const hit = bnPrefixes.find(([p]) => bnMatch[2].startsWith(p));
+      if (hit) return `${bnMatch[1].padStart(2, '0')}/${hit[1]}/${bnMatch[3]}`;
     }
 
     // Standard DD/MM/YYYY
@@ -1213,7 +1283,9 @@
       }
       const familyId = scrapeFamilyId() || data.family_id || '';
       const fields = {
+        doc_type: { stringValue: data.doc_type || 'nid' },
         nid_number: { stringValue: data.nid_number || '' },
+        birth_reg_no: { stringValue: data.birth_reg_no || '' },
         name_bn: { stringValue: data.name_bn || '' },
         name_en: { stringValue: data.name_en || '' },
         dob: { stringValue: data.dob || '' },
@@ -1222,9 +1294,12 @@
         father_name_en: { stringValue: data.father_name_en || '' },
         mother_name_bn: { stringValue: data.mother_name_bn || '' },
         mother_name_en: { stringValue: data.mother_name_en || '' },
+        spouse_name_bn: { stringValue: data.spouse_name_bn || '' },
+        spouse_name_en: { stringValue: data.spouse_name_en || '' },
         marital_status: { stringValue: data.marital_status || 'বিবাহিত' },
         religion: { stringValue: data.religion || 'ইসলাম' },
         mobile_number: { stringValue: data.mobile_number || '' },
+        ocr_model_used: { stringValue: data.ocr_model_used || '' },
         synced_at: { timestampValue: new Date().toISOString() }
       };
       if (familyId) fields.family_id = { stringValue: normalizeDigits(familyId) };
@@ -3645,6 +3720,422 @@
   }
 
 
+  // --- FAMILY CARD FULL SUMMARY & PRE-SUBMIT VALIDATOR ---
+  function readColVal(col) {
+    if (!col) return '';
+    const sel = col.querySelector('.v-select__selection');
+    if (sel && sel.textContent.trim()) return sel.textContent.trim();
+    const inp = col.querySelector('input:not([type="hidden"])');
+    return inp ? String(inp.value || '').trim() : '';
+  }
+
+  function findLabelVal(scope, keys) {
+    if (!scope) return '';
+    const normKeys = keys.map(k => normalizeBn(k));
+    const labels = Array.from(scope.querySelectorAll('label'));
+    for (const l of labels) {
+      const t = normalizeBn(l.textContent || '');
+      if (normKeys.some(k => t.includes(k))) {
+        const col = l.closest('.col, [class*="col-"]');
+        const v = readColVal(col);
+        if (v) return v;
+      }
+    }
+    return '';
+  }
+
+  function jumpToPortalSection(tabAttr) {
+    const sModal = document.getElementById('fc-summary-modal');
+    if (sModal) sModal.style.display = 'none';
+    const target = document.querySelector(`[data-family-card-tab="${tabAttr}"]`);
+    if (!target) {
+      showToast(`⚠️ সেকশন (ট্যাব ${tabAttr}) বর্তমান পেজে খুঁজে পাওয়া যায়নি।`);
+      return;
+    }
+    if (target.classList.contains('v-expansion-panel') && !target.classList.contains('v-expansion-panel--active')) {
+      target.querySelector('.v-expansion-panel-header, button')?.click();
+    }
+    if (target.style.display === 'none') {
+      const stepIdx = parseInt(tabAttr, 10);
+      const steps = Array.from(document.querySelectorAll('.family-card-form-step, .v-tabs .v-tab'));
+      const matched = steps.find(el => el.dataset?.familyCardTab === String(tabAttr)) || steps[stepIdx];
+      if (matched) matched.click();
+    }
+    setTimeout(() => target.scrollIntoView({ behavior: 'smooth', block: 'start' }), 180);
+  }
+
+  function scrapeMemberCardSummary(card, idx) {
+    const isSelf = card.classList.contains('fm-member-card--self') || (card.textContent.includes('সদস্য - ১') && card.textContent.includes('নিজ'));
+    const title = card.querySelector('.fm-member-title')?.textContent.trim() || `সদস্য - ${toBnDigits(idx + 1)}`;
+    const nameBn = findLabelVal(card, ['নাম (বাংলা)', 'নাম']) || (isSelf ? (lastExtractedData?.name_bn || '') : '');
+    const nidRaw = findLabelVal(card, ['জাতীয় পরিচিতি', 'NID নম্বর', 'NID']);
+    const brcRaw = findLabelVal(card, ['জন্ম নিবন্ধন']);
+    const dob = standardizeDate(findLabelVal(card, ['জন্ম তারিখ']) || (isSelf ? (lastExtractedData?.dob || '') : ''));
+    const rel = isSelf ? 'নিজ' : (findLabelVal(card, ['সম্পর্ক']) || '');
+    const gender = findLabelVal(card, ['লিঙ্গ']) || (isSelf ? (lastExtractedData?.gender || '') : '');
+
+    const cleanNid = normalizeDigits(nidRaw).replace(/[^0-9]/g, '');
+    const cleanBrc = normalizeDigits(brcRaw).replace(/[^0-9]/g, '');
+    const docNum = cleanNid || cleanBrc || '';
+    const docType = cleanBrc && !cleanNid ? 'birth_certificate' : (cleanNid ? 'nid' : (docNum.length === 17 ? 'birth_certificate' : 'unknown'));
+
+    let age = null;
+    const ym = normalizeDigits(dob).match(/\b(19\d{2}|20\d{2})\b/);
+    if (ym) age = new Date().getFullYear() - parseInt(ym[1], 10);
+
+    const issues = [];
+    if (!nameBn && !isSelf) issues.push('নাম ফাঁকা');
+    if (docNum) {
+      if (docType === 'birth_certificate' && docNum.length !== 17) {
+        issues.push(`BRC ${toBnDigits(docNum.length)} সংখ্যা (১৭ প্রয়োজন)`);
+      } else if (docType === 'nid' && docNum.length !== 10 && docNum.length !== 17) {
+        issues.push(`NID ${toBnDigits(docNum.length)} সংখ্যা (১০/১৭ প্রয়োজন)`);
+      }
+    } else if (!isSelf) {
+      issues.push('NID/BRC নম্বর নেই');
+    }
+
+    return { index: idx + 1, isSelf, title, nameBn, docNum, docType, dob, age, rel, gender, issues };
+  }
+
+  function collectFullFamilyCardSummary() {
+    const familyId = scrapeFamilyId() || lastExtractedData?.family_id || '';
+    const tab0 = document.querySelector('[data-family-card-tab="0"]');
+    const tab1 = document.querySelector('[data-family-card-tab="1"]');
+    const tab2 = document.querySelector('[data-family-card-tab="2"]');
+
+    const applicant = {
+      nameBn: findLabelVal(tab0, ['নাম (বাংলা)']) || findLabelVal(tab1, ['নাম (বাংলা)']) || lastExtractedData?.name_bn || '',
+      nameEn: findLabelVal(tab0, ['নাম (ইংরেজি)']) || findLabelVal(tab1, ['নাম (ইংরেজি)']) || lastExtractedData?.name_en || '',
+      nid: normalizeDigits(findLabelVal(tab0, ['জাতীয় পরিচিতি', 'NID']) || lastExtractedData?.nid_number || lastExtractedData?.doc_number || '').replace(/[^0-9]/g, ''),
+      dob: standardizeDate(findLabelVal(tab0, ['জন্ম তারিখ']) || lastExtractedData?.dob || ''),
+      fatherBn: findLabelVal(tab1, ['পিতার নাম (বাংলা)']) || lastExtractedData?.father_name_bn || '',
+      motherBn: findLabelVal(tab1, ['মাতার নাম (বাংলা)']) || lastExtractedData?.mother_name_bn || '',
+      mobile: normalizeDigits(findLabelVal(tab1, ['মোবাইল']) || findLabelVal(tab0, ['মোবাইল']) || lastExtractedData?.mobile_number || '').replace(/[^0-9]/g, '')
+    };
+
+    const imgUrl = document.querySelector('.fc-photo-preview .v-image__image')?.style?.backgroundImage || '';
+    const hasPhoto = (imgUrl && !imgUrl.includes('data:image/svg')) || Boolean(document.getElementById('image')?.files?.length);
+    const hasSig = Boolean(document.getElementById('signature')?.files?.length) || Boolean(Array.from(document.querySelectorAll('#signature ~ *, .v-image__image')).some(el => el.closest('[data-family-card-tab="9"]') && (el.style?.backgroundImage || '').includes('http')));
+
+    const villageVal = findLabelVal(tab2, ['গ্রাম', 'বাড়ি নং']) || localStorage.getItem('fc_default_village') || 'বসাকুষ্টিয়া';
+    const postcodeVal = findLabelVal(tab2, ['পোস্ট কোড']) || localStorage.getItem('fc_default_postcode') || '7721';
+
+    const sec5 = trackSection5Data();
+    const sec6Members = scanFamilyMembers();
+    const crossMatch = computeCrossMatch(sec5, sec6Members);
+
+    const rawCards = Array.from(document.querySelectorAll('.fm-members-stack .fm-member-card, [data-family-card-tab="6"] .fm-member-card'));
+    const members = rawCards.map((c, i) => scrapeMemberCardSummary(c, i));
+
+    const seenIds = new Map();
+    const duplicateIds = [];
+    members.forEach(m => {
+      if (!m.docNum) return;
+      if (seenIds.has(m.docNum)) {
+        duplicateIds.push({ id: m.docNum, first: seenIds.get(m.docNum), second: m.title });
+        m.issues.push('ডুপ্লিকেট আইডি!');
+      } else {
+        seenIds.set(m.docNum, m.title);
+      }
+    });
+
+    const bankElems = getSection6BankElements();
+    const bankBranch = bankElems?.branchSelect ? readColVal(bankElems.branchSelect) : (localStorage.getItem('fc_default_bank_branch') || '');
+    const bankOwner = bankElems?.ownershipSelect ? readColVal(bankElems.ownershipSelect) : (localStorage.getItem('fc_default_account_ownership') || '');
+
+    const s7Panel = document.querySelector('[data-family-card-tab="5"]');
+    const s7Filled = s7Panel ? Array.from(s7Panel.querySelectorAll('.v-select__selection')).filter(s => s.textContent.trim()).length : 0;
+
+    const s9Elems = getSection9MoneyElements();
+    const s9Dist = s9Elems ? readCurrentMoneyDistribution(s9Elems.fields) : null;
+    const s9Total = s9Dist ? s9Dist.total : 0;
+
+    const blockers = [];
+    const sections = [];
+
+    const appOk = Boolean(applicant.nameBn && (applicant.nid.length === 10 || applicant.nid.length === 17) && applicant.fatherBn && applicant.motherBn);
+    if (!applicant.nid || (applicant.nid.length !== 10 && applicant.nid.length !== 17)) blockers.push({ tab: '0', text: 'আবেদনকারীর সঠিক ১০/১৭ সংখ্যার NID দিন' });
+    if (!applicant.fatherBn || !applicant.motherBn) blockers.push({ tab: '1', text: 'সেকশন ১-২: পিতা ও মাতার বাংলা নাম পূরণ করুন' });
+    sections.push({
+      tab: '1',
+      title: '১-২. আবেদনকারীর পরিচিতি',
+      status: appOk ? 'ok' : 'warn',
+      detail: applicant.nameBn ? `${applicant.nameBn} • NID: ${applicant.nid || 'নেই'}` : 'এখনো NID স্ক্যান করা হয়নি'
+    });
+
+    sections.push({
+      tab: '9',
+      title: '৩. ছবি, স্বাক্ষর ও বাড়ির ছবি',
+      status: hasPhoto ? (hasSig ? 'ok' : 'warn') : 'missing',
+      detail: `ছবি: ${hasPhoto ? 'আছে ✅' : 'নেই ⚠️'} | স্বাক্ষর: ${hasSig ? 'আছে ✅' : 'যাচাই করুন'}`
+    });
+    if (!hasPhoto) blockers.push({ tab: '9', text: 'সেকশন ৩: আবেদনকারীর ছবি ও স্বাক্ষর আপলোড করুন' });
+
+    sections.push({
+      tab: '2',
+      title: '৪. তথ্য সংগ্রহের ঠিকানা',
+      status: villageVal ? 'ok' : 'warn',
+      detail: `গ্রাম: ${villageVal || '-'} • পোস্টকোড: ${toBnDigits(postcodeVal)}`
+    });
+
+    const sec5Ok = Boolean(sec5 && sec5.totalCount > 0);
+    sections.push({
+      tab: '3',
+      title: '৫. খানার সদস্য ও অর্থনৈতিক তথ্য',
+      status: sec5Ok ? 'ok' : 'missing',
+      detail: sec5Ok ? `পুরুষ ${toBnDigits(sec5.maleCount)}, নারী ${toBnDigits(sec5.femaleCount)} (মোট ${toBnDigits(sec5.totalCount)} জন)` : 'সেকশন ৫ পূরণ করা হয়নি'
+    });
+    if (!sec5Ok) blockers.push({ tab: '3', text: 'সেকশন ৫: খানার মোট সদস্য সংখ্যা পূরণ করুন' });
+
+    sections.push({
+      tab: '4',
+      title: '৬. ব্যাংক / মোবাইল ব্যাংকিং',
+      status: bankBranch ? 'ok' : 'warn',
+      detail: bankBranch ? `মালিকানা: ${bankOwner || '-'} • শাখা: ${bankBranch}` : 'ব্যাংক শাখা ও মালিকানা যাচাই করুন'
+    });
+
+    sections.push({
+      tab: '5',
+      title: '৭. খানার যোগ্যতা ও সুযোগ-সুবিধা',
+      status: s7Filled >= 8 ? 'ok' : 'warn',
+      detail: s7Panel ? `${toBnDigits(s7Filled)}টি ফিল্ড পূরণকৃত` : 'সেকশন ৭ খুললে অটো-ফিল হবে'
+    });
+
+    const memberIssues = members.filter(m => m.issues.length > 0);
+    const sec8Ok = crossMatch.isExactMatch && memberIssues.length === 0 && duplicateIds.length === 0;
+    sections.push({
+      tab: '6',
+      title: '৮. পরিবারের সদস্য ও ডকুমেন্ট স্ক্যান',
+      status: sec8Ok ? 'ok' : (members.length ? 'warn' : 'missing'),
+      detail: `${toBnDigits(members.length)} জন সদস্য • ${crossMatch.statusText}${duplicateIds.length ? ` • ডুপ্লিকেট আইডি (${toBnDigits(duplicateIds.length)})!` : ''}`
+    });
+    if (!crossMatch.isExactMatch && sec5Ok) blockers.push({ tab: '6', text: `সেকশন ৮ ক্রস-ম্যাচ: ${crossMatch.statusText}` });
+    if (duplicateIds.length) blockers.push({ tab: '6', text: `সদস্যদের মধ্যে একই NID/BRC (${duplicateIds[0].id}) একাধিকবার রয়েছে!` });
+    memberIssues.forEach(m => blockers.push({ tab: '6', text: `${m.title} (${m.nameBn || 'নামহীন'}): ${m.issues.join(', ')}` }));
+
+    const sec9Ok = s9Total === 2500;
+    sections.push({
+      tab: '10',
+      title: '৯. ভাতা ব্যবহার (২৫০০ টাকা)',
+      status: sec9Ok ? 'ok' : 'warn',
+      detail: s9Elems ? `মোট বরাদ্দ: ${toBnDigits(s9Total)} / ২৫০০ টাকা` : 'সেকশন ৯ খুললে এআই বণ্টন হবে'
+    });
+    if (s9Elems && !sec9Ok) blockers.push({ tab: '10', text: `সেকশন ৯: মোট বরাদ্দ ${toBnDigits(s9Total)} টাকা (ঠিক ২৫০০ টাকা হতে হবে)` });
+
+    const okCount = sections.filter(s => s.status === 'ok').length;
+    const readinessPct = Math.round((okCount / sections.length) * 100);
+
+    return {
+      familyId,
+      applicant,
+      villageVal,
+      postcodeVal,
+      sec5,
+      crossMatch,
+      members,
+      duplicateIds,
+      bankBranch,
+      bankOwner,
+      s9Total,
+      s9Dist,
+      sections,
+      blockers,
+      readinessPct,
+      scanHistory: window.__fcScanHistory || []
+    };
+  }
+
+  function buildBanglaSummaryReportText(s) {
+    const lines = [
+      `=== ফ্যামিলি কার্ড সারসংক্ষেপ ===`,
+      `পরিবার আইডি: ${s.familyId || 'পাওয়া যায়নি'}`,
+      `আবেদনকারী: ${s.applicant.nameBn || '-'} (${s.applicant.nid || '-'})`,
+      `ঠিকানা: গ্রাম ${s.villageVal}, পোস্টকোড ${s.postcodeVal}`,
+      `সদস্য (সেকশন ৫ বনাম ৮): মোট ${s.sec5?.totalCount || 0} vs কার্ড ${s.members.length} টি (${s.crossMatch.statusText})`,
+      `ব্যাংক/শাখা: ${s.bankOwner || '-'} • ${s.bankBranch || '-'}`,
+      `ভাতা বণ্টন (সেকশন ৯): ${s.s9Total}/2500 টাকা`,
+      `প্রস্তুতি স্কোর: ${s.readinessPct}%`,
+      ``,
+      `সদস্য তালিকা:`
+    ];
+    s.members.forEach(m => {
+      lines.push(`- ${m.title}: ${m.nameBn || '-'} | ${m.rel || '-'} | ${m.age !== null ? `${m.age} বছর` : '-'} | ${m.docNum || 'নম্বর নেই'}${m.issues.length ? ` [⚠️ ${m.issues.join(', ')}]` : ''}`);
+    });
+    if (s.blockers.length) {
+      lines.push('', 'সাবমিটের আগে করণীয়:');
+      s.blockers.forEach((b, i) => lines.push(`${i + 1}. ${b.text}`));
+    }
+    return lines.join('\n');
+  }
+
+  function ensureSummaryModal() {
+    let sm = document.getElementById('fc-summary-modal');
+    if (sm) return sm;
+    sm = document.createElement('div');
+    sm.id = 'fc-summary-modal';
+    sm.className = 'fc-modal-overlay';
+    sm.style.display = 'none';
+    sm.innerHTML = `
+      <div class="fc-modal-container" style="max-width: 520px;">
+        <div class="fc-modal-header" style="background: linear-gradient(135deg, #0f766e, #115e59);">
+          <h3>📊 ফ্যামিলি কার্ড সারসংক্ষেপ ও যাচাই</h3>
+          <span class="fc-modal-close" id="fc-sum-close">&times;</span>
+        </div>
+        <div class="fc-modal-body" id="fc-sum-body" style="display:flex; flex-direction:column; gap:8px; max-height:80vh; overflow-y:auto;"></div>
+      </div>
+    `;
+    document.body.appendChild(sm);
+    sm.querySelector('#fc-sum-close').onclick = () => { sm.style.display = 'none'; };
+    sm.onclick = (e) => { if (e.target === sm) sm.style.display = 'none'; };
+    return sm;
+  }
+
+  function openSummaryModal() {
+    const sm = ensureSummaryModal();
+    const body = sm.querySelector('#fc-sum-body');
+    const s = collectFullFamilyCardSummary();
+
+    const headerColor = s.readinessPct >= 85 && s.blockers.length === 0 ? '#15803d' : (s.readinessPct >= 50 ? '#b45309' : '#b91c1c');
+    let html = `
+      <div class="fc-sum-card" style="border-color: ${headerColor}; background: #f8fafc;">
+        <div class="fc-sum-row">
+          <div>
+            <div style="font-weight: 800; font-size: 13.5px; color: #0f172a;">🆔 পরিবার আইডি: ${escapeHtml(s.familyId || 'নেই')}</div>
+            <div style="font-size: 11.5px; color: #475569; margin-top: 2px;">👤 ${escapeHtml(s.applicant.nameBn || 'আবেদনকারী অজানা')} • 📱 ${escapeHtml(s.applicant.mobile || 'নেই')}</div>
+          </div>
+          <div style="text-align: right;">
+            <span style="background: ${headerColor}; color: #fff; padding: 4px 10px; border-radius: 20px; font-weight: 800; font-size: 12px;">প্রস্তুতি ${toBnDigits(s.readinessPct)}%</span>
+          </div>
+        </div>
+      </div>
+    `;
+
+    if (s.blockers.length > 0) {
+      html += `
+        <div class="fc-sum-card missing">
+          <div style="font-weight: 800; color: #991b1b; font-size: 12px;">⚠️ সাবমিটের আগে যা ঠিক করুন (${toBnDigits(s.blockers.length)}টি)</div>
+          ${s.blockers.map(b => `
+            <div class="fc-sum-row">
+              <span style="color: #7f1d1d;">• ${escapeHtml(b.text)}</span>
+              <button type="button" class="fc-sum-jump" data-jump-tab="${escapeHtml(b.tab)}">ঠিক করুন →</button>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    } else {
+      html += `<div class="fc-sum-card ok"><div style="font-weight: 700; color: #166534; font-size: 12.5px;">✅ সকল প্রধান তথ্য যাচাই সম্পন্ন — ফর্ম সাবমিটের জন্য প্রস্তুত!</div></div>`;
+    }
+
+    html += `<div style="font-weight: 800; color: #1e293b; font-size: 12px; margin-top: 2px;">📋 সেকশন ভিত্তিক অবস্থা:</div>`;
+    html += s.sections.map(sec => `
+      <div class="fc-sum-card ${sec.status}">
+        <div class="fc-sum-row">
+          <div>
+            <div style="font-weight: 700; color: #0f172a;">${escapeHtml(sec.title)}</div>
+            <div style="font-size: 11px; color: #475569; margin-top: 2px;">${escapeHtml(sec.detail)}</div>
+          </div>
+          <button type="button" class="fc-sum-jump" data-jump-tab="${escapeHtml(sec.tab)}">দেখুন</button>
+        </div>
+      </div>
+    `).join('');
+
+    if (s.members.length > 0) {
+      html += `<div style="font-weight: 800; color: #1e293b; font-size: 12px; margin-top: 2px;">👨‍👩‍👧‍👦 স্ক্যানকৃত/যুক্ত সদস্য (${toBnDigits(s.members.length)} জন):</div>`;
+      html += s.members.map(m => `
+        <div class="fc-sum-card ${m.issues.length ? 'warn' : 'ok'}" style="padding: 7px 10px;">
+          <div class="fc-sum-row">
+            <span><b>${escapeHtml(m.title)}</b>: ${escapeHtml(m.nameBn || 'নাম ফাঁকা')} (${escapeHtml(m.rel || '-')}, ${m.age !== null ? `${toBnDigits(m.age)}ব` : '-'})</span>
+            <span style="font-family: monospace; font-size: 11px;">${escapeHtml(m.docNum || 'নম্বর নেই')}</span>
+          </div>
+          ${m.issues.length ? `<div style="font-size: 11px; color: #b45309; font-weight: 700;">⚠️ ${escapeHtml(m.issues.join(' • '))}</div>` : ''}
+        </div>
+      `).join('');
+    }
+
+    if (s.scanHistory.length > 0) {
+      const flagged = s.scanHistory.filter(h => h.warnings && h.warnings.length > 0);
+      if (flagged.length > 0) {
+        html += `<div class="fc-sum-card warn"><div style="font-weight: 700; color: #92400e; font-size: 11.5px;">🪪 সাম্প্রতিক OCR সতর্কতা (${toBnDigits(flagged.length)}টি ডকুমেন্ট)</div>`;
+        flagged.slice(0, 5).forEach(h => {
+          html += `<div style="font-size: 11px; color: #78350f;">• <b>${escapeHtml(h.name_bn || h.doc_number || 'অজানা')}</b> (${escapeHtml(h.at)}): ${escapeHtml(h.warnings.join('; '))}</div>`;
+        });
+        html += `</div>`;
+      }
+    }
+
+    html += `
+      <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px;">
+        <button type="button" id="fc-sum-copy-btn" style="flex: 1; background: #1976d2; color: #fff; border: none; border-radius: 8px; padding: 9px; font-weight: 700; font-size: 12px; cursor: pointer;">📋 রিপোর্ট কপি</button>
+        <button type="button" id="fc-sum-cloud-btn" style="flex: 1; background: #0f766e; color: #fff; border: none; border-radius: 8px; padding: 9px; font-weight: 700; font-size: 12px; cursor: pointer;">☁️ ক্লাউড সিঙ্ক</button>
+        <button type="button" id="fc-sum-scan-btn" style="flex: 1; background: #7c3aed; color: #fff; border: none; border-radius: 8px; padding: 9px; font-weight: 700; font-size: 12px; cursor: pointer;">📸 সদস্য স্ক্যান</button>
+      </div>
+    `;
+
+    body.innerHTML = html;
+    body.querySelectorAll('[data-jump-tab]').forEach(btn => {
+      btn.onclick = () => jumpToPortalSection(btn.getAttribute('data-jump-tab'));
+    });
+
+    body.querySelector('#fc-sum-copy-btn').onclick = async () => {
+      const txt = buildBanglaSummaryReportText(s);
+      try {
+        await navigator.clipboard.writeText(txt);
+        showToast('📋 পূর্ণাঙ্গ বাংলা সারসংক্ষেপ ক্লিপবোর্ডে কপি হয়েছে!');
+      } catch (_) {
+        prompt('রিপোর্ট কপি করুন:', txt);
+      }
+    };
+
+    body.querySelector('#fc-sum-cloud-btn').onclick = async () => {
+      const docId = s.familyId || s.applicant.nid;
+      if (!docId) {
+        alert('পরিবার আইডি বা NID পাওয়া যায়নি!');
+        return;
+      }
+      const reportText = buildBanglaSummaryReportText(s);
+      const fields = {
+        summary_readiness_pct: { integerValue: String(s.readinessPct) },
+        summary_member_count: { integerValue: String(s.members.length) },
+        summary_money_total: { integerValue: String(s.s9Total) },
+        summary_report_text: { stringValue: reportText },
+        summary_synced_at: { timestampValue: new Date().toISOString() }
+      };
+      const mask = Object.keys(fields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
+      try {
+        const resp = await fetch(`https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(docId)}?${mask}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fields })
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        showToast(`☁️ সারসংক্ষেপ ক্লাউডে সংরক্ষিত (আইডি: ${docId})`);
+      } catch (err) {
+        alert('ক্লাউড সিঙ্ক ব্যর্থ: ' + err.message);
+      }
+    };
+
+    body.querySelector('#fc-sum-scan-btn').onclick = () => {
+      sm.style.display = 'none';
+      openMemberScanner(null, 'auto');
+    };
+
+    sm.style.display = 'flex';
+  }
+
+  function updateSummaryBadge() {
+    const summaryBtn = document.getElementById('fc-summary-btn');
+    if (!summaryBtn) return;
+    const s = collectFullFamilyCardSummary();
+    const label = `📊 সারসংক্ষেপ (${toBnDigits(s.readinessPct)}%)`;
+    const cls = (s.readinessPct >= 85 && s.blockers.length === 0) ? 'ready' : (s.blockers.length > 0 ? 'warn' : '');
+    if (summaryBtn.dataset.lastLabel !== label) {
+      summaryBtn.dataset.lastLabel = label;
+      summaryBtn.innerHTML = `<span>${label}</span>`;
+    }
+    if (summaryBtn.className !== cls) summaryBtn.className = cls;
+  }
+
   // Auto-fill Step 1 (ব্যক্তিগত তথ্য) and Sections 3-9 safely with debounced MutationObserver
   function setupStepObserver() {
     function runExtensionAutomations() {
@@ -3668,6 +4159,7 @@
       handleSection6Bank();
       handleSection7Eligibility();
       handleSection9MoneyUsage();
+      updateSummaryBadge();
     }
 
     let observerTimer = null;

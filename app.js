@@ -155,8 +155,8 @@ function switchMode(mode) {
 tabCamera.addEventListener('click', () => switchMode('camera'));
 tabGallery.addEventListener('click', () => switchMode('gallery'));
 
-// Resize & downscale image via Canvas to ensure fast transmission & clear OCR
-function downscaleImage(imgOrVideo, maxDim = 1600, quality = 0.88) {
+// Resize, enhance contrast & downscale image via Canvas for accurate Bengali OCR
+function downscaleImage(imgOrVideo, maxDim = 1800, quality = 0.90) {
   const width = imgOrVideo.videoWidth || imgOrVideo.naturalWidth || imgOrVideo.width;
   const height = imgOrVideo.videoHeight || imgOrVideo.naturalHeight || imgOrVideo.height;
 
@@ -172,6 +172,9 @@ function downscaleImage(imgOrVideo, maxDim = 1600, quality = 0.88) {
   photoCanvas.width = targetWidth;
   photoCanvas.height = targetHeight;
   const ctx = photoCanvas.getContext('2d');
+  if ('filter' in ctx) {
+    ctx.filter = 'contrast(1.08) brightness(1.03)';
+  }
   ctx.drawImage(imgOrVideo, 0, 0, targetWidth, targetHeight);
 
   return photoCanvas.toDataURL('image/jpeg', quality);
@@ -186,7 +189,7 @@ fileInput.addEventListener('change', (e) => {
   reader.onload = (event) => {
     const img = new Image();
     img.onload = () => {
-      selectedFileBase64 = downscaleImage(img, 1600, 0.88);
+      selectedFileBase64 = downscaleImage(img, 1800, 0.90);
       filePreview.src = selectedFileBase64;
       filePreviewContainer.style.display = 'block';
       dropZone.style.display = 'none';
@@ -205,19 +208,20 @@ btnCapture.addEventListener('click', async () => {
       alert('ক্যামেরা চালু নেই। অনুগ্রহ করে পারমিশন দিন বা ফাইল মোড বেছে নিন।');
       return;
     }
-    base64Data = downscaleImage(videoElement, 1600, 0.88);
+    base64Data = downscaleImage(videoElement, 1800, 0.90);
   } else {
     if (!selectedFileBase64) {
-      alert('অনুগ্রহ করে এনআইডি কার্ডের একটি ছবি নির্বাচন করুন।');
+      alert('অনুগ্রহ করে এনআইডি বা জন্ম নিবন্ধনের একটি ছবি নির্বাচন করুন।');
       return;
     }
     base64Data = selectedFileBase64;
   }
 
-  showLoading(true, 'ছবি প্রসেস হচ্ছে এবং এআই ও স্বাভাবিক যাচাই হচ্ছে...');
+  showLoading(true, 'Gemini AI দ্বারা ডকুমেন্ট বিশ্লেষণ করা হচ্ছে...');
 
   const room = (elRoomCode.value || 'FC-101').trim().toUpperCase();
   const apiKey = elApiKey.value.trim();
+  const docType = document.getElementById('docType')?.value || 'auto';
   const maritalStatus = document.getElementById('maritalStatus')?.value || 'বিবাহিত';
   const religion = document.getElementById('religion')?.value || 'ইসলাম';
   const mobileNumber = normalizeDigits(document.getElementById('mobileNumber')?.value?.trim() || '');
@@ -228,6 +232,7 @@ btnCapture.addEventListener('click', async () => {
       image: base64Data,
       room: room,
       apiKey: apiKey,
+      docType: docType,
       maritalStatus: maritalStatus,
       religion: religion,
       mobileNumber: mobileNumber
@@ -238,7 +243,7 @@ btnCapture.addEventListener('click', async () => {
       const resp = await fetch('/api/ocr-nid', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: base64Data, room, apiKey, maritalStatus, religion, mobileNumber })
+        body: JSON.stringify({ image: base64Data, room, apiKey, docType, maritalStatus, religion, mobileNumber })
       });
       const data = await resp.json();
       showLoading(false);
@@ -269,6 +274,12 @@ function displayResults(data) {
   if (!data) return;
   resultCard.style.display = 'block';
 
+  const resDocType = document.getElementById('resDocType');
+  if (resDocType) {
+    const label = data.doc_type === 'birth_certificate' ? 'ডিজিটাল জন্ম নিবন্ধন (BRC)' : 'জাতীয় পরিচয়পত্র (NID)';
+    resDocType.textContent = data.ocr_model_used ? `${label} • ${data.ocr_model_used}` : label;
+  }
+
   document.getElementById('resNameBn').textContent = data.name_bn || 'পাওয়া যায়নি';
   document.getElementById('resNameEn').textContent = data.name_en || 'পাওয়া যায়নি';
   let nidDisplay = data.doc_number || data.nid_number || data.birth_reg_no || 'পাওয়া যায়নি';
@@ -282,6 +293,31 @@ function displayResults(data) {
   document.getElementById('resFatherEn').textContent = data.father_name_en || 'পাওয়া যায়নি';
   document.getElementById('resMotherBn').textContent = data.mother_name_bn || 'পাওয়া যায়নি';
   document.getElementById('resMotherEn').textContent = data.mother_name_en || 'পাওয়া যায়নি';
+
+  const spouseRow = document.getElementById('resSpouseRow');
+  const spouseBn = document.getElementById('resSpouseBn');
+  if (spouseRow && spouseBn) {
+    if (data.spouse_name_bn) {
+      spouseBn.textContent = data.spouse_name_en ? `${data.spouse_name_bn} (${data.spouse_name_en})` : data.spouse_name_bn;
+      spouseRow.style.display = 'flex';
+    } else {
+      spouseRow.style.display = 'none';
+    }
+  }
+
+  const resWarnings = document.getElementById('resWarnings');
+  if (resWarnings) {
+    if (Array.isArray(data.ocr_warnings) && data.ocr_warnings.length > 0) {
+      resWarnings.textContent = '';
+      data.ocr_warnings.forEach((w, idx) => {
+        if (idx > 0) resWarnings.appendChild(document.createElement('br'));
+        resWarnings.appendChild(document.createTextNode('⚠️ ' + w));
+      });
+      resWarnings.style.display = 'block';
+    } else {
+      resWarnings.style.display = 'none';
+    }
+  }
 
   // Smooth scroll into view
   resultCard.scrollIntoView({ behavior: 'smooth' });

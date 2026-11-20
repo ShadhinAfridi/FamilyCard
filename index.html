@@ -89,8 +89,16 @@
         </div>
       </div>
 
-      <!-- Options for Marital Status & Religion -->
+      <!-- Options for Document Type, Marital Status & Religion -->
       <div class="options-bar">
+        <div class="form-group" style="margin-bottom: 10px;">
+          <label for="docType">🪪 ডকুমেন্টের ধরন</label>
+          <select id="docType" class="select-input">
+            <option value="auto" selected>অটো-ডিটেক্ট (NID / জন্ম নিবন্ধন)</option>
+            <option value="nid">জাতীয় পরিচয়পত্র (NID - ১০/১৩/১৭ ডিজিট)</option>
+            <option value="birth_certificate">ডিজিটাল জন্ম নিবন্ধন সনদ (১৭ ডিজিট BRC)</option>
+          </select>
+        </div>
         <div class="form-row">
           <div class="form-group flex-1">
             <label for="maritalStatus">💍 বৈবাহিক অবস্থা*</label>
@@ -141,7 +149,12 @@
         <h3>✅ এক্সট্রাক্ট করা তথ্য (ট্যাবলেটে পাঠানো হয়েছে)</h3>
         <button id="btnDismissResult" class="btn-sm">মুছে ফেলুন</button>
       </div>
+      <div id="resWarnings" style="display:none; background:#fffbeb; border:1px solid #f59e0b; color:#92400e; padding:10px 12px; border-radius:8px; margin-bottom:10px; font-size:13px; line-height:1.5;"></div>
       <div class="result-grid">
+        <div class="result-item">
+          <span class="res-label">ডকুমেন্ট ধরন:</span>
+          <span id="resDocType" class="res-value">-</span>
+        </div>
         <div class="result-item">
           <span class="res-label">বাংলা নাম:</span>
           <span id="resNameBn" class="res-value">-</span>
@@ -151,7 +164,7 @@
           <span id="resNameEn" class="res-value">-</span>
         </div>
         <div class="result-item">
-          <span class="res-label">NID নম্বর:</span>
+          <span class="res-label">NID / নিবন্ধন নম্বর:</span>
           <span id="resNid" class="res-value highlight">-</span>
         </div>
         <div class="result-item">
@@ -177,6 +190,10 @@
         <div class="result-item">
           <span class="res-label">Mother's Name (EN):</span>
           <span id="resMotherEn" class="res-value highlight" style="color: #0284c7;">-</span>
+        </div>
+        <div class="result-item" id="resSpouseRow" style="display:none;">
+          <span class="res-label">স্বামী/স্ত্রী (পুরাতন NID):</span>
+          <span id="resSpouseBn" class="res-value">-</span>
         </div>
       </div>
     </section>

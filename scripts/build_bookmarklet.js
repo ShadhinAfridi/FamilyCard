@@ -44,7 +44,7 @@ async function build() {
   const userScriptHeader = `// ==UserScript==
 // @name         Family Card AI Assistant (NID & BRC Scanner + Auto-Fill)
 // @namespace    https://binary-ict.web.app/
-// @version      1.5.0
+// @version      1.6.0
 // @description  Automated NID/Birth Certificate OCR, Section 3-9 Smart Defaults & 2500 Tk AI Distribution for fc.bhata.gov.bd
 // @author       Binary ICT
 // @match        https://fc.bhata.gov.bd/*

@@ -55,10 +55,10 @@ function normalizeDigits(str) {
   });
 }
 
-// Helper to standardize Date of Birth to DD/MM/YYYY
+// Helper to standardize Date of Birth (supports English & Bengali months/digits) to DD/MM/YYYY
 function standardizeDate(dobStr) {
   if (!dobStr) return '';
-  let str = normalizeDigits(dobStr).trim();
+  let str = normalizeDigits(dobStr).replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
 
   // ISO: YYYY-MM-DD or YYYY/MM/DD
   const isoMatch = str.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/);
@@ -66,17 +66,30 @@ function standardizeDate(dobStr) {
     return `${isoMatch[3].padStart(2, '0')}/${isoMatch[2].padStart(2, '0')}/${isoMatch[1]}`;
   }
 
-  // Month names: 15 Aug 1985
-  const months = {
+  // English month names: 15 Aug 1985 / 15-August-1985
+  const enMonths = {
     jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
     jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12'
   };
-  const monthMatch = str.match(/^(\d{1,2})\s+([a-zA-Z]{3,})\s+(\d{4})/i);
-  if (monthMatch) {
-    const d = monthMatch[1].padStart(2, '0');
-    const m = months[monthMatch[2].toLowerCase().substring(0, 3)] || '01';
-    const y = monthMatch[3];
-    return `${d}/${m}/${y}`;
+  const enMatch = str.match(/^(\d{1,2})[\s\-,.]+([a-zA-Z]{3,})[\s\-,.]+(\d{4})/i);
+  if (enMatch) {
+    const d = enMatch[1].padStart(2, '0');
+    const m = enMonths[enMatch[2].toLowerCase().substring(0, 3)] || '';
+    if (m) return `${d}/${m}/${enMatch[3]}`;
+  }
+
+  // Bengali month names: ১৪ মে ১৯৮৫ / ০৫ জানুয়ারি ২০১০ / ০২-মার্চ-১৯৯০
+  const bnMonthPrefixes = [
+    ['জানু', '01'], ['ফেব', '02'], ['মার', '03'], ['এপ্রি', '04'],
+    ['মে', '05'], ['জুন', '06'], ['জুল', '07'], ['আগ', '08'],
+    ['সেপ', '09'], ['অক', '10'], ['নভ', '11'], ['ডিস', '12']
+  ];
+  const bnMatch = str.match(/^(\d{1,2})[\s\-,/.]+([\u0980-\u09FF]+)[\s\-,/.]+(\d{4})/);
+  if (bnMatch) {
+    const d = bnMatch[1].padStart(2, '0');
+    const tok = bnMatch[2];
+    const hit = bnMonthPrefixes.find(([prefix]) => tok.startsWith(prefix));
+    if (hit) return `${d}/${hit[1]}/${bnMatch[3]}`;
   }
 
   // Standard DD/MM/YYYY
@@ -87,6 +100,189 @@ function standardizeDate(dobStr) {
   }
 
   return str;
+}
+
+const OCR_RESPONSE_SCHEMA = {
+  type: 'object',
+  properties: {
+    doc_type: { type: 'string', enum: ['nid', 'birth_certificate'] },
+    doc_number: { type: 'string' },
+    nid_number: { type: 'string' },
+    birth_reg_no: { type: 'string' },
+    name_bn: { type: 'string' },
+    name_en: { type: 'string' },
+    dob: { type: 'string' },
+    gender: { type: 'string' },
+    father_name_bn: { type: 'string' },
+    father_name_en: { type: 'string' },
+    mother_name_bn: { type: 'string' },
+    mother_name_en: { type: 'string' },
+    spouse_name_bn: { type: 'string' },
+    spouse_name_en: { type: 'string' },
+    relation_suggestion: { type: 'string' },
+    marital_status_suggestion: { type: 'string' },
+    confidence: { type: 'string', enum: ['high', 'medium', 'low'] }
+  },
+  required: ['doc_type', 'doc_number', 'name_bn', 'name_en', 'dob', 'gender']
+};
+
+function buildGeminiPrompt(docTypeHint = 'auto') {
+  const hintLine = docTypeHint === 'nid'
+    ? 'HINT: User indicated this document is a Bangladeshi NID Card.'
+    : docTypeHint === 'birth_certificate'
+      ? 'HINT: User indicated this document is a Bangladeshi Birth Registration Certificate (জন্ম নিবন্ধন সনদপত্র).'
+      : 'Detect automatically whether this is a Bangladeshi NID Card or a Birth Registration Certificate.';
+
+  return `
+You are an expert OCR AI for Bangladeshi Identity Documents:
+1. Bangladeshi National Identity (NID) Cards (both Smart NID and Old Laminated/Paper NID).
+2. Bangladeshi Digital Birth Registration Certificates (ডিজিটাল জন্ম নিবন্ধন সনদপত্র / BRC).
+
+${hintLine}
+
+Examine the image carefully and extract accurate fields into JSON:
+
+DOCUMENT CLASSIFICATION:
+- "doc_type": Strictly "nid" or "birth_certificate".
+
+EXTRACTION RULES:
+1. "doc_number":
+   - For NID: Extract the National ID number. Smart NID has 10 digits; classic NID has 13 or 17 digits.
+     If classic 13-digit NID, extract the 13 digits or prepend 4-digit birth year from Date of Birth to make 17 digits. Copy digits to "nid_number".
+   - For Birth Certificate: Extract the exact 17-digit Birth Registration Number (জন্ম নিবন্ধন নম্বর / PIN). Copy digits to "birth_reg_no".
+   - Remove spaces, hyphens, and non-numeric symbols. Convert any Bengali digits (০-৯) to English (0-9).
+2. "name_bn": Complete Bengali name as written on the document.
+3. "name_en": Complete English name in ALL CAPITAL LETTERS (transliterate from Bengali if not printed on classic NID).
+4. "dob": Date of Birth in DD/MM/YYYY format (English digits). Convert Bengali months/digits accurately.
+5. "gender": Strictly "পুরুষ" (Male), "নারী" (Female), or "হিজড়া" (Transgender / Hijra).
+6. "father_name_bn" & "father_name_en": Extract ONLY from "পিতা:" / "পিতার নাম:" / "Father's Name".
+   CRITICAL FOR MARRIED WOMEN'S OLD LAMINATED NID: Many classic laminated NIDs for women print "স্বামী:" (Husband) instead of "পিতা:" (Father).
+   NEVER put "স্বামী:" into "father_name_bn" or "father_name_en"! Leave father fields "" if "পিতা:" is absent, and put husband's name in "spouse_name_bn" / "spouse_name_en".
+7. "mother_name_bn" & "mother_name_en": Mother's Bengali & ALL CAPITAL English names (transliterate if needed).
+8. "spouse_name_bn" & "spouse_name_en": Extract from "স্বামী:" or "স্ত্রী:" if printed; otherwise "".
+9. "relation_suggestion": One of ("স্বামী", "স্ত্রী", "পুত্র", "কন্যা", "পিতা", "মাতা", "ভাই", "বোন", "অন্যান্য"). If classic NID shows "স্বামী:", suggest "স্ত্রী".
+10. "marital_status_suggestion": One of ("বিবাহিত", "অবিবাহিত", "বিধবা", "বিপত্নীক", "তালাকপ্রাপ্ত"). If classic NID shows "স্বামী:", suggest "বিবাহিত"; if minor, "অবিবাহিত".
+11. "confidence": "low" if blurry/glare/cropped/unreadable digits, "medium" if slight uncertainty, "high" if clear.
+
+Return ONLY a valid JSON object with those keys.`;
+}
+
+function extractTextFromGeminiResponse(res) {
+  if (Array.isArray(res?.steps)) {
+    for (let i = res.steps.length - 1; i >= 0; i--) {
+      const step = res.steps[i];
+      if (step?.type === 'model_output' && Array.isArray(step.content)) {
+        const txt = step.content.map(c => (c && c.text) ? c.text : '').join('').trim();
+        if (txt) return txt;
+      }
+    }
+  }
+  if (typeof res?.output_text === 'string' && res.output_text.trim()) {
+    return res.output_text.trim();
+  }
+  const parts = res?.candidates?.[0]?.content?.parts;
+  if (Array.isArray(parts)) {
+    const txt = parts.map(p => p?.text || '').join('').trim();
+    if (txt) return txt;
+  }
+  return '';
+}
+
+function parseOcrJsonText(textOutput) {
+  const fenceMatch = String(textOutput || '').match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  let cleaned = fenceMatch ? fenceMatch[1].trim() : String(textOutput || '').trim();
+  const objMatch = cleaned.match(/\{[\s\S]*\}/);
+  if (objMatch) cleaned = objMatch[0];
+  return JSON.parse(cleaned);
+}
+
+function validateAndNormalizeOcrData(data, options = {}) {
+  const { docType = 'auto', maritalStatus, religion = 'ইসলাম', mobileNumber = '', familyId = '' } = options;
+  const warnings = [];
+
+  if (docType && docType !== 'auto') {
+    data.doc_type = docType;
+  }
+
+  if (data.dob) data.dob = standardizeDate(data.dob);
+
+  const genderMap = {
+    'তৃতীয় লিঙ্গ': 'হিজড়া', 'তৃতীয় লিঙ্গ': 'হিজড়া', 'হিজড়া': 'হিজড়া',
+    'Male': 'পুরুষ', 'male': 'পুরুষ', 'Female': 'নারী', 'female': 'নারী'
+  };
+  if (data.gender) {
+    const g = String(data.gender).trim();
+    data.gender = genderMap[g] || g;
+  }
+  const relMap = { 'ছেলে': 'পুত্র', 'মেয়ে': 'কন্যা', 'মেয়ে': 'কন্যা', 'বাবা': 'পিতা', 'মা': 'মাতা' };
+  if (data.relation_suggestion) {
+    const r = String(data.relation_suggestion).trim();
+    data.relation_suggestion = relMap[r] || r;
+  }
+
+  const spouseBn = String(data.spouse_name_bn || '').trim();
+  const fatherBn = String(data.father_name_bn || '').trim();
+  if (spouseBn && fatherBn && fatherBn === spouseBn) {
+    data.father_name_bn = '';
+    data.father_name_en = '';
+  }
+  if (spouseBn && !data.father_name_bn) {
+    warnings.push("পুরাতন NID-তে 'স্বামী' নাম পাওয়া গেছে (পিতার নাম ছাপা নেই) — প্রয়োজনে পিতার নাম যাচাই/লিখুন।");
+    if (!data.relation_suggestion) data.relation_suggestion = 'স্ত্রী';
+  }
+
+  const rawDocNum = data.doc_number || (data.doc_type === 'birth_certificate' ? data.birth_reg_no : data.nid_number) || data.nid_number || data.birth_reg_no || '';
+  let rawDigits = normalizeDigits(rawDocNum).replace(/[^0-9]/g, '');
+
+  if (data.doc_type === 'birth_certificate') {
+    data.doc_number = rawDigits;
+    data.birth_reg_no = rawDigits;
+    if (rawDigits.length !== 17) {
+      warnings.push(`জন্ম নিবন্ধন নম্বরটি ${rawDigits.length || 0} সংখ্যার (অবশ্যই ১৭ সংখ্যার হতে হবে) — নম্বরটি যাচাই করুন।`);
+    }
+  } else {
+    if (rawDigits.length === 13) {
+      const yearMatch = String(data.dob || '').match(/\b(19\d{2}|20\d{2})\b/);
+      if (yearMatch) {
+        rawDigits = yearMatch[1] + rawDigits;
+        data.nid_converted_to_17 = true;
+      } else {
+        warnings.push('১৩ সংখ্যার NID-র জন্মসাল না পাওয়ায় ১৭ সংখ্যায় রূপান্তর করা যায়নি — জন্মতারিখ যাচাই করুন।');
+      }
+    }
+    data.doc_type = data.doc_type || 'nid';
+    data.doc_number = rawDigits;
+    data.nid_number = rawDigits;
+    if (rawDigits.length !== 10 && rawDigits.length !== 17) {
+      warnings.push(`NID নম্বরটি ${rawDigits.length || 0} সংখ্যার (১০ বা ১৭ সংখ্যার হতে হবে) — নম্বরটি যাচাই করুন।`);
+    }
+  }
+
+  if (!String(data.name_bn || '').trim()) warnings.push('বাংলা নাম পড়া যায়নি।');
+  if (!String(data.name_en || '').trim()) warnings.push('ইংরেজি নাম পড়া যায়নি।');
+  if (!/^\d{2}\/\d{2}\/\d{4}$/.test(String(data.dob || ''))) {
+    warnings.push('জন্ম তারিখ (DD/MM/YYYY) স্পষ্ট নয় — হাতে মিলিয়ে নিন।');
+  }
+  if (data.confidence === 'low') {
+    warnings.push('ছবিটি কিছুটা ঝাপসা/অস্পষ্ট মনে হচ্ছে — সাবমিটের আগে সব তথ্য মিলিয়ে নিন।');
+  }
+
+  if (data.name_en) data.name_en = String(data.name_en).toUpperCase().trim();
+  if (data.father_name_en) data.father_name_en = String(data.father_name_en).toUpperCase().trim();
+  if (data.mother_name_en) data.mother_name_en = String(data.mother_name_en).toUpperCase().trim();
+  if (data.spouse_name_en) data.spouse_name_en = String(data.spouse_name_en).toUpperCase().trim();
+
+  const normMob = mobileNumber ? normalizeDigits(mobileNumber).replace(/[^0-9]/g, '').trim() : '';
+  if (normMob && !/^01[3-9]\d{8}$/.test(normMob)) {
+    warnings.push('মোবাইল নম্বরটি সঠিক ১১ সংখ্যার (01XXXXXXXXX) নয়।');
+  }
+
+  data.marital_status = maritalStatus || data.marital_status_suggestion || 'বিবাহিত';
+  data.religion = religion || 'ইসলাম';
+  data.mobile_number = normMob;
+  data.family_id = normalizeDigits(familyId || data.family_id || '');
+  data.ocr_warnings = warnings;
+  return data;
 }
 
 // Direct Firebase Firestore sync (rajbari-city-app-16601)
@@ -107,10 +303,13 @@ async function syncToFirestore(data) {
       father_name_en: { stringValue: data.father_name_en || '' },
       mother_name_bn: { stringValue: data.mother_name_bn || '' },
       mother_name_en: { stringValue: data.mother_name_en || '' },
+      spouse_name_bn: { stringValue: data.spouse_name_bn || '' },
+      spouse_name_en: { stringValue: data.spouse_name_en || '' },
       marital_status: { stringValue: data.marital_status || 'বিবাহিত' },
       religion: { stringValue: data.religion || 'ইসলাম' },
       mobile_number: { stringValue: data.mobile_number || '' },
       doc_type: { stringValue: data.doc_type || 'nid' },
+      ocr_model_used: { stringValue: data.ocr_model_used || '' },
       synced_at: { timestampValue: new Date().toISOString() }
     };
     if (data.family_id) fields.family_id = { stringValue: normalizeDigits(data.family_id) };
@@ -133,163 +332,138 @@ async function syncToFirestore(data) {
   }
 }
 
-// Call Gemini API to extract Bangladeshi NID fields
+// Resilient Gemini OCR caller: Gemini 3.8 Flash primary, Gemini 3.5 Flash-Lite backup
 async function extractNidWithGemini(base64Image, customApiKey, options = {}) {
   const apiKey = customApiKey || process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error('No Gemini API Key provided. Set GEMINI_API_KEY in .env or provide it in the request.');
   }
 
-  // Strip data URL header if present (e.g. data:image/jpeg;base64,...)
   let mimeType = options.mimeType || 'image/jpeg';
-  let cleanBase64 = base64Image;
-
-  if (base64Image.includes(';base64,')) {
-    const parts = base64Image.split(';base64,');
-    mimeType = parts[0].replace('data:', '') || mimeType;
-    cleanBase64 = parts[1];
+  let cleanBase64 = String(base64Image || '');
+  const dataUriMatch = cleanBase64.match(/^data:([^;]+);base64,(.+)$/s);
+  if (dataUriMatch) {
+    mimeType = dataUriMatch[1] || mimeType;
+    cleanBase64 = dataUriMatch[2];
   }
 
-  const prompt = `
-You are an expert OCR AI for Bangladeshi Identity Documents:
-1. Bangladeshi National Identity (NID) Cards (both Smart NID and Old Laminated/Paper NID).
-2. Bangladeshi Digital Birth Registration Certificates (ডিজিটাল জন্ম নিবন্ধন সনদপত্র / BRC).
-
-Examine the image carefully and classify and extract the required information:
-
-DOCUMENT CLASSIFICATION:
-- "doc_type": Identify whether the document is "nid" or "birth_certificate".
-
-EXTRACTION RULES:
-1. "doc_number":
-   - For NID: Extract the National ID number. Only 10-digit (Smart NID) or 17-digit (classic NID) numbers are accepted. If 13-digit legacy NID, prepend 4-digit birth year extracted from Date of Birth to make it 17 digits.
-   - For Birth Certificate: Extract the 17-digit Birth Registration Number (জন্ম নিবন্ধন নম্বর / PIN).
-   - Remove spaces, hyphens, and non-numeric symbols.
-2. "name_bn": Complete Bengali name as written on the document.
-3. "name_en": Complete English name in ALL CAPITAL LETTERS.
-4. "dob": Date of Birth in DD/MM/YYYY format.
-5. "gender": "পুরুষ" (Male), "নারী" (Female), or "হিজড়া" (Transgender / Hijra).
-6. "father_name_bn": Father's Bengali name.
-7. "father_name_en": Father's English name in ALL CAPITAL LETTERS (transliterate from Bengali if only in Bengali).
-8. "mother_name_bn": Mother's Bengali name.
-9. "mother_name_en": Mother's English name in ALL CAPITAL LETTERS (transliterate from Bengali if only in Bengali).
-10. "relation_suggestion": If for family member, suggest relationship relative to household head strictly from ("স্বামী", "স্ত্রী", "পুত্র", "কন্যা", "পিতা", "মাতা", "ভাই", "বোন", "অন্যান্য").
-11. "marital_status_suggestion": Suggested marital status ("বিবাহিত", "অবিবাহিত", "বিধবা", "বিপত্নীক").
-
-Return ONLY a valid JSON object with these exact keys:
-{
-  "doc_type": "nid" or "birth_certificate",
-  "doc_number": "",
-  "nid_number": "",
-  "name_bn": "",
-  "name_en": "",
-  "dob": "",
-  "gender": "",
-  "father_name_bn": "",
-  "father_name_en": "",
-  "mother_name_bn": "",
-  "mother_name_en": "",
-  "relation_suggestion": "",
-  "marital_status_suggestion": ""
-}
-Do not wrap in Markdown code blocks. Return purely the raw JSON object. If any field is missing or unreadable, leave it as an empty string "".
-`;
-
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
-
-  const requestBody = {
-    contents: [
-      {
-        parts: [
-          {
-            text: prompt
-          },
-          {
-            inline_data: {
-              mime_type: mimeType,
-              data: cleanBase64
-            }
-          }
-        ]
+  const promptText = buildGeminiPrompt(options.docType || 'auto');
+  const attempts = [
+    {
+      label: 'gemini-3.8-flash (interactions)',
+      url: 'https://generativelanguage.googleapis.com/v1beta/interactions',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey,
+        'Api-Revision': '2026-05-20'
+      },
+      body: {
+        model: 'gemini-3.8-flash',
+        input: [
+          { type: 'text', text: promptText },
+          { type: 'image', data: cleanBase64, mime_type: mimeType }
+        ],
+        generation_config: { thinking_level: 'low' },
+        response_format: {
+          type: 'text',
+          mime_type: 'application/json',
+          schema: OCR_RESPONSE_SCHEMA
+        },
+        store: false
       }
-    ],
-    generationConfig: {
-      temperature: 0.1,
-      response_mime_type: "application/json"
+    },
+    {
+      label: 'gemini-3.8-flash (generateContent)',
+      url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+      body: {
+        contents: [{
+          parts: [
+            { text: promptText },
+            { inline_data: { mime_type: mimeType, data: cleanBase64 } }
+          ]
+        }],
+        generationConfig: { response_mime_type: 'application/json' }
+      }
+    },
+    {
+      label: 'gemini-3.5-flash-lite (interactions)',
+      url: 'https://generativelanguage.googleapis.com/v1beta/interactions',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey,
+        'Api-Revision': '2026-05-20'
+      },
+      body: {
+        model: 'gemini-3.5-flash-lite',
+        input: [
+          { type: 'text', text: promptText },
+          { type: 'image', data: cleanBase64, mime_type: mimeType }
+        ],
+        response_format: {
+          type: 'text',
+          mime_type: 'application/json',
+          schema: OCR_RESPONSE_SCHEMA
+        },
+        store: false
+      }
+    },
+    {
+      label: 'gemini-3.5-flash-lite (generateContent)',
+      url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+      body: {
+        contents: [{
+          parts: [
+            { text: promptText },
+            { inline_data: { mime_type: mimeType, data: cleanBase64 } }
+          ]
+        }],
+        generationConfig: { response_mime_type: 'application/json' }
+      }
     }
-  };
+  ];
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(requestBody)
-  });
+  let lastError = 'No text generated by Gemini OCR.';
+  for (const attempt of attempts) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 28000);
+    try {
+      const response = await fetch(attempt.url, {
+        method: 'POST',
+        headers: attempt.headers,
+        body: JSON.stringify(attempt.body),
+        signal: controller.signal
+      });
+      clearTimeout(timer);
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Gemini API Error (${response.status}): ${errorText}`);
-  }
+      const resData = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const msg = resData?.error?.message || resData?.message || `HTTP ${response.status}`;
+        if (response.status === 400 && /API[_\s]?key/i.test(msg)) {
+          throw new Error('Invalid Gemini API Key.');
+        }
+        lastError = `${attempt.label}: ${msg}`;
+        continue;
+      }
 
-  const result = await response.json();
-  const textOutput = result?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!textOutput) {
-    throw new Error('No text generated by Gemini OCR.');
-  }
+      const textOutput = extractTextFromGeminiResponse(resData);
+      if (!textOutput) {
+        lastError = `${attempt.label}: Empty model response`;
+        continue;
+      }
 
-  // Parse JSON safely
-  const fenceMatch = textOutput.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-  let cleaned = fenceMatch ? fenceMatch[1].trim() : textOutput.trim();
-  const objMatch = cleaned.match(/\{[\s\S]*\}/);
-  if (objMatch) cleaned = objMatch[0];
-
-  const data = JSON.parse(cleaned);
-
-  if (options.docType && options.docType !== 'auto') {
-    data.doc_type = options.docType;
-  }
-
-  // Standardize DOB first so Bengali digits in birth year work for 13->17 NID conversion
-  if (data.dob) data.dob = standardizeDate(data.dob);
-
-  // Canonicalize gender and relation labels
-  const genderMap = { 'তৃতীয় লিঙ্গ': 'হিজড়া', 'তৃতীয় লিঙ্গ': 'হিজড়া', 'হিজড়া': 'হিজড়া' };
-  if (data.gender && genderMap[data.gender.trim()]) {
-    data.gender = genderMap[data.gender.trim()];
-  }
-  const relMap = { 'ছেলে': 'পুত্র', 'মেয়ে': 'কন্যা', 'মেয়ে': 'কন্যা', 'বাবা': 'পিতা', 'মা': 'মাতা' };
-  if (data.relation_suggestion && relMap[data.relation_suggestion.trim()]) {
-    data.relation_suggestion = relMap[data.relation_suggestion.trim()];
-  }
-
-  // Normalize Bengali numerals to English and enforce 10 or 17 digit NID / 17 digit BRC rule
-  const rawDocNum = data.doc_number || (data.doc_type === 'birth_certificate' ? data.birth_reg_no : data.nid_number) || data.nid_number || data.birth_reg_no || '';
-  let rawDigits = normalizeDigits(rawDocNum).replace(/[^0-9]/g, '');
-
-  if (data.doc_type === 'birth_certificate' || rawDigits.length === 17) {
-    data.doc_number = rawDigits;
-  } else if (rawDigits.length === 13) {
-    const yearMatch = String(data.dob || '').match(/\b(19\d{2}|20\d{2})\b/);
-    if (yearMatch) {
-      rawDigits = yearMatch[1] + rawDigits;
-      data.nid_converted_to_17 = true;
+      const data = parseOcrJsonText(textOutput);
+      data.ocr_model_used = attempt.label;
+      return validateAndNormalizeOcrData(data, options);
+    } catch (err) {
+      clearTimeout(timer);
+      if (/Invalid Gemini API Key/.test(err.message || '')) throw err;
+      lastError = err.name === 'AbortError' ? `${attempt.label}: Request timed out` : `${attempt.label}: ${err.message}`;
     }
-    data.doc_number = rawDigits;
-  } else {
-    data.doc_number = rawDigits;
   }
 
-  if (data.doc_type === 'birth_certificate') {
-    data.birth_reg_no = data.doc_number;
-  } else {
-    data.doc_type = data.doc_type || 'nid';
-    data.nid_number = data.doc_number;
-  }
-
-  if (data.name_en) data.name_en = String(data.name_en).toUpperCase().trim();
-  if (data.father_name_en) data.father_name_en = String(data.father_name_en).toUpperCase().trim();
-  if (data.mother_name_en) data.mother_name_en = String(data.mother_name_en).toUpperCase().trim();
-
-  return data;
+  throw new Error(`Gemini OCR Error: ${lastError}`);
 }
 
 // REST API for direct OCR (supports both /api/ocr-nid and /api/extract-nid)
@@ -301,11 +475,14 @@ async function handleExtractNidRoute(req, res) {
       return res.status(400).json({ success: false, error: 'No image provided.' });
     }
 
-    const extracted = await extractNidWithGemini(image, apiKey, { mimeType, docType });
-    extracted.marital_status = req.body.maritalStatus || extracted.marital_status_suggestion || 'বিবাহিত';
-    extracted.religion = req.body.religion || 'ইসলাম';
-    extracted.mobile_number = normalizeDigits(req.body.mobileNumber || '');
-    extracted.family_id = normalizeDigits(req.body.familyId || '');
+    const extracted = await extractNidWithGemini(image, apiKey, {
+      mimeType,
+      docType,
+      maritalStatus: req.body.maritalStatus,
+      religion: req.body.religion,
+      mobileNumber: req.body.mobileNumber,
+      familyId: req.body.familyId
+    });
 
     // Async sync to Firestore
     syncToFirestore(extracted);
@@ -362,12 +539,14 @@ io.on('connection', (socket) => {
     socket.emit('ocr-status', { status: 'processing', message: 'Gemini AI is reading the NID card...' });
 
     try {
-      const extracted = await extractNidWithGemini(image, apiKey, { docType: payload.docType });
-      extracted.marital_status = payload.maritalStatus || extracted.marital_status_suggestion || 'বিবাহিত';
-      extracted.religion = payload.religion || 'ইসলাম';
-      extracted.mobile_number = normalizeDigits(payload.mobileNumber || '');
-      extracted.family_id = normalizeDigits(payload.familyId || '');
-      console.log(`[OCR Success] Extracted:`, extracted.name_bn || extracted.name_en, extracted.nid_number);
+      const extracted = await extractNidWithGemini(image, apiKey, {
+        docType: payload.docType,
+        maritalStatus: payload.maritalStatus,
+        religion: payload.religion,
+        mobileNumber: payload.mobileNumber,
+        familyId: payload.familyId
+      });
+      console.log(`[OCR Success] Extracted:`, extracted.name_bn || extracted.name_en, extracted.nid_number || extracted.birth_reg_no);
 
       // Async sync to Firestore
       syncToFirestore(extracted);

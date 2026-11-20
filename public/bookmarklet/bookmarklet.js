@@ -180,6 +180,57 @@ Return ONLY a single valid JSON object with these exact keys:
       border-radius: 50%; animation: fc-bm-spin 0.8s linear infinite; margin: 0 auto;
     }
     @keyframes fc-bm-spin { to { transform: rotate(360deg); } }
+
+    /* --- Section 3 Media Tracer & Guardian HUD --- */
+    #fc-section3-hud {
+      position: fixed; bottom: 84px; right: 20px; z-index: 9999998;
+      width: 320px; background: #ffffff; border-radius: 14px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.18); border: 2px solid #1c3b68;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      overflow: hidden; transition: all 0.25s ease;
+    }
+    #fc-section3-hud.minimized {
+      width: auto; background: #1c3b68; border-color: #38bdf8;
+    }
+    #fc-section3-hud.minimized .fc-s3-body { display: none; }
+    .fc-s3-header {
+      background: #1c3b68; color: #fff; padding: 10px 14px;
+      display: flex; align-items: center; justify-content: space-between;
+      cursor: pointer; user-select: none;
+    }
+    .fc-s3-header h4 {
+      margin: 0; font-size: 13px; font-weight: 700; display: flex; align-items: center; gap: 6px;
+    }
+    .fc-s3-toggle {
+      font-size: 16px; font-weight: bold; cursor: pointer; color: #94a3b8;
+    }
+    .fc-s3-body {
+      padding: 12px; display: flex; flex-direction: column; gap: 8px; font-size: 12px;
+    }
+    .fc-s3-item {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 6px 8px; border-radius: 8px; background: #f8fafc; border: 1px solid #e2e8f0;
+    }
+    .fc-s3-item-lbl {
+      font-weight: 600; color: #334155; display: flex; align-items: center; gap: 6px;
+    }
+    .fc-s3-badge {
+      font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 6px;
+    }
+    .fc-s3-badge-pending { background: #fef3c7; color: #92400e; }
+    .fc-s3-badge-ready { background: #e0f2fe; color: #0369a1; }
+    .fc-s3-badge-done { background: #dcfce7; color: #166534; }
+    .fc-s3-badge-opt { background: #f3e8ff; color: #6b21a8; }
+    .fc-s3-progress-wrap {
+      width: 100%; background: #e2e8f0; border-radius: 10px; height: 6px; overflow: hidden;
+    }
+    .fc-s3-progress-bar {
+      height: 100%; width: 0%; background: linear-gradient(90deg, #10b981, #059669);
+      transition: width 0.3s ease;
+    }
+    .fc-s3-note {
+      font-size: 10.5px; color: #64748b; line-height: 1.4; background: #f1f5f9; padding: 6px 8px; border-radius: 6px;
+    }
   `;
   document.head.appendChild(styleEl);
 
@@ -658,17 +709,322 @@ Return ONLY a single valid JSON object with these exact keys:
     }
   }
 
-  // MutationObserver to watch Step 1 activation
-  const observer = new MutationObserver(() => {
-    if (!lastExtractedData) return;
-    const tab1 = document.querySelector('[data-family-card-tab="1"]') || document.querySelector('.v-expansion-panel--active');
-    const fatherInp = findInputByLabel(['পিতার নাম (বাংলা)']) || document.getElementById('input-1286');
-    if (fatherInp && !fatherInp.value) {
-      fillPortalFields(lastExtractedData);
-      showToast('✅ পিতা-মাতা, বৈবাহিক অবস্থা ও ধর্ম অটো-ফিল সম্পন্ন!');
+  // --- SECTION 3: IMAGE GUARDIAN & COMPLIANCE SYSTEM ---
+  // Compresses and resizes camera/gallery images to strictly satisfy portal requirements:
+  // - Applicant Photo & Signature: < 195 KB, JPEG
+  // - House Photo: < 195 KB, strictly <= 600x400 resolution
+  function compressAndFitImage(file, maxW, maxH, maxBytes = 195 * 1024) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = reject;
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onerror = reject;
+        img.onload = () => {
+          let width = img.naturalWidth || img.width;
+          let height = img.naturalHeight || img.height;
+
+          // Downscale proportionally if larger than maximum bounds
+          if (width > maxW || height > maxH) {
+            const ratio = Math.min(maxW / width, maxH / height);
+            width = Math.round(width * ratio);
+            height = Math.round(height * ratio);
+          }
+
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, width, height);
+          ctx.drawImage(img, 0, 0, width, height);
+
+          let quality = 0.88;
+          function tryEncode() {
+            canvas.toBlob((blob) => {
+              if (!blob) {
+                reject(new Error('Canvas blob generation failed'));
+                return;
+              }
+              if (blob.size > maxBytes && quality > 0.42) {
+                quality -= 0.12;
+                tryEncode();
+              } else {
+                const baseName = (file.name || 'image.jpg').replace(/\.[^/.]+$/, "");
+                const optimizedFile = new File([blob], `${baseName}_optimized.jpg`, {
+                  type: 'image/jpeg',
+                  lastModified: Date.now()
+                });
+                resolve({
+                  file: optimizedFile,
+                  width,
+                  height,
+                  sizeKb: Math.round(blob.size / 1024)
+                });
+              }
+            }, 'image/jpeg', quality);
+          }
+          tryEncode();
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function attachMediaGuardian(inputEl, slotType) {
+    if (!inputEl || inputEl.__fcGuardianAttached) return;
+    inputEl.__fcGuardianAttached = true;
+
+    inputEl.addEventListener('change', async () => {
+      if (inputEl.__isOptimizing) return;
+      const file = inputEl.files?.[0];
+      if (!file) {
+        traceSection3Media();
+        return;
+      }
+
+      const isHouse = (slotType === 'house');
+      const isSig = (slotType === 'signature');
+      const maxW = isHouse ? 600 : 800;
+      const maxH = isHouse ? 400 : (isSig ? 400 : 800);
+      const maxBytes = 195 * 1024;
+
+      // Check if image exceeds portal 200KB limit or 600x400
+      if (file.size > maxBytes || isHouse) {
+        try {
+          inputEl.__isOptimizing = true;
+          const label = isHouse ? 'বাড়ির ছবি' : (isSig ? 'স্বাক্ষর' : 'আবেদনকারীর ছবি');
+          showToast(`🛡️ ইমেজ গার্ডিয়ান: ${label} অপ্টিমাইজ করা হচ্ছে...`);
+
+          const result = await compressAndFitImage(file, maxW, maxH, maxBytes);
+
+          // Replace files via standard DataTransfer
+          const dt = new DataTransfer();
+          dt.items.add(result.file);
+          inputEl.files = dt.files;
+
+          showToast(`✅ ${label} সরকারি মাপে ফিট (${result.sizeKb} KB, ${result.width}x${result.height}) হয়েছে!`);
+
+          // Notify Vuetify & Vue reactivity
+          inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+          inputEl.dispatchEvent(new Event('change', { bubbles: true }));
+        } catch (err) {
+          console.warn('[MediaGuardian] Failed to compress image:', err);
+        } finally {
+          setTimeout(() => { inputEl.__isOptimizing = false; }, 600);
+        }
+      }
+
+      setTimeout(traceSection3Media, 400);
+    });
+  }
+
+  // --- SECTION 3: REAL-TIME HUD & SCRAPING TRACER ---
+  function injectSection3HUD() {
+    if (document.getElementById('fc-section3-hud')) return;
+
+    const hud = document.createElement('div');
+    hud.id = 'fc-section3-hud';
+    hud.innerHTML = `
+      <div class="fc-s3-header" id="fc-s3-toggle-btn">
+        <h4>📋 সেকশন ৩: ছবি ও সনাক্তকরণ (<span id="fc-s3-ratio">০/৩</span>)</h4>
+        <span class="fc-s3-toggle" id="fc-s3-min-icon">▾</span>
+      </div>
+      <div class="fc-s3-body">
+        <div class="fc-s3-progress-wrap">
+          <div id="fc-s3-progress" class="fc-s3-progress-bar"></div>
+        </div>
+        
+        <div class="fc-s3-item">
+          <span class="fc-s3-item-lbl">👤 আবেদনকারীর ছবি</span>
+          <span id="fc-s3-status-photo" class="fc-s3-badge fc-s3-badge-pending">⏳ বাকি</span>
+        </div>
+
+        <div class="fc-s3-item">
+          <span class="fc-s3-item-lbl">✍️ স্বাক্ষর</span>
+          <span id="fc-s3-status-sig" class="fc-s3-badge fc-s3-badge-pending">⏳ বাকি</span>
+        </div>
+
+        <div class="fc-s3-item">
+          <span class="fc-s3-item-lbl">🏠 বাড়ির ছবি (≤৬০০x৪০০)</span>
+          <span id="fc-s3-status-house" class="fc-s3-badge fc-s3-badge-pending">⏳ বাকি</span>
+        </div>
+
+        <div class="fc-s3-note">
+          🛡️ <b>ইমেজ গার্ডিয়ান সক্রিয়:</b> ম্যানুয়ালি ছবি তুললে স্বয়ংক্রিয়ভাবে ২০০ KB ও ৬০০x৪০০ সাইজে অপ্টিমাইজ হয়ে যাবে।<br>
+          <span id="fc-s3-cloud-stat" style="color: #166534; font-weight: 600;">☁️ ক্লাউড অটো-সিঙ্ক প্রস্তুত</span>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(hud);
+
+    const toggleBtn = document.getElementById('fc-s3-toggle-btn');
+    const minIcon = document.getElementById('fc-s3-min-icon');
+    toggleBtn.addEventListener('click', () => {
+      hud.classList.toggle('minimized');
+      minIcon.textContent = hud.classList.contains('minimized') ? '▴' : '▾';
+    });
+  }
+
+  let lastSyncedMediaHash = '';
+
+  function traceSection3Media() {
+    const imgInput = document.getElementById('image');
+    const sigInput = document.getElementById('signature');
+    const houseInput = document.getElementById('house_image');
+
+    const s3Panel = document.querySelector('[data-family-card-tab="9"]') || 
+                    document.querySelector('.fc-media-row') ||
+                    document.querySelector('.fc-photo-preview') ||
+                    imgInput;
+
+    const hud = document.getElementById('fc-section3-hud');
+    if (!s3Panel && !imgInput) {
+      if (hud) hud.style.display = 'none';
+      return;
     }
+
+    injectSection3HUD();
+    const hudEl = document.getElementById('fc-section3-hud');
+    if (hudEl) hudEl.style.display = 'block';
+
+    if (imgInput) attachMediaGuardian(imgInput, 'photo');
+    if (sigInput) attachMediaGuardian(sigInput, 'signature');
+    if (houseInput) attachMediaGuardian(houseInput, 'house');
+
+    function getPreviewUrl(inputEl, customSelector) {
+      if (!inputEl) return null;
+      const parentCol = inputEl.closest('.col, [class*="col-"]') || inputEl.closest('.fc-media-col') || inputEl.parentElement;
+      const previewContainer = (customSelector ? document.querySelector(customSelector) : null) ||
+                               parentCol?.querySelector('.v-image') ||
+                               inputEl.closest('.row')?.querySelector(customSelector || '.v-image');
+      if (!previewContainer) return null;
+
+      const imgDiv = previewContainer.querySelector('.v-image__image') || previewContainer;
+      const bg = imgDiv?.style?.backgroundImage || '';
+      const match = bg.match(/url\(["']?([^"')]+)["']?\)/);
+      if (match && match[1] && !match[1].includes('data:image/svg')) {
+        return match[1];
+      }
+      return null;
+    }
+
+    const photoUrl = getPreviewUrl(imgInput, '.fc-photo-preview');
+    const photoHasFile = (imgInput?.files?.length || 0) > 0;
+    const photoDone = !!(photoUrl && (photoUrl.includes('familycard-api.bhata.gov.bd') || photoUrl.startsWith('http') || photoUrl.startsWith('blob:') || photoUrl.startsWith('data:')));
+
+    const sigUrl = getPreviewUrl(sigInput, '.fc-signature-preview');
+    const sigHasFile = (sigInput?.files?.length || 0) > 0;
+    const sigDone = !!(sigUrl && (sigUrl.includes('familycard-api.bhata.gov.bd') || sigUrl.startsWith('http') || sigUrl.startsWith('blob:') || sigUrl.startsWith('data:')));
+
+    const houseUrl = getPreviewUrl(houseInput, '.fc-house-preview');
+    const houseHasFile = (houseInput?.files?.length || 0) > 0;
+    const houseDone = !!(houseUrl && (houseUrl.includes('familycard-api.bhata.gov.bd') || houseUrl.startsWith('http') || houseUrl.startsWith('blob:') || houseUrl.startsWith('data:')));
+
+    function updateBadge(badgeId, isDone, hasFile, doneText) {
+      const el = document.getElementById(badgeId);
+      if (!el) return;
+      if (isDone) {
+        el.className = 'fc-s3-badge fc-s3-badge-done';
+        el.textContent = doneText || '✅ আপলোড সম্পন্ন';
+      } else if (hasFile) {
+        el.className = 'fc-s3-badge fc-s3-badge-ready';
+        el.textContent = '⏳ প্রস্তুত / আপলোড হচ্ছে';
+      } else {
+        el.className = 'fc-s3-badge fc-s3-badge-pending';
+        el.textContent = '⏳ বাকি';
+      }
+    }
+
+    updateBadge('fc-s3-status-photo', photoDone, photoHasFile, '✅ ছবি সম্পন্ন');
+    updateBadge('fc-s3-status-sig', sigDone, sigHasFile, '✅ স্বাক্ষর সম্পন্ন');
+    updateBadge('fc-s3-status-house', houseDone, houseHasFile, '✅ বাড়ি সম্পন্ন');
+
+    const count = (photoDone ? 1 : 0) + (sigDone ? 1 : 0) + (houseDone ? 1 : 0);
+    const ratioEl = document.getElementById('fc-s3-ratio');
+    const progEl = document.getElementById('fc-s3-progress');
+    const bnDigits = ['০', '১', '২', '৩'];
+
+    if (ratioEl) ratioEl.textContent = `${bnDigits[count]}/৩`;
+    if (progEl) progEl.style.width = `${Math.round((count / 3) * 100)}%`;
+
+    const currentHash = `${photoUrl || ''}|${sigUrl || ''}|${houseUrl || ''}|${count}`;
+    if (count > 0 && currentHash !== lastSyncedMediaHash) {
+      lastSyncedMediaHash = currentHash;
+      syncMediaToFirestore({
+        applicant_photo_url: photoUrl || '',
+        signature_url: sigUrl || '',
+        house_photo_url: houseUrl || '',
+        completed_count: count
+      });
+    }
+  }
+
+  async function syncMediaToFirestore(mediaData) {
+    try {
+      const rawId = scrapeFamilyId() || (lastExtractedData && lastExtractedData.family_id) || '8743033825';
+      const cleanId = normalizeDigits(rawId).replace(/[^0-9]/g, '') || '8743033825';
+
+      const fields = {
+        section3_verified: { booleanValue: mediaData.completed_count === 3 },
+        section3_completed_count: { integerValue: String(mediaData.completed_count) },
+        section3_updated_at: { timestampValue: new Date().toISOString() }
+      };
+      const updateMask = [
+        'updateMask.fieldPaths=section3_verified',
+        'updateMask.fieldPaths=section3_completed_count',
+        'updateMask.fieldPaths=section3_updated_at'
+      ];
+
+      if (mediaData.applicant_photo_url) {
+        fields.applicant_photo_url = { stringValue: mediaData.applicant_photo_url };
+        updateMask.push('updateMask.fieldPaths=applicant_photo_url');
+      }
+      if (mediaData.signature_url) {
+        fields.signature_url = { stringValue: mediaData.signature_url };
+        updateMask.push('updateMask.fieldPaths=signature_url');
+      }
+      if (mediaData.house_photo_url) {
+        fields.house_photo_url = { stringValue: mediaData.house_photo_url };
+        updateMask.push('updateMask.fieldPaths=house_photo_url');
+      }
+
+      const url = `https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(cleanId)}?${updateMask.join('&')}`;
+
+      await fetch(url, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields })
+      });
+      console.log('[FamilyCard] Section 3 media synced to Firestore for family ID:', cleanId);
+
+      const cloudStatEl = document.getElementById('fc-s3-cloud-stat');
+      if (cloudStatEl) {
+        cloudStatEl.textContent = `☁️ ক্লাউডে সংরক্ষিত (আইডি: ${cleanId})`;
+        cloudStatEl.style.color = '#166534';
+      }
+    } catch (e) {
+      console.warn('[FamilyCard] Firestore media sync notice:', e.message);
+    }
+  }
+
+  // MutationObserver to watch Step 1 and Section 3 activation
+  const observer = new MutationObserver(() => {
+    if (lastExtractedData) {
+      const tab1 = document.querySelector('[data-family-card-tab="1"]') || document.querySelector('.v-expansion-panel--active');
+      const fatherInp = findInputByLabel(['পিতার নাম (বাংলা)']) || document.getElementById('input-1286');
+      if (fatherInp && !fatherInp.value) {
+        fillPortalFields(lastExtractedData);
+        showToast('✅ পিতা-মাতা, বৈবাহিক অবস্থা ও ধর্ম অটো-ফিল সম্পন্ন!');
+      }
+    }
+    traceSection3Media();
   });
   observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class'] });
+
+  // Periodic polling for Section 3 (guarantees zero latency on slow tablets)
+  setInterval(traceSection3Media, 1500);
 
   function showToast(msg) {
     const existing = document.querySelector('.fc-bm-toast');

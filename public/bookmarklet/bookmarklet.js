@@ -1755,7 +1755,284 @@ Return ONLY a single valid JSON object with these exact keys:
     }
   }
 
-  // MutationObserver to watch Step 1, Section 3, Section 4, and Section 5/Tab 6 activation
+  // --- SECTION 6: BANK / MFS DETAILS (ব্যাংক/এমএফএস তথ্য - Tab 4) ---
+  // Rules:
+  // 1. "অ্যাকাউন্টের মালিকানা": Default "নিজ" (user can change, system remembers default).
+  // 2. "ব্যাংক শাখার নাম": Default "মাছপাড়া শাখা" (autocomplete dropdown, actively selects).
+  // 3. Actively detects all fields and dropdowns in Tab 4.
+  // 4. Injects an inline helper toolbar so user can customize/override and auto-fill with 1 click.
+
+  function getSection6BankElements() {
+    const panel = document.querySelector('[data-family-card-tab="4"]') ||
+                  Array.from(document.querySelectorAll('.v-expansion-panel')).find(p => p.textContent.includes('ব্যাংক/এমএফএস তথ্য'));
+    if (!panel) return null;
+
+    let ownershipSelect = null;
+    let branchSelect = null;
+    let bankNameSelect = null;
+    let emailInput = null;
+
+    const allCols = Array.from(panel.querySelectorAll('.col, [class*="col-"]'));
+    for (const col of allCols) {
+      const labelText = col.querySelector('label')?.textContent || '';
+      if (labelText.includes('অ্যাকাউন্টের মালিকানা')) {
+        ownershipSelect = col.querySelector('.v-select') || col;
+      } else if (labelText.includes('ব্যাংক শাখার নাম')) {
+        branchSelect = col.querySelector('.v-select') || col;
+      } else if (labelText.includes('ব্যাংকের নাম')) {
+        bankNameSelect = col.querySelector('.v-select') || col;
+      } else if (labelText.includes('ইমেইল')) {
+        emailInput = col.querySelector('input');
+      }
+    }
+
+    return {
+      panel,
+      ownershipSelect,
+      branchSelect,
+      bankNameSelect,
+      emailInput
+    };
+  }
+
+  let isSelectingBranch = false;
+  let isSelectingOwnership = false;
+
+  function selectVuetifyAutocomplete(container, targetText, fallbackId) {
+    if (!container || !targetText) return;
+
+    const currentSel = container.querySelector('.v-select__selection');
+    const inputEl = container.querySelector('input:not([type="hidden"])');
+    const hiddenEl = container.querySelector('input[type="hidden"]');
+
+    if (currentSel && (currentSel.textContent.includes('মাছপাড়া') || currentSel.textContent.includes('মাছপাড়া'))) return;
+    if (inputEl && inputEl.value && (inputEl.value.includes('মাছপাড়া') || inputEl.value.includes('মাছপাড়া'))) return;
+    if (hiddenEl && fallbackId && hiddenEl.value === String(fallbackId)) return;
+
+    if (isSelectingBranch) return;
+    isSelectingBranch = true;
+
+    try {
+      const clickSlot = container.querySelector('.v-input__slot') || inputEl;
+      if (clickSlot) clickSlot.click();
+
+      if (inputEl) {
+        inputEl.focus();
+        setReactiveValue(inputEl, targetText);
+        inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+        inputEl.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+
+      let attempts = 0;
+      const pollInterval = setInterval(() => {
+        attempts++;
+        const menuItems = Array.from(document.querySelectorAll('.v-menu__content .v-list-item, .v-autocomplete__content .v-list-item'));
+        let found = false;
+
+        for (const item of menuItems) {
+          const text = item.textContent || '';
+          if (text.includes('মাছপাড়া') || text.includes('মাছপাড়া') || text.includes(targetText)) {
+            const clickable = item.closest('.v-list-item') || item;
+            clickable.click();
+            found = true;
+            clearInterval(pollInterval);
+            console.log('[FamilyCard] Selected branch:', text.trim());
+            showToast(`✅ ব্যাংক শাখা "${text.trim()}" নির্বাচিত হয়েছে!`);
+            setTimeout(() => { isSelectingBranch = false; }, 500);
+            break;
+          }
+        }
+
+        if (found || attempts >= 8) {
+          clearInterval(pollInterval);
+          if (!found && fallbackId && hiddenEl) {
+            setReactiveValue(hiddenEl, String(fallbackId));
+          }
+          setTimeout(() => { isSelectingBranch = false; }, 600);
+        }
+      }, 150);
+    } catch (e) {
+      console.warn('[FamilyCard] Error in selectVuetifyAutocomplete:', e);
+      isSelectingBranch = false;
+    }
+  }
+
+  function selectVuetifyDropdown(container, targetText, fallbackId) {
+    if (!container || !targetText) return;
+
+    const currentSel = container.querySelector('.v-select__selection');
+    if (currentSel && currentSel.textContent.trim().includes(targetText)) return;
+
+    if (isSelectingOwnership) return;
+    isSelectingOwnership = true;
+
+    try {
+      const clickTarget = container.querySelector('.v-input__slot') || container.querySelector('input');
+      if (clickTarget) {
+        clickTarget.click();
+        let attempts = 0;
+        const interval = setInterval(() => {
+          attempts++;
+          const items = Array.from(document.querySelectorAll('.v-menu__content .v-list-item'));
+          for (const it of items) {
+            if (it.textContent.trim().includes(targetText)) {
+              const clickable = it.closest('.v-list-item') || it;
+              clickable.click();
+              clearInterval(interval);
+              console.log('[FamilyCard] Selected ownership:', targetText);
+              showToast(`✅ অ্যাকাউন্টের মালিকানা "${targetText}" নির্বাচিত হয়েছে!`);
+              setTimeout(() => { isSelectingOwnership = false; }, 400);
+              return;
+            }
+          }
+          if (attempts >= 8) {
+            clearInterval(interval);
+            const hiddenEl = container.querySelector('input[type="hidden"]');
+            if (fallbackId && hiddenEl) {
+              setReactiveValue(hiddenEl, String(fallbackId));
+            }
+            setTimeout(() => { isSelectingOwnership = false; }, 400);
+          }
+        }, 150);
+      } else {
+        isSelectingOwnership = false;
+      }
+    } catch (e) {
+      console.warn('[FamilyCard] Error in selectVuetifyDropdown:', e);
+      isSelectingOwnership = false;
+    }
+  }
+
+  function injectSection6Toolbar(panel, currentOwnership, currentBranch) {
+    if (!panel) return;
+    const wrap = panel.querySelector('.v-expansion-panel-content__wrap');
+    if (!wrap || wrap.querySelector('#fc-section6-toolbar')) return;
+
+    const bar = document.createElement('div');
+    bar.id = 'fc-section6-toolbar';
+    bar.style.cssText = 'margin-bottom: 14px; padding: 10px 14px; background: #f0f9ff; border: 1.5px solid #0284c7; border-radius: 10px; font-family: -apple-system, sans-serif; box-shadow: 0 2px 6px rgba(0,0,0,0.05); font-size: 12px;';
+
+    const ownershipOptions = ['নিজ', 'পিতা', 'মাতা', 'স্বামী', 'স্ত্রী', 'অভিভাবক'];
+    let ownHtml = ownershipOptions.map(o => `<option value="${o}" ${o === currentOwnership ? 'selected' : ''}>${o}</option>`).join('');
+
+    const branchList = JSON.parse(localStorage.getItem('fc_branch_list') || '["মাছপাড়া শাখা", "পাংশা শাখা", "রাজবাড়ী শাখা"]');
+    if (!branchList.includes(currentBranch)) branchList.unshift(currentBranch);
+    let branchHtml = branchList.map(b => `<option value="${b}" ${b === currentBranch ? 'selected' : ''}>${b}</option>`).join('');
+    branchHtml += '<option value="__ADD_NEW_BRANCH__">➕ নতুন শাখা লিখুন...</option>';
+
+    bar.innerHTML = `
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+        <div style="display: flex; align-items: center; gap: 8px; font-weight: 700; color: #0369a1; font-size: 13px;">
+          <span>🏦 ব্যাংক তথ্য সহকারী (অটো-সিলেকশন সক্রিয়)</span>
+        </div>
+        <button id="fc-s6-auto-fill-btn" type="button" style="padding: 4px 10px; background: #0284c7; color: #fff; font-weight: 700; border: none; border-radius: 6px; cursor: pointer; font-size: 11px;">
+          ⚡ অটো-সিলেক্ট প্রয়োগ করুন
+        </button>
+      </div>
+      <div style="display: flex; flex-wrap: wrap; gap: 12px; align-items: center; background: #ffffff; padding: 8px 10px; border-radius: 6px; border: 1px solid #bae6fd;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <b style="color: #0369a1;">👤 মালিকানা:</b>
+          <select id="fc-s6-ownership-select" style="padding: 3px 6px; border-radius: 5px; border: 1.5px solid #0284c7; font-size: 11.5px; font-weight: 700; color: #0369a1; cursor: pointer; background: #fff;">
+            ${ownHtml}
+          </select>
+        </div>
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <b style="color: #0369a1;">🏛️ ব্যাংক শাখা:</b>
+          <select id="fc-s6-branch-select" style="padding: 3px 6px; border-radius: 5px; border: 1.5px solid #0284c7; font-size: 11.5px; font-weight: 700; color: #0369a1; cursor: pointer; background: #fff;">
+            ${branchHtml}
+          </select>
+        </div>
+      </div>
+      <div style="margin-top: 6px; font-size: 11px; color: #0284c7;">
+        💡 ডিফল্ট হিসেবে মালিকানা <b>"নিজ"</b> এবং ব্যাংক শাখা <b>"মাছপাড়া শাখা"</b> স্বয়ংক্রিয়ভাবে নির্বাচিত হবে।
+      </div>
+    `;
+
+    wrap.insertBefore(bar, wrap.firstChild);
+
+    const ownSelect = bar.querySelector('#fc-s6-ownership-select');
+    ownSelect.addEventListener('change', () => {
+      const val = ownSelect.value;
+      localStorage.setItem('fc_default_account_ownership', val);
+      const elems = getSection6BankElements();
+      if (elems?.ownershipSelect) selectVuetifyDropdown(elems.ownershipSelect, val, '142');
+    });
+
+    const branchSelectEl = bar.querySelector('#fc-s6-branch-select');
+    branchSelectEl.addEventListener('change', () => {
+      if (branchSelectEl.value === '__ADD_NEW_BRANCH__') {
+        const newBranch = prompt('নতুন ব্যাংক শাখার নাম লিখুন (যেমন: মাছপাড়া শাখা):');
+        if (newBranch && newBranch.trim()) {
+          const trimmed = newBranch.trim();
+          let list = JSON.parse(localStorage.getItem('fc_branch_list') || '["মাছপাড়া শাখা", "পাংশা শাখা", "রাজবাড়ী শাখা"]');
+          if (!list.includes(trimmed)) list.push(trimmed);
+          localStorage.setItem('fc_branch_list', JSON.stringify(list));
+          localStorage.setItem('fc_default_bank_branch', trimmed);
+          bar.remove();
+          injectSection6Toolbar(panel, ownSelect.value, trimmed);
+          const elems = getSection6BankElements();
+          if (elems?.branchSelect) selectVuetifyAutocomplete(elems.branchSelect, trimmed, '7680');
+        } else {
+          branchSelectEl.value = currentBranch;
+        }
+      } else {
+        const val = branchSelectEl.value;
+        localStorage.setItem('fc_default_bank_branch', val);
+        const elems = getSection6BankElements();
+        if (elems?.branchSelect) selectVuetifyAutocomplete(elems.branchSelect, val, '7680');
+      }
+    });
+
+    const btnAuto = bar.querySelector('#fc-s6-auto-fill-btn');
+    btnAuto.addEventListener('click', () => {
+      const elems = getSection6BankElements();
+      if (!elems) return;
+      const own = localStorage.getItem('fc_default_account_ownership') || 'নিজ';
+      const br = localStorage.getItem('fc_default_bank_branch') || 'মাছপাড়া শাখা';
+      if (elems.ownershipSelect) selectVuetifyDropdown(elems.ownershipSelect, own, '142');
+      setTimeout(() => {
+        if (elems.branchSelect) selectVuetifyAutocomplete(elems.branchSelect, br, '7680');
+      }, 300);
+      showToast('⚡ ব্যাংক তথ্য অটো-সিলেক্ট চালু করা হয়েছে...');
+    });
+  }
+
+  function handleSection6Bank() {
+    const elems = getSection6BankElements();
+    if (!elems || !elems.panel) return;
+
+    const isPanelVisible = elems.panel.style.display !== 'none' ||
+                           elems.panel.classList.contains('v-expansion-panel--active') ||
+                           document.querySelector('.family-card-form-step--active')?.textContent.includes('ব্যাংক/এমএফএস');
+
+    if (!isPanelVisible) return;
+
+    const currentOwnership = localStorage.getItem('fc_default_account_ownership') || 'নিজ';
+    const currentBranch = localStorage.getItem('fc_default_bank_branch') || 'মাছপাড়া শাখা';
+
+    injectSection6Toolbar(elems.panel, currentOwnership, currentBranch);
+
+    // Auto-select "অ্যাকাউন্টের মালিকানা" if not yet selected
+    if (elems.ownershipSelect) {
+      const curOwn = elems.ownershipSelect.querySelector('.v-select__selection')?.textContent.trim();
+      if (!curOwn) {
+        selectVuetifyDropdown(elems.ownershipSelect, currentOwnership, '142');
+      }
+    }
+
+    // Auto-select "ব্যাংক শাখার নাম" if not yet selected
+    if (elems.branchSelect) {
+      const curBranch = elems.branchSelect.querySelector('.v-select__selection')?.textContent.trim() ||
+                        elems.branchSelect.querySelector('input:not([type="hidden"])')?.value.trim();
+      const hiddenVal = elems.branchSelect.querySelector('input[type="hidden"]')?.value;
+
+      if (!curBranch && !hiddenVal) {
+        selectVuetifyAutocomplete(elems.branchSelect, currentBranch, '7680');
+      }
+    }
+  }
+
+  // MutationObserver to watch Step 1, Section 3, Section 4, Section 5/Tab 6, and Section 6 activation
   const observer = new MutationObserver(() => {
     if (lastExtractedData) {
       const tab1 = document.querySelector('[data-family-card-tab="1"]') || document.querySelector('.v-expansion-panel--active');
@@ -1768,14 +2045,16 @@ Return ONLY a single valid JSON object with these exact keys:
     traceSection3Media();
     handleSection4Address();
     handleSection5AndCrossMatch();
+    handleSection6Bank();
   });
   observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class'] });
 
-  // Periodic polling for Section 3, Section 4, and Section 5 & Tab 6 (guarantees zero latency)
+  // Periodic polling for Section 3, Section 4, Section 5/Tab 6, and Section 6
   setInterval(() => {
     traceSection3Media();
     handleSection4Address();
     handleSection5AndCrossMatch();
+    handleSection6Bank();
   }, 1500);
 
   function showToast(msg) {

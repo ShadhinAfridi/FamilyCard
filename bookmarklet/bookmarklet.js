@@ -10,6 +10,10 @@
   'use strict';
 
   if (window.__familyCardAssistantLoaded) {
+    if (typeof window.__fcOpenModal === 'function') {
+      window.__fcOpenModal();
+      return;
+    }
     const existingModal = document.getElementById('fc-bm-modal');
     if (existingModal) {
       existingModal.style.display = 'flex';
@@ -188,8 +192,10 @@ Return ONLY a single valid JSON object with these exact keys:
 }
 `;
 
-  // Inject Styles
-  const styleEl = document.createElement('style');
+  // Inject Styles once
+  if (!document.getElementById('fc-bm-styles')) {
+    const styleEl = document.createElement('style');
+    styleEl.id = 'fc-bm-styles';
   styleEl.textContent = `
     #fc-bm-fab {
       position: fixed; bottom: 24px; right: 20px; z-index: 9999999;
@@ -370,7 +376,8 @@ Return ONLY a single valid JSON object with these exact keys:
     .fc-cm-badge-pending { background: #fef3c7; color: #b45309; }
     .fc-cm-badge-excess { background: #fee2e2; color: #b91c1c; }
   `;
-  document.head.appendChild(styleEl);
+    (document.head || document.documentElement).appendChild(styleEl);
+  }
 
   // Active scan target: 'applicant' or 'member'
   let activeScanTarget = { type: 'applicant', card: null, index: 1 };
@@ -390,7 +397,7 @@ Return ONLY a single valid JSON object with these exact keys:
   modal.innerHTML = `
     <div class="fc-bm-card">
       <div class="fc-bm-hdr">
-        <h3>🪪 NID ও জন্ম নিবন্ধন AI সহকারী (v1.4)</h3>
+        <h3>🪪 NID ও জন্ম নিবন্ধন AI সহকারী (v1.5)</h3>
         <span id="fc-bm-close">&times;</span>
       </div>
       <div class="fc-bm-body">
@@ -673,7 +680,7 @@ Return ONLY a single valid JSON object with these exact keys:
     showToast(`✅ গ্রাম "${newName}" সফলভাবে যোগ করা হয়েছে এবং ডিফল্ট করা হলো!`);
   });
 
-  fab.addEventListener('click', () => {
+  function openAssistantModalForTab() {
     updateVillageSelectDropdown();
     const tab6 = document.querySelector('[data-family-card-tab="6"]');
     const isTab6Active = tab6 && (tab6.style.display !== 'none' || tab6.classList.contains('v-expansion-panel--active'));
@@ -683,7 +690,10 @@ Return ONLY a single valid JSON object with these exact keys:
       setScanTarget('applicant', null, 1);
     }
     modal.style.display = 'flex';
-  });
+  }
+  window.__fcOpenModal = openAssistantModalForTab;
+
+  fab.addEventListener('click', openAssistantModalForTab);
   closeBtn.addEventListener('click', () => {
     stopLiveCamera();
     modal.style.display = 'none';
@@ -1738,13 +1748,21 @@ Return ONLY a single valid JSON object with these exact keys:
   // 3. Strictly IGNORES "স্থায়ী ঠিকানা" (Permanent Address) - leaves 100% for manual activity.
 
   function getSection4CollectionInputs() {
-    const allChips = Array.from(document.querySelectorAll('.v-chip, .v-chip__content, span, h3, h4, div'));
-    const collectionChip = allChips.find(el => el.textContent.trim() === 'ফ্যামিলি কার্ড তথ্য সংগ্রহের ঠিকানা');
+    const tab2 = document.querySelector('[data-family-card-tab="2"]');
+    if (tab2 && tab2.style.display === 'none' && !tab2.classList.contains('v-expansion-panel--active')) {
+      return { postCodeInput: null, villageInput: null };
+    }
+    const scope = tab2 || document.querySelector('.v-expansion-panel--active') || document;
+    const headerNodes = Array.from(scope.querySelectorAll('.v-chip, .v-chip__content, h3, h4, .text-subtitle-1, .text-subtitle-2'));
+    const collectionChip = headerNodes.find(el => normalizeBn(el.textContent) === 'ফ্যামিলি কার্ড তথ্য সংগ্রহের ঠিকানা');
     if (!collectionChip) return { postCodeInput: null, villageInput: null };
 
-    const permanentChip = allChips.find(el => el.textContent.trim() === 'স্থায়ী ঠিকানা' || el.textContent.trim() === 'স্থায়ী ঠিকানা');
+    const permanentChip = headerNodes.find(el => {
+      const t = normalizeBn(el.textContent);
+      return t === 'স্থায়ী ঠিকানা' || t === 'স্থায়ী ঠিকানা';
+    });
 
-    const allInputs = Array.from(document.querySelectorAll('input:not([type="hidden"]):not([disabled])'));
+    const allInputs = Array.from(scope.querySelectorAll('input:not([type="hidden"]):not([disabled])'));
 
     const collectionInputs = allInputs.filter(inp => {
       const isAfterCollection = (inp.compareDocumentPosition(collectionChip) & Node.DOCUMENT_POSITION_PRECEDING) !== 0;
@@ -1757,10 +1775,10 @@ Return ONLY a single valid JSON object with these exact keys:
 
     for (const inp of collectionInputs) {
       const parentCol = inp.closest('.col, [class*="col-"], .v-input, div');
-      const labelText = parentCol?.querySelector('label')?.textContent || '';
+      const labelText = normalizeBn(parentCol?.querySelector('label')?.textContent || '');
       if (labelText.includes('পোস্ট কোড')) {
         postCodeInput = inp;
-      } else if (labelText.includes('গ্রাম') || labelText.includes('বাড়ি নং') || labelText.includes('সেকশন')) {
+      } else if (labelText.includes('গ্রাম') || labelText.includes('বাড়ি নং') || labelText.includes('সেকশন')) {
         villageInput = inp;
       }
     }
@@ -2193,6 +2211,21 @@ Return ONLY a single valid JSON object with these exact keys:
       banner.id = 'fc-tab6-banner';
       container.insertBefore(banner, container.firstChild);
     }
+
+    const renderHash = [
+      declared ? declared.maleCount : 0,
+      declared ? declared.femaleCount : 0,
+      declared ? declared.transCount : 0,
+      declared ? declared.totalCount : 0,
+      actual.actualMale,
+      actual.actualFemale,
+      actual.actualTrans,
+      actual.totalMembers,
+      match.statusType,
+      match.statusText
+    ].join('|');
+    if (banner.dataset.renderHash === renderHash) return;
+    banner.dataset.renderHash = renderHash;
 
     let bg = '#f0fdf4';
     let border = '#86efac';
@@ -3660,6 +3693,7 @@ Return ONLY a single valid JSON object with these exact keys:
   }
 
   function runPortalAutomations() {
+    if (document.hidden || activeMediaStream) return;
     if (lastExtractedData) {
       const stepSig = `${scrapeFamilyId() || ''}_${lastExtractedData.nid_number || lastExtractedData.doc_number || ''}`;
       const tab1 = document.querySelector('[data-family-card-tab="1"]');
@@ -3679,12 +3713,12 @@ Return ONLY a single valid JSON object with these exact keys:
     handleSection9MoneyUsage();
   }
 
-  // Debounced MutationObserver (ignores assistant UI self-mutations to prevent feedback loops)
+  // Debounced MutationObserver (ignores assistant UI & ripple animations for lag-free scrolling/tapping)
   let observerTimer = null;
   const observer = new MutationObserver((mutations) => {
     const hasPortalMutation = mutations.some(m => {
       const t = m.target;
-      return t && t.nodeType === 1 && !t.closest('[id^="fc-"], [class*="fc-bm-"], .fc-card-scan-btn');
+      return t && t.nodeType === 1 && !t.closest('[id^="fc-"], [class*="fc-bm-"], .fc-card-scan-btn, .v-ripple__container, .v-ripple__animation');
     });
     if (!hasPortalMutation) return;
     clearTimeout(observerTimer);
@@ -3692,8 +3726,9 @@ Return ONLY a single valid JSON object with these exact keys:
   });
   observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class'] });
 
-  // Periodic polling for Section 3, Section 4, Section 5/Tab 6, Section 6, Section 7, and Section 9
-  setInterval(runPortalAutomations, 1500);
+  // Non-blocking initial pass + lightweight 2500ms fallback polling
+  setTimeout(runPortalAutomations, 60);
+  setInterval(runPortalAutomations, 2500);
 
   function showToast(msg) {
     const existing = document.querySelector('.fc-bm-toast');

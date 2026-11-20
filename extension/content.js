@@ -1709,13 +1709,21 @@
 
   // --- SECTION 4: ADDRESS (যোগাযোগের তথ্য - ফ্যামিলি কার্ড তথ্য সংগ্রহের ঠিকানা) ---
   function getSection4CollectionInputs() {
-    const allChips = Array.from(document.querySelectorAll('.v-chip, .v-chip__content, span, h3, h4, div'));
-    const collectionChip = allChips.find(el => el.textContent.trim() === 'ফ্যামিলি কার্ড তথ্য সংগ্রহের ঠিকানা');
+    const tab2 = document.querySelector('[data-family-card-tab="2"]');
+    if (tab2 && tab2.style.display === 'none' && !tab2.classList.contains('v-expansion-panel--active')) {
+      return { postCodeInput: null, villageInput: null };
+    }
+    const scope = tab2 || document.querySelector('.v-expansion-panel--active') || document;
+    const headerNodes = Array.from(scope.querySelectorAll('.v-chip, .v-chip__content, h3, h4, .text-subtitle-1, .text-subtitle-2'));
+    const collectionChip = headerNodes.find(el => normalizeBn(el.textContent) === 'ফ্যামিলি কার্ড তথ্য সংগ্রহের ঠিকানা');
     if (!collectionChip) return { postCodeInput: null, villageInput: null };
 
-    const permanentChip = allChips.find(el => el.textContent.trim() === 'স্থায়ী ঠিকানা' || el.textContent.trim() === 'স্থায়ী ঠিকানা');
+    const permanentChip = headerNodes.find(el => {
+      const t = normalizeBn(el.textContent);
+      return t === 'স্থায়ী ঠিকানা' || t === 'স্থায়ী ঠিকানা';
+    });
 
-    const allInputs = Array.from(document.querySelectorAll('input:not([type="hidden"]):not([disabled])'));
+    const allInputs = Array.from(scope.querySelectorAll('input:not([type="hidden"]):not([disabled])'));
 
     const collectionInputs = allInputs.filter(inp => {
       const isAfterCollection = (inp.compareDocumentPosition(collectionChip) & Node.DOCUMENT_POSITION_PRECEDING) !== 0;
@@ -1728,10 +1736,10 @@
 
     for (const inp of collectionInputs) {
       const parentCol = inp.closest('.col, [class*="col-"], .v-input, div');
-      const labelText = parentCol?.querySelector('label')?.textContent || '';
+      const labelText = normalizeBn(parentCol?.querySelector('label')?.textContent || '');
       if (labelText.includes('পোস্ট কোড')) {
         postCodeInput = inp;
-      } else if (labelText.includes('গ্রাম') || labelText.includes('বাড়ি নং') || labelText.includes('সেকশন')) {
+      } else if (labelText.includes('গ্রাম') || labelText.includes('বাড়ি নং') || labelText.includes('সেকশন')) {
         villageInput = inp;
       }
     }
@@ -2160,6 +2168,21 @@
       banner.id = 'fc-tab6-banner';
       container.insertBefore(banner, container.firstChild);
     }
+
+    const renderHash = [
+      declared ? declared.maleCount : 0,
+      declared ? declared.femaleCount : 0,
+      declared ? declared.transCount : 0,
+      declared ? declared.totalCount : 0,
+      actual.actualMale,
+      actual.actualFemale,
+      actual.actualTrans,
+      actual.totalMembers,
+      match.statusType,
+      match.statusText
+    ].join('|');
+    if (banner.dataset.renderHash === renderHash) return;
+    banner.dataset.renderHash = renderHash;
 
     let bg = '#f0fdf4';
     let border = '#86efac';
@@ -3625,6 +3648,7 @@
   // Auto-fill Step 1 (ব্যক্তিগত তথ্য) and Sections 3-9 safely with debounced MutationObserver
   function setupStepObserver() {
     function runExtensionAutomations() {
+      if (document.hidden || activeMediaStream) return;
       if (lastExtractedData) {
         const tab1 = document.querySelector('[data-family-card-tab="1"]');
         const isTab1Visible = !tab1 || tab1.style.display !== 'none';
@@ -3650,7 +3674,7 @@
     const observer = new MutationObserver((mutations) => {
       const hasPortalMutation = mutations.some(m => {
         const t = m.target;
-        return t && t.nodeType === 1 && !t.closest('[id^="fc-"], [class*="fc-"], .fc-card-scan-btn');
+        return t && t.nodeType === 1 && !t.closest('[id^="fc-"], [class*="fc-"], .fc-card-scan-btn, .v-ripple__container, .v-ripple__animation');
       });
       if (!hasPortalMutation) return;
       clearTimeout(observerTimer);
@@ -3664,7 +3688,8 @@
       attributeFilter: ['style', 'class']
     });
 
-    setInterval(runExtensionAutomations, 1500);
+    setTimeout(runExtensionAutomations, 60);
+    setInterval(runExtensionAutomations, 2500);
 
     document.addEventListener('click', (e) => {
       const stepItem = e.target.closest('.family-card-form-step, .v-expansion-panel-header, .v-list-item');

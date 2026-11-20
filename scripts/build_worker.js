@@ -5,10 +5,9 @@ const publicHtml = fs.readFileSync('public/index.html', 'utf8');
 const publicCss = fs.readFileSync('public/style.css', 'utf8');
 const publicJs = fs.readFileSync('public/app.js', 'utf8');
 const bookmarkletHtml = fs.readFileSync('public/bookmarklet/index.html', 'utf8');
-const bookmarkletMin = fs.readFileSync('public/bookmarklet/bookmarklet.min.js', 'utf8');
 const appMin = fs.readFileSync('public/bookmarklet/app.min.js', 'utf8');
 const loaderMin = fs.readFileSync('public/bookmarklet/loader.min.js', 'utf8');
-const userScriptJs = fs.readFileSync('public/bookmarklet/familycard.user.js', 'utf8');
+const userScriptHeader = fs.readFileSync('public/bookmarklet/familycard.user.js', 'utf8').split('// ==/UserScript==')[0] + '// ==/UserScript==\n\n';
 
 const workerCode = `// Cloudflare Worker for familycard.afridi.app
 // Edge-deployed Family Card NID & Birth Certificate AI Scanner & Bookmarklet Suite
@@ -17,10 +16,14 @@ const PUBLIC_HTML = ${JSON.stringify(publicHtml)};
 const PUBLIC_CSS = ${JSON.stringify(publicCss)};
 const PUBLIC_JS = ${JSON.stringify(publicJs)};
 const BOOKMARKLET_HTML = ${JSON.stringify(bookmarkletHtml)};
-const BOOKMARKLET_MIN = ${JSON.stringify(bookmarkletMin)};
 const APP_MIN = ${JSON.stringify(appMin)};
 const LOADER_MIN = ${JSON.stringify(loaderMin)};
-const USERSCRIPT_JS = ${JSON.stringify(userScriptJs)};
+const USERSCRIPT_HEADER = ${JSON.stringify(userScriptHeader)};
+let _bookmarkletMinCache = null;
+function getBookmarkletMin() {
+  if (!_bookmarkletMinCache) _bookmarkletMinCache = 'javascript:' + encodeURI(APP_MIN).replace(/#/g, '%23');
+  return _bookmarkletMinCache;
+}
 
 function normalizeDigits(str) {
   if (!str) return '';
@@ -97,7 +100,7 @@ export default {
       return new Response(BOOKMARKLET_HTML, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
     }
     if (path === '/bookmarklet.min.js' || path === '/bookmarklet/bookmarklet.min.js') {
-      return new Response(BOOKMARKLET_MIN, {
+      return new Response(getBookmarkletMin(), {
         headers: {
           'Content-Type': 'application/javascript; charset=utf-8',
           'Access-Control-Allow-Origin': '*',
@@ -124,13 +127,16 @@ export default {
       });
     }
     if (path === '/bookmarklet/familycard.user.js') {
-      return new Response(USERSCRIPT_JS, {
+      return new Response(USERSCRIPT_HEADER + APP_MIN, {
         headers: {
           'Content-Type': 'application/javascript; charset=utf-8',
           'Access-Control-Allow-Origin': '*',
           'Cache-Control': 'no-cache, no-store, must-revalidate'
         }
       });
+    }
+    if (path === '/extension.zip' || path === '/bookmarklet/extension.zip') {
+      return Response.redirect('https://binary-ict.web.app/extension.zip', 302);
     }
 
     // API: OCR Endpoint (supports both /api/extract-nid and /api/ocr-nid)

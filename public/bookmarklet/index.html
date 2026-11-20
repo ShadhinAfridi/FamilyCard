@@ -385,9 +385,9 @@
   </div>
 
   <script>
-    const shortLoaderCode = "javascript:!function(){var u='https://binary-ict.web.app/bookmarklet/app.min.js?t='+Date.now(),s=document.createElement('script');s.src=u;s.onerror=function(){fetch(u).then(function(r){return r.text()}).then(function(c){(0,eval)(c)}).catch(function(){alert('স্ক্রিপ্ট লোড করা যায়নি। অফলাইন বা এক্সটেনশন ব্যবহার করুন।')})};(document.head||document.documentElement).appendChild(s)}();";
+    const shortLoaderCode = "javascript:!function(){if(window.__fcOpenModal)return void window.__fcOpenModal();var k='fc_app_v15',c=localStorage.getItem(k),u='https://binary-ict.web.app/bookmarklet/app.min.js',b='https://familycard.afridi.app/bookmarklet/app.min.js';if(c)try{(0,eval)(c)}catch(e){c=0}fetch(u+'?t='+Date.now()).then(function(r){if(!r.ok)throw 0;return r.text()}).catch(function(){return fetch(b+'?t='+Date.now()).then(function(r){return r.text()})}).then(function(t){if(t&&t.length>999){localStorage.setItem(k,t);if(!c)(0,eval)(t)}}).catch(function(){if(!c){var s=document.createElement('script');s.src=u;(document.head||document.documentElement).appendChild(s)}})}();";
 
-    const offlineCacheLoaderCode = "javascript:!function(){var k='fc_app_v15',c=localStorage.getItem(k),u='https://binary-ict.web.app/bookmarklet/app.min.js?t='+Date.now();if(c)(0,eval)(c);fetch(u).then(function(r){if(!r.ok)throw 0;return r.text()}).then(function(t){localStorage.setItem(k,t);if(!c)(0,eval)(t)}).catch(function(){if(!c){var s=document.createElement('script');s.src=u;(document.head||document.documentElement).appendChild(s)}})}();";
+    const offlineCacheLoaderCode = shortLoaderCode;
 
     let fullBookmarkletCode = '';
 

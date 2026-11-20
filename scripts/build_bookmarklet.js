@@ -37,8 +37,8 @@ async function build() {
   // 2. Full inline bookmarklet (for desktop drag & drop)
   const bookmarkletCode = 'javascript:' + encodeURI(rawMinCode).replace(/#/g, '%23');
 
-  // 3. Tiny 1-line Mobile Chrome Loader Bookmarklet (~270 chars, bypasses Android Chrome URL limit)
-  const mobileLoaderCode = "javascript:!function(){var u='https://binary-ict.web.app/bookmarklet/app.min.js?t='+Date.now(),s=document.createElement('script');s.src=u;s.onerror=function(){fetch(u).then(function(r){return r.text()}).then(function(c){(0,eval)(c)}).catch(function(){alert('স্ক্রিপ্ট লোড করা যায়নি। অফলাইন বা এক্সটেনশন ব্যবহার করুন।')})};(document.head||document.documentElement).appendChild(s)}();";
+  // 3. Tiny 1-line Mobile Chrome Loader Bookmarklet (~500 chars: 0ms re-open + localStorage instant boot + Cloudflare/Firebase dual-CDN fallback)
+  const mobileLoaderCode = "javascript:!function(){if(window.__fcOpenModal)return void window.__fcOpenModal();var k='fc_app_v15',c=localStorage.getItem(k),u='https://binary-ict.web.app/bookmarklet/app.min.js',b='https://familycard.afridi.app/bookmarklet/app.min.js';if(c)try{(0,eval)(c)}catch(e){c=0}fetch(u+'?t='+Date.now()).then(function(r){if(!r.ok)throw 0;return r.text()}).catch(function(){return fetch(b+'?t='+Date.now()).then(function(r){return r.text()})}).then(function(t){if(t&&t.length>999){localStorage.setItem(k,t);if(!c)(0,eval)(t)}}).catch(function(){if(!c){var s=document.createElement('script');s.src=u;(document.head||document.documentElement).appendChild(s)}})}();";
 
   // 4. Tampermonkey / Violentmonkey Userscript for automatic execution on mobile & desktop
   const userScriptHeader = `// ==UserScript==

@@ -152,19 +152,68 @@
       </div>
     </div>
 
-    <!-- Step 1: Copy Code -->
-    <div class="card">
-      <h2>📋 ধাপ ১: বুকমার্কলেট কোড কপি করুন</h2>
-      <p style="font-size: 13px; color: #64748b; margin-top: 0;">
-        নিচের বাটনে চাপ দিলে কোডটি আপনার ট্যাবলেটের ক্লিপবোর্ডে কপি হয়ে যাবে:
-      </p>
-      <button id="btnCopy" class="btn btn-success">
-        <span>📋 বুকমার্ক কোড কপি করুন (Copy Code)</span>
-      </button>
-      <div id="copyMsg" style="display: none; color: #166534; font-weight: bold; font-size: 13px; text-align: center; margin-top: 8px;">
-        ✅ কোড সফলভাবে কপি হয়েছে! এবার নিচের ধাপগুলো অনুসরণ করুন।
+    <!-- Step 1: Copy Code (Mobile 1-Line Cloud Loader + Alternatives) -->
+    <div class="card" style="border: 2.5px solid #16a34a; background: #f0fdf4;">
+      <div style="display: inline-block; background: #16a34a; color: #fff; font-size: 11px; font-weight: 800; padding: 3px 10px; border-radius: 20px; margin-bottom: 8px;">
+        ✅ মোবাইল ক্রোমের জন্য ১০০% কার্যকর (১৮৫ KB-এর বদলে মাত্র ১ লাইন!)
       </div>
-      <div class="code-box" id="codePreview">লোড হচ্ছে...</div>
+      <h2 style="color: #166534; margin-top: 0;">📋 পদ্ধতি ১: ১-লাইনের মোবাইল ক্রোম শর্ট বুকমার্কলেট (সবচেয়ে সহজ)</h2>
+      <p style="font-size: 13px; color: #334155; margin-top: 0; line-height: 1.5;">
+        মোবাইলের গুগল ক্রোম ব্রাউজার ১৮৫,০০০ ক্যারেক্টারের বিশাল কোড বুকমার্কে পেস্ট করলে কেটে ফেলে (Truncate করে)। তাই মোবাইলের জন্য তৈরি করা হয়েছে <b>মাত্র ১ লাইনের (২৪০ ক্যারেক্টার) ক্লাউড লোডার কোড</b>—যা এক ক্লিকেই আমাদের সার্ভার থেকে সম্পূর্ণ অটোমেশন ইঞ্জিন লোড করে নেয় এবং ভবিষ্যতে অটো-আপডেট হয়!
+      </p>
+
+      <button id="btnCopyShort" class="btn btn-success" style="margin-bottom: 10px; background: linear-gradient(135deg, #16a34a, #15803d); font-size: 15px;">
+        <span>📱 ১-লাইনের মোবাইল শর্ট কোড কপি করুন (Recommended)</span>
+      </button>
+
+      <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+        <button id="btnCopyOfflineLoader" class="btn" style="flex: 1; background: #0284c7; color: #fff; padding: 10px 12px; font-size: 12.5px; border-radius: 10px;">
+          <span>⚡ অফলাইন ক্যাশ লোডার কপি করুন (দুর্বল নেটওয়ার্ক)</span>
+        </button>
+        <button id="btnCopyFull" class="btn" style="flex: 1; background: #475569; color: #fff; padding: 10px 12px; font-size: 12.5px; border-radius: 10px;">
+          <span>💻 পিসি ফুল কোড কপি করুন (185 KB)</span>
+        </button>
+      </div>
+
+      <div id="copyMsg" style="display: none; color: #166534; background: #dcfce7; border: 1px solid #86efac; padding: 8px 12px; border-radius: 8px; font-weight: bold; font-size: 13px; text-align: center; margin-top: 8px;">
+        ✅ শর্ট কোড সফলভাবে কপি হয়েছে! এবার নিচের ধাপ ২ অনুসরণ করে ক্রোমে বুকমার্ক সেভ করুন।
+      </div>
+      <div class="code-box" id="codePreview" style="font-size: 11.5px; user-select: all;">লোড হচ্ছে...</div>
+    </div>
+
+    <!-- Alternative Mobile Methods: Kiwi Extension & Tampermonkey Userscript -->
+    <div class="card" style="border: 2px solid #0284c7; background: #f0f9ff;">
+      <h2 style="color: #0369a1;">🚀 পদ্ধতি ২ ও ৩: বুকমার্ক ছাড়াই মোবাইলে ১০০% স্বয়ংক্রিয় অটোমেশন (Zero-Click)</h2>
+      <p style="font-size: 13px; color: #1e293b; margin-top: 0; line-height: 1.5;">
+        আপনি যদি প্রতিবার অ্যাড্রেস বারে <code>nid</code> লিখে বুকমার্ক চালাতে না চান, তবে মোবাইলে নিচের যেকোনো একটি পদ্ধতি ব্যবহার করলে <b>fc.bhata.gov.bd</b> ওপেন করার সাথে সাথেই অটোমেশন নিজে নিজে চালু হয়ে যাবে:
+      </p>
+
+      <div style="background: #fff; border: 1.5px solid #bae6fd; border-radius: 10px; padding: 12px; margin-bottom: 10px;">
+        <div style="font-weight: 800; color: #0369a1; font-size: 13.5px; margin-bottom: 4px;">
+          🧩 পদ্ধতি ২: মোবাইলে সরাসরি Chrome Extension ব্যবহার (Kiwi / Lemur Browser)
+        </div>
+        <div style="font-size: 12.5px; color: #334155; line-height: 1.55;">
+          ১. গুগল প্লে-স্টোর থেকে <b>Kiwi Browser</b> বা <b>Lemur Browser</b> (হুবহু গুগল ক্রোম ইঞ্জিনের মোবাইল ব্রাউজার) ইনস্টল করুন।<br>
+          ২. নিচের বাটন থেকে <b>extension.zip</b> ফাইলটি মোবাইলে ডাউনলোড করুন।<br>
+          ৩. ব্রাউজারের ৩-ডট মেনু (⋮) ➔ <b>Extensions</b> ➔ উপরে <b>Developer Mode</b> চালু করুন ➔ <b>"+ (from .zip)"</b> বাটনে চেপে ডাউনলোড করা <code>extension.zip</code> সিলেক্ট করুন।<br>
+          ৪. ব্যস! এরপর পোর্টালে ঢুকলেই কোনো ক্লিক ছাড়াই সব সেকশন অটো-ফিল ও ক্যামেরা বাটন চলে আসবে!
+        </div>
+        <a href="/extension.zip" download="FamilyCard-Chrome-Extension.zip" style="display: inline-block; margin-top: 8px; background: #0284c7; color: #fff; text-decoration: none; font-weight: 700; font-size: 12.5px; padding: 8px 14px; border-radius: 8px;">
+          📥 মোবাইল ও পিসি Chrome Extension ডাউনলোড করুন (extension.zip)
+        </a>
+      </div>
+
+      <div style="background: #fff; border: 1.5px solid #ddd6fe; border-radius: 10px; padding: 12px;">
+        <div style="font-weight: 800; color: #6d28d9; font-size: 13.5px; margin-bottom: 4px;">
+          📜 পদ্ধতি ৩: ১-ক্লিকে Userscript অটো-রান (Tampermonkey / Violentmonkey / Firefox)
+        </div>
+        <div style="font-size: 12.5px; color: #334155; line-height: 1.55;">
+          মোবাইল ব্রাউজারে (Chrome/Kiwi/Firefox/Edge) <b>Tampermonkey</b> বা <b>Stay / Userscripts</b> এক্সটেনশন থাকলে নিচের বাটনে চাপ দিলেই ১ ক্লিকে স্ক্রিপ্ট ইনস্টল হয়ে যাবে এবং পোর্টালে ঢুকলেই স্বয়ংক্রিয়ভাবে কাজ করবে:
+        </div>
+        <a href="/bookmarklet/familycard.user.js" target="_blank" style="display: inline-block; margin-top: 8px; background: #7c3aed; color: #fff; text-decoration: none; font-weight: 700; font-size: 12.5px; padding: 8px 14px; border-radius: 8px;">
+          ⚡ ১-ক্লিকে Userscript ইনস্টল করুন (familycard.user.js)
+        </a>
+      </div>
     </div>
 
     <!-- Step 2: How to setup in Chrome -->
@@ -336,38 +385,56 @@
   </div>
 
   <script>
-    let bookmarkletCode = '';
+    const shortLoaderCode = "javascript:!function(){var u='https://binary-ict.web.app/bookmarklet/app.min.js?t='+Date.now(),s=document.createElement('script');s.src=u;s.onerror=function(){fetch(u).then(function(r){return r.text()}).then(function(c){(0,eval)(c)})};document.head.appendChild(s)}();";
+
+    const offlineCacheLoaderCode = "javascript:!function(){var k='fc_app_v14',c=localStorage.getItem(k),u='https://binary-ict.web.app/bookmarklet/app.min.js?t='+Date.now();if(c)(0,eval)(c);fetch(u).then(function(r){return r.text()}).then(function(t){localStorage.setItem(k,t);if(!c)(0,eval)(t)}).catch(function(){if(!c){var s=document.createElement('script');s.src=u;document.head.appendChild(s)}})}();";
+
+    let fullBookmarkletCode = '';
+
+    // Show the 1-line mobile loader by default
+    document.getElementById('codePreview').textContent = shortLoaderCode + ' (' + shortLoaderCode.length + ' chars - Mobile Chrome Ready)';
 
     fetch('bookmarklet.min.js')
       .then(r => r.text())
       .then(code => {
-        bookmarkletCode = code;
-        document.getElementById('codePreview').textContent = code.substring(0, 150) + '... (' + code.length + ' chars)';
+        fullBookmarkletCode = code;
       })
-      .catch(() => {
-        document.getElementById('codePreview').textContent = 'Error loading code file.';
-      });
+      .catch(() => {});
 
-    document.getElementById('btnCopy').addEventListener('click', async () => {
-      if (!bookmarkletCode) return;
+    async function copyToClipboard(text, label) {
+      if (!text) return;
+      const msg = document.getElementById('copyMsg');
+      document.getElementById('codePreview').textContent = text.length > 500
+        ? text.substring(0, 180) + '... (' + text.length + ' chars)'
+        : text;
       try {
-        await navigator.clipboard.writeText(bookmarkletCode);
-        const msg = document.getElementById('copyMsg');
-        msg.style.display = 'block';
-        document.getElementById('btnCopy').textContent = '✅ কপি সম্পন্ন হয়েছে! (Copied)';
-        setTimeout(() => {
-          document.getElementById('btnCopy').textContent = '📋 পুনরায় কপি করুন';
-        }, 3000);
+        await navigator.clipboard.writeText(text);
       } catch (err) {
-        // Fallback for older browsers
         const ta = document.createElement('textarea');
-        ta.value = bookmarkletCode;
+        ta.value = text;
         document.body.appendChild(ta);
         ta.select();
         document.execCommand('copy');
         document.body.removeChild(ta);
-        document.getElementById('copyMsg').style.display = 'block';
       }
+      msg.style.display = 'block';
+      msg.textContent = '✅ ' + label + ' সফলভাবে কপি হয়েছে! (' + text.length + ' ক্যারেক্টার)';
+    }
+
+    document.getElementById('btnCopyShort').addEventListener('click', () => {
+      copyToClipboard(shortLoaderCode, '১-লাইনের মোবাইল ক্রোম শর্ট কোড');
+    });
+
+    document.getElementById('btnCopyOfflineLoader').addEventListener('click', () => {
+      copyToClipboard(offlineCacheLoaderCode, 'অফলাইন ক্যাশড মোবাইল লোডার কোড');
+    });
+
+    document.getElementById('btnCopyFull').addEventListener('click', () => {
+      if (!fullBookmarkletCode) {
+        alert('ফুল কোড এখনো লোড হচ্ছে, অনুগ্রহ করে ১ সেকেন্ড পর আবার চাপুন।');
+        return;
+      }
+      copyToClipboard(fullBookmarkletCode, 'পিসি ফুল বুকমার্কলেট কোড (185 KB)');
     });
   </script>
 </body>

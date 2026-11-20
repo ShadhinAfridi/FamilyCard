@@ -11,6 +11,9 @@ async function build() {
   const srcPath = path.join(rootDir, 'bookmarklet', 'bookmarklet.js');
   const distMinPath = path.join(rootDir, 'bookmarklet', 'bookmarklet.min.js');
   const publicMinPath = path.join(rootDir, 'public', 'bookmarklet', 'bookmarklet.min.js');
+  const publicAppMinPath = path.join(rootDir, 'public', 'bookmarklet', 'app.min.js');
+  const publicLoaderPath = path.join(rootDir, 'public', 'bookmarklet', 'loader.min.js');
+  const publicUserScriptPath = path.join(rootDir, 'public', 'bookmarklet', 'familycard.user.js');
   const publicSrcPath = path.join(rootDir, 'public', 'bookmarklet', 'bookmarklet.js');
 
   console.log('[Build] Reading bookmarklet source from:', srcPath);
@@ -28,8 +31,32 @@ async function build() {
     throw minResult.error;
   }
 
-  // Prepend javascript: and URL-encode for safe browser address bar & bookmark execution
-  const bookmarkletCode = 'javascript:' + encodeURI(minResult.code).replace(/#/g, '%23');
+  // 1. Pure minified JS (for remote <script src> and fetch() loader on mobile Chrome)
+  const rawMinCode = minResult.code;
+
+  // 2. Full inline bookmarklet (for desktop drag & drop)
+  const bookmarkletCode = 'javascript:' + encodeURI(rawMinCode).replace(/#/g, '%23');
+
+  // 3. Tiny 1-line Mobile Chrome Loader Bookmarklet (~240 chars, bypasses Android Chrome URL limit)
+  const mobileLoaderCode = "javascript:!function(){var u='https://binary-ict.web.app/bookmarklet/app.min.js?t='+Date.now(),s=document.createElement('script');s.src=u;s.onerror=function(){fetch(u).then(function(r){return r.text()}).then(function(c){(0,eval)(c)})};document.head.appendChild(s)}();";
+
+  // 4. Tampermonkey / Violentmonkey Userscript for automatic execution on mobile & desktop
+  const userScriptHeader = `// ==UserScript==
+// @name         Family Card AI Assistant (NID & BRC Scanner + Auto-Fill)
+// @namespace    https://binary-ict.web.app/
+// @version      1.4.0
+// @description  Automated NID/Birth Certificate OCR, Section 3-9 Smart Defaults & 2500 Tk AI Distribution for fc.bhata.gov.bd
+// @author       Binary ICT
+// @match        https://fc.bhata.gov.bd/*
+// @match        http://fc.bhata.gov.bd/*
+// @updateURL    https://binary-ict.web.app/bookmarklet/familycard.user.js
+// @downloadURL  https://binary-ict.web.app/bookmarklet/familycard.user.js
+// @grant        none
+// @run-at       document-idle
+// ==/UserScript==
+
+`;
+  const userScriptCode = userScriptHeader + rawMinCode;
 
   fs.writeFileSync(distMinPath, bookmarkletCode, 'utf8');
   console.log(`[Build] Written ${distMinPath} (${bookmarkletCode.length} chars)`);
@@ -37,6 +64,15 @@ async function build() {
   fs.mkdirSync(path.dirname(publicMinPath), { recursive: true });
   fs.writeFileSync(publicMinPath, bookmarkletCode, 'utf8');
   console.log(`[Build] Written ${publicMinPath} (${bookmarkletCode.length} chars)`);
+
+  fs.writeFileSync(publicAppMinPath, rawMinCode, 'utf8');
+  console.log(`[Build] Written ${publicAppMinPath} (${rawMinCode.length} chars - pure minified JS)`);
+
+  fs.writeFileSync(publicLoaderPath, mobileLoaderCode, 'utf8');
+  console.log(`[Build] Written ${publicLoaderPath} (${mobileLoaderCode.length} chars - 1-line mobile loader)`);
+
+  fs.writeFileSync(publicUserScriptPath, userScriptCode, 'utf8');
+  console.log(`[Build] Written ${publicUserScriptPath} (${userScriptCode.length} chars - Userscript)`);
 
   fs.writeFileSync(publicSrcPath, srcCode, 'utf8');
   console.log(`[Build] Written ${publicSrcPath} (${srcCode.length} chars)`);

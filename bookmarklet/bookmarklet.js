@@ -2032,7 +2032,371 @@ Return ONLY a single valid JSON object with these exact keys:
     }
   }
 
-  // MutationObserver to watch Step 1, Section 3, Section 4, Section 5/Tab 6, and Section 6 activation
+  // --- SECTION 7: OTHER ELIGIBILITY INFO (যোগ্যতার অন্যান্য তথ্য - Tab 5) ---
+  // Rules:
+  // 1. "খানাটি ক্ষুদ্র নৃগোষ্ঠী কি না *" -> "না"
+  // 2. "খানাটি বা বাসস্থানটি কোথায় অবস্থিত *" -> "ইউনিয়ন/পল্লী এলাকায়"
+  // 3. "ভূমির বা বসতঘরের মালিকানা ধরণ *" -> "নিজস্ব"
+  // 4. "খানার সদস্য সংখ্যা *" -> Dynamic total from Section 5 (male + female + trans, in Bengali digits)
+  // 5. "খানায় কি পৃথক রান্নাঘর আছে? *" -> "হ্যা"
+  // 6. "খানায় কি পৃথক খাবার ঘর/কক্ষ আছে? *" -> "না"
+  // 7. "খানার প্রধান ঘরের ছাদ কি দিয়ে তৈরী *" -> "টিন/কাঠ"
+  // 8. "খানার প্রধান ঘরের দেয়াল কি দিয়ে তৈরী? *" -> "টিন/কাঠের"
+  // 9. "খানায় খাবার পানির উৎস কি? *" -> "টিউবওয়েল"
+  // 10. "রান্নার জ্বালানির প্রধান উপকরণ কি *" -> "খড়/পাতা/তুষ/ভূষি"
+  // 11. "খানায় বিদ্যুৎ লাইনের উৎস *" -> "জাতীয় গ্রিড"
+  // 12. "গত ২ বছরে আপনার খানা বিদেশে অবস্থানরত কারো নিকট হতে কোন অর্থ গ্রহণ করেছে কি? *" -> "হ্যা" if Section 5 abroad total > 0, else "না"
+  // 13. "খানার কোন সদস্য কি কৃষি অথবা অকৃষি শ্রমিক হিসেবে নিয়োজিত আছেন? *" -> "কৃষি খাতে শ্রম"
+  // 14. "কৃষি কাজে ডিজেল ব্যবহার হলে তার মাসিক আনুমানিক পরিমাণ *" -> "০ কেজি"
+  // 15. Other fields remain untouched for manual input; user can manually alter any default value without being overwritten.
+
+  let isFillingSection7 = false;
+
+  function normOptionText(s) {
+    return String(s || '').replace(/[\/\sঁ]+/g, '').trim();
+  }
+
+  function selectSingleVuetifyOption(col, candidates) {
+    return new Promise((resolve) => {
+      if (!col || !candidates || candidates.length === 0) return resolve(false);
+
+      const currentSel = col.querySelector('.v-select__selection');
+      const curText = currentSel ? currentSel.textContent.trim() : '';
+
+      if (curText && candidates.some(c => curText === c || normOptionText(curText) === normOptionText(c))) {
+        col.dataset.fcS7DefaultApplied = 'true';
+        return resolve(true);
+      }
+
+      const slot = col.querySelector('.v-input__slot') || col.querySelector('[role="button"]') || col.querySelector('input');
+      if (!slot) return resolve(false);
+
+      const listId = slot.getAttribute('aria-owns') || col.querySelector('[aria-owns]')?.getAttribute('aria-owns');
+      slot.click();
+
+      let attempts = 0;
+      const timer = setInterval(() => {
+        attempts++;
+        let items = [];
+        if (listId) {
+          const listEl = document.getElementById(listId);
+          if (listEl) items = Array.from(listEl.querySelectorAll('.v-list-item'));
+        }
+        if (items.length === 0) {
+          items = Array.from(document.querySelectorAll('.v-menu__content.menuable__content__active .v-list-item, .v-menu__content .v-list-item'));
+        }
+
+        if (items.length > 0) {
+          let matchedItem = items.find(it => candidates.some(c => it.textContent.trim() === c));
+          if (!matchedItem) {
+            matchedItem = items.find(it => candidates.some(c => normOptionText(it.textContent) === normOptionText(c)));
+          }
+          if (!matchedItem) {
+            matchedItem = items.find(it => candidates.some(c => c.length > 2 && it.textContent.trim().includes(c)));
+          }
+
+          if (matchedItem) {
+            const clickable = matchedItem.closest('.v-list-item') || matchedItem;
+            clickable.click();
+            col.dataset.fcS7DefaultApplied = 'true';
+            clearInterval(timer);
+            setTimeout(() => resolve(true), 110);
+            return;
+          }
+        }
+
+        if (attempts >= 8) {
+          clearInterval(timer);
+          col.dataset.fcS7DefaultApplied = 'true';
+          setTimeout(() => resolve(false), 80);
+        }
+      }, 90);
+    });
+  }
+
+  function getSection7Rules(sec5Data) {
+    const customDefaults = JSON.parse(localStorage.getItem('fc_section7_custom_defaults') || '{}');
+    const totalMembers = (sec5Data && sec5Data.totalCount > 0) ? sec5Data.totalCount : 0;
+    const abroadTotal = sec5Data
+      ? ((sec5Data.abroadMale || 0) + (sec5Data.abroadFemale || 0) + (sec5Data.abroadTrans || 0))
+      : 0;
+    const remittanceAnswer = abroadTotal > 0 ? 'হ্যা' : 'না';
+
+    return [
+      {
+        key: 'ethnic_minority',
+        match: (lbl) => lbl.includes('ক্ষুদ্র নৃগোষ্ঠী'),
+        candidates: customDefaults.ethnic_minority ? [customDefaults.ethnic_minority] : ['না'],
+        isDynamic: false
+      },
+      {
+        key: 'residence_location',
+        match: (lbl) => lbl.includes('বাসস্থানটি কোথায় অবস্থিত') || lbl.includes('বাসস্থানটি কোথায় অবস্থিত'),
+        candidates: customDefaults.residence_location ? [customDefaults.residence_location] : ['ইউনিয়ন/পল্লী এলাকায়', 'ইউনিয়ন/পল্লী এলাকায়'],
+        isDynamic: false
+      },
+      {
+        key: 'land_ownership',
+        match: (lbl) => lbl.includes('ভূমির বা বসতঘরের মালিকানা'),
+        candidates: customDefaults.land_ownership ? [customDefaults.land_ownership] : ['নিজস্ব'],
+        isDynamic: false
+      },
+      {
+        key: 'household_members',
+        match: (lbl) => lbl.includes('খানার সদস্য সংখ্যা'),
+        candidates: totalMembers > 0 ? [toBnDigits(totalMembers), String(totalMembers)] : [],
+        isDynamic: true,
+        dynamicVal: String(totalMembers)
+      },
+      {
+        key: 'separate_kitchen',
+        match: (lbl) => lbl.includes('পৃথক রান্নাঘর আছে'),
+        candidates: customDefaults.separate_kitchen ? [customDefaults.separate_kitchen] : ['হ্যা', 'হ্যাঁ'],
+        isDynamic: false
+      },
+      {
+        key: 'separate_dining',
+        match: (lbl) => lbl.includes('পৃথক খাবার ঘর'),
+        candidates: customDefaults.separate_dining ? [customDefaults.separate_dining] : ['না'],
+        isDynamic: false
+      },
+      {
+        key: 'roof_material',
+        match: (lbl) => lbl.includes('প্রধান ঘরের ছাদ কি দিয়ে তৈরী') || lbl.includes('প্রধান ঘরের ছাদ'),
+        candidates: customDefaults.roof_material ? [customDefaults.roof_material] : ['টিন/কাঠ', 'টিন কাঠ'],
+        isDynamic: false
+      },
+      {
+        key: 'wall_material',
+        match: (lbl) => lbl.includes('প্রধান ঘরের দেয়াল কি দিয়ে তৈরী') || lbl.includes('প্রধান ঘরের দেয়াল') || lbl.includes('প্রধান ঘরের দেওয়াল'),
+        candidates: customDefaults.wall_material ? [customDefaults.wall_material] : ['টিন/কাঠের', 'টিন/কাঠ', 'টিন কাঠ'],
+        isDynamic: false
+      },
+      {
+        key: 'water_source',
+        match: (lbl) => lbl.includes('খাবার পানির উৎস কি'),
+        candidates: customDefaults.water_source ? [customDefaults.water_source] : ['টিউবওয়েল', 'টিউবওয়েল'],
+        isDynamic: false
+      },
+      {
+        key: 'cooking_fuel',
+        match: (lbl) => lbl.includes('রান্নার জ্বালানির প্রধান উপকরণ কি') && !lbl.includes('এলপিজি'),
+        candidates: customDefaults.cooking_fuel ? [customDefaults.cooking_fuel] : ['খড়/পাতা/তুষ/ভূষি', 'খড়/পাতা/তুষ/ভূষি'],
+        isDynamic: false
+      },
+      {
+        key: 'electricity_source',
+        match: (lbl) => lbl.includes('বিদ্যুৎ লাইনের উৎস'),
+        candidates: customDefaults.electricity_source ? [customDefaults.electricity_source] : ['জাতীয় গ্রিড', 'জাতীয় গ্রিড'],
+        isDynamic: false
+      },
+      {
+        key: 'foreign_remittance',
+        match: (lbl) => lbl.includes('বিদেশে অবস্থানরত কারো নিকট হতে কোন অর্থ গ্রহণ করেছে কি'),
+        candidates: remittanceAnswer === 'হ্যা' ? ['হ্যা', 'হ্যাঁ'] : ['না'],
+        isDynamic: true,
+        dynamicVal: remittanceAnswer
+      },
+      {
+        key: 'labor_sector',
+        match: (lbl) => lbl.includes('কৃষি অথবা অকৃষি শ্রমিক হিসেবে নিয়োজিত আছেন') || lbl.includes('কৃষি অথবা অকৃষি শ্রমিক'),
+        candidates: customDefaults.labor_sector ? [customDefaults.labor_sector] : ['কৃষি খাতে শ্রম'],
+        isDynamic: false
+      },
+      {
+        key: 'diesel_usage',
+        match: (lbl) => lbl.includes('কৃষি কাজে ডিজেল ব্যবহার হলে তার মাসিক আনুমানিক পরিমাণ'),
+        candidates: customDefaults.diesel_usage ? [customDefaults.diesel_usage] : ['০ কেজি', '0 কেজি'],
+        isDynamic: false
+      }
+    ];
+  }
+
+  function injectSection7Toolbar(panel, sec5Data) {
+    if (!panel) return;
+    const wrap = panel.querySelector('.v-expansion-panel-content__wrap');
+    if (!wrap) return;
+
+    const totalMembers = (sec5Data && sec5Data.totalCount > 0) ? sec5Data.totalCount : 0;
+    const abroadTotal = sec5Data
+      ? ((sec5Data.abroadMale || 0) + (sec5Data.abroadFemale || 0) + (sec5Data.abroadTrans || 0))
+      : 0;
+    const remittanceText = abroadTotal > 0 ? 'হ্যা (প্রবাসী > ০)' : 'না (প্রবাসী ০)';
+
+    let bar = wrap.querySelector('#fc-section7-toolbar');
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.id = 'fc-section7-toolbar';
+      bar.style.cssText = 'margin-bottom: 14px; padding: 10px 14px; background: #f0fdf4; border: 1.5px solid #16a34a; border-radius: 10px; font-family: -apple-system, sans-serif; box-shadow: 0 2px 6px rgba(0,0,0,0.05); font-size: 12px;';
+      wrap.insertBefore(bar, wrap.firstChild);
+    }
+
+    const renderHash = `${totalMembers}|${abroadTotal}`;
+    if (bar.dataset.renderHash === renderHash) return;
+    bar.dataset.renderHash = renderHash;
+
+    bar.innerHTML = `
+      <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 8px;">
+        <div style="display: flex; align-items: center; gap: 8px; font-weight: 700; color: #166534; font-size: 13px;">
+          <span>🏡 সেকশন ৭: যোগ্যতার অন্যান্য তথ্য সহকারী (১৪টি স্মার্ট ডিফল্ট সক্রিয়)</span>
+        </div>
+        <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+          <button id="fc-s7-apply-btn" type="button" style="padding: 4px 10px; background: #16a34a; color: #fff; font-weight: 700; border: none; border-radius: 6px; cursor: pointer; font-size: 11px;">
+            ⚡ ডিফল্ট পুনরায় প্রয়োগ করুন
+          </button>
+          <button id="fc-s7-save-custom-btn" type="button" style="padding: 4px 10px; background: #0284c7; color: #fff; font-weight: 700; border: none; border-radius: 6px; cursor: pointer; font-size: 11px;">
+            💾 পরিবর্তিত মান ডিফল্ট সেভ করুন
+          </button>
+          <button id="fc-s7-reset-custom-btn" type="button" style="padding: 4px 8px; background: #64748b; color: #fff; font-weight: 600; border: none; border-radius: 6px; cursor: pointer; font-size: 11px;">
+            🔄 রিসেট
+          </button>
+        </div>
+      </div>
+      <div style="display: flex; flex-wrap: wrap; gap: 12px; align-items: center; background: #ffffff; padding: 7px 10px; border-radius: 6px; border: 1px solid #bbf7d0; font-size: 11.5px; color: #1e293b;">
+        <span>👨‍👩‍👧‍👦 <b>খানার সদস্য সংখ্যা (সেকশন ৫ হতে):</b> <b style="color: #15803d;">${totalMembers > 0 ? toBnDigits(totalMembers) + ' জন' : 'সেকশন ৫ পূরণ করুন'}</b></span>
+        <span>|</span>
+        <span>✈️ <b>বিদেশ হতে অর্থ গ্রহণ (প্রবাসী ${toBnDigits(abroadTotal)} জন):</b> <b style="color: #0369a1;">${remittanceText}</b></span>
+        <span>|</span>
+        <span>🏠 <b>ছাদ ও দেয়াল:</b> <b>টিন/কাঠ</b></span>
+      </div>
+      <div style="margin-top: 6px; font-size: 11px; color: #15803d;">
+        💡 নির্ধারিত ১৪টি ফিল্ড স্বয়ংক্রিয়ভাবে পূরণ হবে। আপনি যেকোনো ফিল্ড ম্যানুয়ালি পরিবর্তন করলে সিস্টেম তা আর ওভাররাইট করবে না। বাকি ফিল্ডগুলো ম্যানুয়ালি পূরণ করুন।
+      </div>
+    `;
+
+    const applyBtn = bar.querySelector('#fc-s7-apply-btn');
+    applyBtn.onclick = () => {
+      const cols = Array.from(panel.querySelectorAll('.col, [class*="col-"]'));
+      cols.forEach(c => {
+        delete c.dataset.fcS7DefaultApplied;
+        delete c.dataset.fcS7UserEdited;
+      });
+      isFillingSection7 = false;
+      handleSection7Eligibility(true);
+      showToast('⚡ সেকশন ৭-এর ১৪টি ডিফল্ট মান পুনরায় প্রয়োগ করা হচ্ছে...');
+    };
+
+    const saveBtn = bar.querySelector('#fc-s7-save-custom-btn');
+    saveBtn.onclick = () => {
+      const rules = getSection7Rules(sec5Data);
+      const cols = Array.from(panel.querySelectorAll('.col, [class*="col-"]'));
+      const custom = JSON.parse(localStorage.getItem('fc_section7_custom_defaults') || '{}');
+      cols.forEach(col => {
+        const lbl = col.querySelector('label')?.textContent.replace(/[\*\s]+/g, ' ').trim() || '';
+        if (!lbl) return;
+        const rule = rules.find(r => !r.isDynamic && r.match(lbl));
+        if (rule) {
+          const curVal = col.querySelector('.v-select__selection')?.textContent.trim();
+          if (curVal) custom[rule.key] = curVal;
+        }
+      });
+      localStorage.setItem('fc_section7_custom_defaults', JSON.stringify(custom));
+      showToast('✅ আপনার পরিবর্তিত মানগুলো পরবর্তী সকল ফর্মের জন্য ডিফল্ট হিসেবে সেভ হয়েছে!');
+    };
+
+    const resetBtn = bar.querySelector('#fc-s7-reset-custom-btn');
+    resetBtn.onclick = () => {
+      localStorage.removeItem('fc_section7_custom_defaults');
+      const cols = Array.from(panel.querySelectorAll('.col, [class*="col-"]'));
+      cols.forEach(c => {
+        delete c.dataset.fcS7DefaultApplied;
+        delete c.dataset.fcS7UserEdited;
+      });
+      isFillingSection7 = false;
+      handleSection7Eligibility(true);
+      showToast('🔄 ফ্যাক্টরি ডিফল্ট রিসেট ও পুনরায় প্রয়োগ করা হচ্ছে...');
+    };
+  }
+
+  async function handleSection7Eligibility(forceAll = false) {
+    const panel = document.querySelector('[data-family-card-tab="5"]') ||
+                  Array.from(document.querySelectorAll('.v-expansion-panel')).find(p => p.textContent.includes('যোগ্যতার অন্যান্য তথ্য'));
+    if (!panel) return;
+
+    const isPanelVisible = panel.style.display !== 'none' ||
+                           panel.classList.contains('v-expansion-panel--active') ||
+                           document.querySelector('.family-card-form-step--active')?.textContent.includes('যোগ্যতার অন্যান্য তথ্য');
+
+    if (!isPanelVisible) return;
+
+    const sec5Data = trackSection5Data();
+    injectSection7Toolbar(panel, sec5Data);
+
+    if (isFillingSection7) return;
+
+    const rules = getSection7Rules(sec5Data);
+    const cols = Array.from(panel.querySelectorAll('.col, [class*="col-"]'));
+    const queue = [];
+
+    for (const col of cols) {
+      const labelEl = col.querySelector('label');
+      if (!labelEl) continue;
+      const lbl = labelEl.textContent.replace(/[\*\s]+/g, ' ').trim();
+
+      const rule = rules.find(r => r.match(lbl));
+      if (!rule || !rule.candidates || rule.candidates.length === 0) continue;
+
+      if (!col.__fcS7ListenerAttached) {
+        col.__fcS7ListenerAttached = true;
+        col.addEventListener('mousedown', (e) => {
+          if (e.isTrusted) {
+            col.dataset.fcS7DefaultApplied = 'true';
+            col.dataset.fcS7UserEdited = 'true';
+          }
+        }, true);
+      }
+
+      const curVal = col.querySelector('.v-select__selection')?.textContent.trim() || '';
+      const alreadyMatches = curVal && rule.candidates.some(c => curVal === c || normOptionText(curVal) === normOptionText(c));
+
+      if (forceAll) {
+        if (!alreadyMatches) {
+          queue.push({ col, candidates: rule.candidates, rule });
+        } else {
+          col.dataset.fcS7DefaultApplied = 'true';
+          if (rule.isDynamic) col.dataset.fcS7LastDynamicVal = rule.dynamicVal;
+        }
+        continue;
+      }
+
+      if (col.dataset.fcS7UserEdited === 'true') continue;
+
+      if (rule.isDynamic) {
+        const dynamicChanged = col.dataset.fcS7LastDynamicVal !== rule.dynamicVal;
+        if ((!curVal || dynamicChanged) && !alreadyMatches) {
+          queue.push({ col, candidates: rule.candidates, rule });
+        } else if (alreadyMatches) {
+          col.dataset.fcS7DefaultApplied = 'true';
+          col.dataset.fcS7LastDynamicVal = rule.dynamicVal;
+        }
+      } else {
+        if (!curVal && col.dataset.fcS7DefaultApplied !== 'true') {
+          queue.push({ col, candidates: rule.candidates, rule });
+        } else if (curVal) {
+          col.dataset.fcS7DefaultApplied = 'true';
+        }
+      }
+    }
+
+    if (queue.length === 0) return;
+
+    isFillingSection7 = true;
+    try {
+      for (const item of queue) {
+        await selectSingleVuetifyOption(item.col, item.candidates);
+        if (item.rule.isDynamic) {
+          item.col.dataset.fcS7LastDynamicVal = item.rule.dynamicVal;
+        }
+      }
+      showToast(`✅ সেকশন ৭-এর ${toBnDigits(queue.length)}টি ফিল্ড ডিফল্ট অনুযায়ী অটো-সিলেক্ট সম্পন্ন!`);
+    } catch (err) {
+      console.warn('[FamilyCard] Section 7 auto-fill notice:', err);
+    } finally {
+      setTimeout(() => { isFillingSection7 = false; }, 500);
+    }
+  }
+
+  // MutationObserver to watch Step 1, Section 3, Section 4, Section 5/Tab 6, Section 6, and Section 7 activation
   const observer = new MutationObserver(() => {
     if (lastExtractedData) {
       const tab1 = document.querySelector('[data-family-card-tab="1"]') || document.querySelector('.v-expansion-panel--active');
@@ -2046,15 +2410,17 @@ Return ONLY a single valid JSON object with these exact keys:
     handleSection4Address();
     handleSection5AndCrossMatch();
     handleSection6Bank();
+    handleSection7Eligibility();
   });
   observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class'] });
 
-  // Periodic polling for Section 3, Section 4, Section 5/Tab 6, and Section 6
+  // Periodic polling for Section 3, Section 4, Section 5/Tab 6, Section 6, and Section 7
   setInterval(() => {
     traceSection3Media();
     handleSection4Address();
     handleSection5AndCrossMatch();
     handleSection6Bank();
+    handleSection7Eligibility();
   }, 1500);
 
   function showToast(msg) {

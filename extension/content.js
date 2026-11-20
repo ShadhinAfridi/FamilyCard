@@ -1,7 +1,37 @@
 // Content Script injected into https://fc.bhata.gov.bd/*
-// Supports both Single-Device (In-Page Camera Scanner) & Cross-Device (WebSocket Bridge)
+// Supports both Single-Device (WebRTC Live Camera + Gallery Scanner) & Cross-Device (WebSocket Bridge)
 (function () {
-  console.log('[FamilyCard Assistant] Content Script Loaded.');
+  console.log('[FamilyCard Assistant v1.5] Content Script Loaded.');
+
+  function safeJsonParse(raw, fallback) {
+    if (!raw) return fallback;
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed !== null && parsed !== undefined ? parsed : fallback;
+    } catch (_) {
+      return fallback;
+    }
+  }
+
+  function escapeHtml(str) {
+    return String(str ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function normalizeBn(str) {
+    if (!str) return '';
+    return String(str)
+      .normalize('NFC')
+      .replace(/\u09A1\u09BC/g, '\u09DC')
+      .replace(/\u09A2\u09BC/g, '\u09DD')
+      .replace(/\u09AF\u09BC/g, '\u09DF')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
 
   let socket = null;
   let serverUrl = 'http://localhost:3000';
@@ -9,6 +39,22 @@
   let geminiApiKey = '';
   let lastExtractedData = null;
   let activeScanTarget = { type: 'applicant', card: null, index: 'self' };
+  let activeMediaStream = null;
+  let savedPostcode = localStorage.getItem('fc_default_postcode') || '7721';
+  let savedVillageList = safeJsonParse(localStorage.getItem('fc_village_list'), ['বসাকুষ্টিয়া', 'চর কলিমহর']);
+  if (!Array.isArray(savedVillageList) || savedVillageList.length === 0) {
+    savedVillageList = ['বসাকুষ্টিয়া', 'চর কলিমহর'];
+  }
+  let savedDefaultVillage = localStorage.getItem('fc_default_village') || savedVillageList[0] || 'বসাকুষ্টিয়া';
+
+  function getSafeFamilyDocId(data) {
+    const rawId = scrapeFamilyId() || (data && data.family_id) || (lastExtractedData && lastExtractedData.family_id) || '';
+    const cleanFamily = normalizeDigits(rawId).replace(/[^0-9]/g, '');
+    if (cleanFamily) return cleanFamily;
+    const fallbackDoc = data ? (data.nid_number || data.birth_reg_no || data.doc_number || '') : '';
+    const cleanDoc = normalizeDigits(fallbackDoc).replace(/[^0-9]/g, '');
+    return cleanDoc || null;
+  }
 
   // Retrieve saved settings
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
@@ -47,7 +93,7 @@
           </button>
           <div class="fc-pair-box">
             <span>অন্য ফোন পেয়ার রুম:</span>
-            <span id="fc-ui-room" style="color: #1c3b68;">${roomCode}</span>
+            <span id="fc-ui-room" style="color: #1c3b68;">${escapeHtml(roomCode)}</span>
           </div>
           <div class="fc-preview-box">
             <div class="fc-preview-row">
@@ -117,12 +163,20 @@
       card.classList.add('hidden');
     });
 
-    fabBtn.addEventListener('click', openScannerModal);
-    directScanBtn.addEventListener('click', openScannerModal);
+    fabBtn.addEventListener('click', () => {
+      const tab6 = document.querySelector('[data-family-card-tab="6"]');
+      const isTab6Active = tab6 && (tab6.style.display !== 'none' || tab6.classList.contains('v-expansion-panel--active'));
+      setScanTarget(isTab6Active ? 'member' : 'applicant', null, isTab6Active ? 'auto' : 1);
+      openScannerModal();
+    });
+    directScanBtn.addEventListener('click', () => {
+      setScanTarget('applicant', null, 1);
+      openScannerModal();
+    });
 
-    document.getElementById('fc-btn-refill').addEventListener('click', () => {
+    document.getElementById('fc-btn-refill').addEventListener('click', async () => {
       if (lastExtractedData) {
-        fillFormFields(lastExtractedData);
+        await fillFormFields(lastExtractedData);
         showToast('এনআইডি তথ্য পুনরায় পূরণ করা হয়েছে!');
       } else {
         alert('কোনো স্ক্যান করা তথ্য এখনো আসেনি। "📸 NID স্ক্যান" বাটনে চাপুন।');
@@ -134,8 +188,10 @@
         const text = await navigator.clipboard.readText();
         const json = JSON.parse(text);
         lastExtractedData = json;
+        window.__fcStep1FilledKey = '';
         updateWidgetPreview(json);
-        fillFormFields(json);
+        await fillFormFields(json);
+        syncToFirestore(json);
         showToast('ক্লিপবোর্ড থেকে ফর্ম পূরণ সম্পন্ন!');
       } catch (e) {
         alert('ক্লিপবোর্ডে বৈধ NID JSON পাওয়া যায়নি: ' + e.message);
@@ -217,13 +273,29 @@
           </div>
 
           <input type="file" id="fc-modal-file-input" accept="image/*" capture="environment" style="display: none;">
-          
-          <button id="fc-modal-btn-camera" class="fc-camera-trigger-btn">
-            <span>📷 কার্ড / সনদের ছবি তুলুন</span>
-          </button>
+
+          <div id="fc-modal-viewfinder" class="fc-modal-cam-box" style="display: none;">
+            <video id="fc-modal-video" playsinline autoplay muted></video>
+            <div class="fc-modal-cam-bracket tl"></div>
+            <div class="fc-modal-cam-bracket tr"></div>
+            <div class="fc-modal-cam-bracket bl"></div>
+            <div class="fc-modal-cam-bracket br"></div>
+          </div>
 
           <div id="fc-modal-preview-wrap" class="fc-preview-img-wrap" style="display: none;">
             <img id="fc-modal-img-preview" alt="Document Preview">
+          </div>
+
+          <div class="fc-modal-btn-row">
+            <button id="fc-modal-btn-camera" class="fc-camera-trigger-btn">
+              <span>📷 লাইভ ক্যামেরা</span>
+            </button>
+            <button id="fc-modal-btn-snap" class="fc-camera-trigger-btn" style="display: none; background: linear-gradient(135deg, #16a34a, #15803d);">
+              <span>⚡ ছবি তুলুন</span>
+            </button>
+            <button id="fc-modal-btn-gallery" class="fc-modal-sec-btn" type="button">
+              <span>📁 ফাইল / গ্যালারি</span>
+            </button>
           </div>
 
           <!-- Applicant Specific Settings -->
@@ -256,6 +328,30 @@
               <label for="fc-modal-mobile">📱 মোবাইল নম্বর (ঐচ্ছিক - ট্যাবলেটে ম্যানুয়ালি লিখতে পারেন):</label>
               <input type="tel" id="fc-modal-mobile" placeholder="যেমন: 019XXXXXXXX" maxlength="11">
             </div>
+
+            <!-- Section 4 Address Settings -->
+            <div style="background: #f8fafc; border: 1.5px solid #cbd5e1; border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 8px;">
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <label style="font-size: 12px; font-weight: 700; color: #1c3b68;">📍 সেকশন ৪: তথ্য সংগ্রহের ঠিকানা</label>
+                <span style="font-size: 10px; color: #64748b;">(স্থায়ী ঠিকানা অপরিবর্তিত)</span>
+              </div>
+              <div class="fc-modal-fields-row">
+                <div class="fc-modal-field">
+                  <label for="fc-modal-postcode">📮 পোস্ট কোড* (ডিফল্ট: 7721)</label>
+                  <input type="text" id="fc-modal-postcode" value="${escapeHtml(savedPostcode)}" placeholder="7721">
+                </div>
+                <div class="fc-modal-field">
+                  <label for="fc-modal-village">🏠 গ্রাম নির্বাচন*</label>
+                  <select id="fc-modal-village">
+                    ${savedVillageList.map(v => `<option value="${escapeHtml(v)}" ${v === savedDefaultVillage ? 'selected' : ''}>${escapeHtml(v)}</option>`).join('')}
+                  </select>
+                </div>
+              </div>
+              <div style="display: flex; gap: 6px;">
+                <input type="text" id="fc-modal-new-village" placeholder="নতুন গ্রামের নাম লিখুন..." style="flex: 1; padding: 6px 10px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 12px;">
+                <button id="fc-modal-btn-add-village" type="button" style="padding: 6px 12px; font-size: 12px; font-weight: 700; background: #0284c7; color: #fff; border: none; border-radius: 8px; cursor: pointer;">+ যোগ</button>
+              </div>
+            </div>
           </div>
 
           <div id="fc-modal-loading" class="fc-loading-spinner-wrap" style="display: none;">
@@ -275,12 +371,18 @@
     const closeBtn = document.getElementById('fc-modal-close-btn');
     const fileInput = document.getElementById('fc-modal-file-input');
     const btnCamera = document.getElementById('fc-modal-btn-camera');
+    const btnSnap = document.getElementById('fc-modal-btn-snap');
+    const btnGallery = document.getElementById('fc-modal-btn-gallery');
+    const viewFinder = document.getElementById('fc-modal-viewfinder');
+    const videoElem = document.getElementById('fc-modal-video');
     const btnSubmit = document.getElementById('fc-modal-btn-submit');
     const btnTargetSelf = document.getElementById('fc-modal-target-self-btn');
     const btnTargetMember = document.getElementById('fc-modal-target-member-btn');
-    const memberSettings = document.getElementById('fc-modal-member-settings');
-    const applicantSettings = document.getElementById('fc-modal-applicant-settings');
     const memberSelect = document.getElementById('fc-modal-member-select');
+    const inputPostcode = document.getElementById('fc-modal-postcode');
+    const selectVillage = document.getElementById('fc-modal-village');
+    const inputNewVillage = document.getElementById('fc-modal-new-village');
+    const btnAddVillage = document.getElementById('fc-modal-btn-add-village');
 
     btnTargetSelf.addEventListener('click', () => setScanTarget('applicant'));
     btnTargetMember.addEventListener('click', () => setScanTarget('member'));
@@ -288,15 +390,59 @@
     if (memberSelect) {
       memberSelect.addEventListener('change', (e) => {
         const val = e.target.value;
-        if (val === 'auto') {
+        const badge = document.getElementById('fc-modal-member-badge');
+        if (val === 'new') {
+          activeScanTarget.card = null;
+          activeScanTarget.index = 'new';
+          if (badge) badge.textContent = 'টার্গেট: নতুন সদস্য';
+        } else if (val === 'auto') {
           activeScanTarget.card = null;
           activeScanTarget.index = 'auto';
+          if (badge) badge.textContent = 'পরবর্তী খালি সদস্য কার্ড';
         } else {
           const cards = Array.from(document.querySelectorAll('.fm-members-stack .fm-member-card, [data-family-card-tab="6"] .fm-member-card'));
           const idx = parseInt(val, 10);
           activeScanTarget.card = cards[idx - 1] || null;
           activeScanTarget.index = idx;
+          if (badge) badge.textContent = `সদস্য - ${toBnDigits(idx)} নির্দিষ্ট`;
         }
+      });
+    }
+
+    if (inputPostcode) {
+      inputPostcode.addEventListener('change', () => {
+        savedPostcode = inputPostcode.value.trim() || '7721';
+        localStorage.setItem('fc_default_postcode', savedPostcode);
+        const bar = document.getElementById('fc-inline-village-bar');
+        if (bar) bar.remove();
+        handleSection4Address();
+      });
+    }
+    if (selectVillage) {
+      selectVillage.addEventListener('change', () => {
+        savedDefaultVillage = selectVillage.value;
+        localStorage.setItem('fc_default_village', savedDefaultVillage);
+        const bar = document.getElementById('fc-inline-village-bar');
+        if (bar) bar.remove();
+        handleSection4Address();
+      });
+    }
+    if (btnAddVillage) {
+      btnAddVillage.addEventListener('click', () => {
+        const newName = inputNewVillage?.value.trim();
+        if (!newName) return;
+        if (!savedVillageList.includes(newName)) {
+          savedVillageList.push(newName);
+          localStorage.setItem('fc_village_list', JSON.stringify(savedVillageList));
+        }
+        savedDefaultVillage = newName;
+        localStorage.setItem('fc_default_village', savedDefaultVillage);
+        updateModalVillageSelect();
+        const bar = document.getElementById('fc-inline-village-bar');
+        if (bar) bar.remove();
+        handleSection4Address();
+        if (inputNewVillage) inputNewVillage.value = '';
+        showToast(`✅ গ্রাম "${newName}" সফলভাবে যোগ করা হয়েছে এবং ডিফল্ট করা হলো!`);
       });
     }
 
@@ -305,11 +451,63 @@
       if (e.target === modal) closeScannerModal();
     });
 
-    btnCamera.addEventListener('click', () => {
-      fileInput.click();
+    btnCamera.addEventListener('click', async () => {
+      try {
+        if (activeMediaStream) stopLiveCamera();
+        const constraints = {
+          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+          audio: false
+        };
+        activeMediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+        if (videoElem) videoElem.srcObject = activeMediaStream;
+        if (viewFinder) viewFinder.style.display = 'flex';
+        const previewWrap = document.getElementById('fc-modal-preview-wrap');
+        if (previewWrap) previewWrap.style.display = 'none';
+        btnCamera.style.display = 'none';
+        if (btnSnap) btnSnap.style.display = 'flex';
+      } catch (err) {
+        console.warn('[FamilyCard Extension] WebRTC camera denied/unavailable, falling back to file input:', err);
+        fileInput.click();
+      }
     });
 
     let currentCompressedBase64 = null;
+
+    if (btnSnap) {
+      btnSnap.addEventListener('click', () => {
+        if (!videoElem || !videoElem.videoWidth) {
+          alert('ক্যামেরা প্রস্তুত নয়, অনুগ্রহ করে কিছুক্ষণ অপেক্ষা করুন।');
+          return;
+        }
+        const canvas = document.createElement('canvas');
+        let w = videoElem.videoWidth;
+        let h = videoElem.videoHeight;
+        const maxDim = 1600;
+        if (w > maxDim || h > maxDim) {
+          if (w > h) { h = Math.round((h * maxDim) / w); w = maxDim; }
+          else { w = Math.round((w * maxDim) / h); h = maxDim; }
+        }
+        canvas.width = w;
+        canvas.height = h;
+        canvas.getContext('2d').drawImage(videoElem, 0, 0, w, h);
+        currentCompressedBase64 = canvas.toDataURL('image/jpeg', 0.85);
+        stopLiveCamera();
+
+        const previewWrap = document.getElementById('fc-modal-preview-wrap');
+        const imgPreview = document.getElementById('fc-modal-img-preview');
+        if (imgPreview) imgPreview.src = currentCompressedBase64;
+        if (previewWrap) previewWrap.style.display = 'flex';
+        btnCamera.textContent = '🔄 পুনরায় ছবি তুলুন';
+        triggerModalOCR(currentCompressedBase64);
+      });
+    }
+
+    if (btnGallery) {
+      btnGallery.addEventListener('click', () => {
+        stopLiveCamera();
+        fileInput.click();
+      });
+    }
 
     fileInput.addEventListener('change', async (e) => {
       const file = e.target.files?.[0];
@@ -318,17 +516,16 @@
       const previewWrap = document.getElementById('fc-modal-preview-wrap');
       const imgPreview = document.getElementById('fc-modal-img-preview');
 
-      // Compress client-side
       try {
         currentCompressedBase64 = await compressImageFile(file, 1600, 0.85);
         imgPreview.src = currentCompressedBase64;
         previewWrap.style.display = 'flex';
         btnCamera.textContent = '🔄 পুনরায় ছবি তুলুন';
-        
-        // Auto-trigger OCR immediately for convenience
         triggerModalOCR(currentCompressedBase64);
       } catch (err) {
         alert('ছবি প্রসেস করতে ব্যর্থ: ' + err.message);
+      } finally {
+        fileInput.value = '';
       }
     });
 
@@ -337,6 +534,32 @@
         triggerModalOCR(currentCompressedBase64);
       }
     });
+  }
+
+  function stopLiveCamera() {
+    if (activeMediaStream) {
+      activeMediaStream.getTracks().forEach(t => t.stop());
+      activeMediaStream = null;
+    }
+    const vf = document.getElementById('fc-modal-viewfinder');
+    const snap = document.getElementById('fc-modal-btn-snap');
+    const cam = document.getElementById('fc-modal-btn-camera');
+    if (vf) vf.style.display = 'none';
+    if (snap) snap.style.display = 'none';
+    if (cam) cam.style.display = 'flex';
+  }
+
+  function updateModalVillageSelect() {
+    const sel = document.getElementById('fc-modal-village');
+    const inpPost = document.getElementById('fc-modal-postcode');
+    const list = safeJsonParse(localStorage.getItem('fc_village_list'), savedVillageList);
+    savedVillageList = Array.isArray(list) && list.length ? list : ['বসাকুষ্টিয়া', 'চর কলিমহর'];
+    savedDefaultVillage = localStorage.getItem('fc_default_village') || savedVillageList[0] || 'বসাকুষ্টিয়া';
+    savedPostcode = localStorage.getItem('fc_default_postcode') || '7721';
+    if (inpPost) inpPost.value = savedPostcode;
+    if (sel) {
+      sel.innerHTML = savedVillageList.map(v => `<option value="${escapeHtml(v)}" ${v === savedDefaultVillage ? 'selected' : ''}>${escapeHtml(v)}</option>`).join('');
+    }
   }
 
   function updateMemberSelectDropdown() {
@@ -352,9 +575,10 @@
 
       const nameVal = card.querySelector('input:not([disabled])')?.value || '';
       const label = `সদস্য - ${toBnDigits(idx + 1)}${nameVal ? ' (' + nameVal + ')' : ' (খালি)'}`;
-      html += `<option value="${idx + 1}">${label}</option>`;
+      html += `<option value="${idx + 1}">${escapeHtml(label)}</option>`;
     });
 
+    html += '<option value="new">➕ নতুন সদস্য কার্ড যোগ করে ফিল করুন</option>';
     sel.innerHTML = html;
   }
 
@@ -384,7 +608,9 @@
       if (memberIdx && memberIdx !== 'auto') {
         const sel = document.getElementById('fc-modal-member-select');
         if (sel) sel.value = String(memberIdx);
-        if (memberBadge) memberBadge.textContent = `সদস্য - ${toBnDigits(memberIdx)} নির্দিষ্ট`;
+        if (memberBadge) {
+          memberBadge.textContent = memberIdx === 'new' ? 'টার্গেট: নতুন সদস্য' : `সদস্য - ${toBnDigits(memberIdx)} নির্দিষ্ট`;
+        }
       } else if (memberBadge) {
         memberBadge.textContent = 'পরবর্তী খালি সদস্য কার্ড';
       }
@@ -402,6 +628,7 @@
   function openScannerModal() {
     const modal = document.getElementById('fc-scanner-modal');
     if (modal) {
+      updateModalVillageSelect();
       if (activeScanTarget.type === 'member') {
         updateMemberSelectDropdown();
       }
@@ -410,6 +637,7 @@
   }
 
   function closeScannerModal() {
+    stopLiveCamera();
     const modal = document.getElementById('fc-scanner-modal');
     if (modal) modal.style.display = 'none';
   }
@@ -588,19 +816,18 @@
     });
   }
 
-  function applySmartDefaultsToAllMembers() {
+  async function applySmartDefaultsToAllMembers() {
     const cards = Array.from(document.querySelectorAll('.fm-members-stack .fm-member-card, [data-family-card-tab="6"] .fm-member-card'));
     let count = 0;
-    cards.forEach(card => {
+    for (const card of cards) {
       const isSelf = card.classList.contains('fm-member-card--self') || (card.textContent.includes('সদস্য - ১') && card.textContent.includes('নিজ'));
-      if (isSelf) return;
+      if (isSelf) continue;
 
       const relLabels = Array.from(card.querySelectorAll('label')).filter(l => l.textContent.includes('ধর্ম'));
       for (const rl of relLabels) {
         const col = rl.closest('.col, [class*="col-"]');
         if (col && !col.querySelector('.v-select__selection')?.textContent.trim()) {
-          selectSingleVuetifyOption(col, ['ইসলাম']);
-          count++;
+          if (await selectSingleVuetifyOption(col, ['ইসলাম'])) count++;
         }
       }
 
@@ -608,18 +835,20 @@
       for (const dl of disLabels) {
         const col = dl.closest('.col, [class*="col-"]');
         if (col && !col.querySelector('.v-select__selection')?.textContent.trim()) {
-          selectSingleVuetifyOption(col, ['না', 'প্রতিবন্ধী নন']);
-          count++;
+          if (await selectSingleVuetifyOption(col, ['না', 'প্রতিবন্ধী নন'])) count++;
         }
       }
-    });
+    }
     showToast(`⚡ ${toBnDigits(count)}টি সদস্য ফিল্ডে স্মার্ট ডিফল্ট প্রয়োগ করা হয়েছে!`);
   }
 
   async function syncMemberToFirestore(memberData, memberIndex) {
     try {
-      const rawId = scrapeFamilyId() || (lastExtractedData && lastExtractedData.family_id) || '8743033825';
-      const cleanId = normalizeDigits(rawId).replace(/[^0-9]/g, '') || '8743033825';
+      const cleanId = getSafeFamilyDocId(lastExtractedData || memberData);
+      if (!cleanId) {
+        console.warn('[FamilyCard Extension] Skipped Firestore member sync: no family_id available');
+        return;
+      }
       const memberDocId = `member_${memberIndex}_${memberData.doc_number || Date.now()}`;
       const url = `https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(cleanId)}/members/${encodeURIComponent(memberDocId)}`;
 
@@ -651,42 +880,6 @@
       console.log('[FamilyCard Extension] Member synced to Firestore:', memberDocId);
     } catch (err) {
       console.warn('[FamilyCard Extension] Firestore member sync notice:', err.message);
-    }
-  }
-
-  async function syncToFirestore(data) {
-    try {
-      const rawId = scrapeFamilyId() || data.family_id || data.nid_number || '8743033825';
-      const cleanId = normalizeDigits(rawId).replace(/[^0-9]/g, '') || '8743033825';
-      const url = `https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(cleanId)}`;
-
-      const firestoreDoc = {
-        fields: {
-          family_id: { stringValue: cleanId },
-          nid_number: { stringValue: data.nid_number || '' },
-          name_bn: { stringValue: data.name_bn || '' },
-          name_en: { stringValue: data.name_en || '' },
-          dob: { stringValue: data.dob || '' },
-          gender: { stringValue: data.gender || '' },
-          father_name_bn: { stringValue: data.father_name_bn || '' },
-          father_name_en: { stringValue: data.father_name_en || '' },
-          mother_name_bn: { stringValue: data.mother_name_bn || '' },
-          mother_name_en: { stringValue: data.mother_name_en || '' },
-          marital_status: { stringValue: data.marital_status || 'বিবাহিত' },
-          religion: { stringValue: data.religion || 'ইসলাম' },
-          mobile_number: { stringValue: data.mobile_number || '' },
-          synced_at: { timestampValue: new Date().toISOString() }
-        }
-      };
-
-      await fetch(url, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(firestoreDoc)
-      });
-      console.log('[FamilyCard Extension] Applicant synced to Firestore:', cleanId);
-    } catch (e) {
-      console.warn('[FamilyCard Extension] Firestore sync notice:', e.message);
     }
   }
 
@@ -763,18 +956,27 @@
           let targetCard = activeScanTarget.card;
           if (!targetCard) {
             const cards = Array.from(document.querySelectorAll('.fm-members-stack .fm-member-card, [data-family-card-tab="6"] .fm-member-card'));
-            targetCard = cards.find(c => {
-              const isSelf = c.classList.contains('fm-member-card--self') || (c.textContent.includes('সদস্য - ১') && c.textContent.includes('নিজ'));
-              if (isSelf) return false;
-              const hasName = c.querySelector('input:not([disabled])')?.value;
-              return !hasName && c.dataset.fcMemberAutoFilled !== 'true';
-            });
-
-            if (!targetCard) {
+            if (activeScanTarget.index === 'new') {
               triggerPortalAddMember();
               await new Promise(r => setTimeout(r, 450));
               const updatedCards = Array.from(document.querySelectorAll('.fm-members-stack .fm-member-card, [data-family-card-tab="6"] .fm-member-card'));
               targetCard = updatedCards[updatedCards.length - 1];
+            } else if (typeof activeScanTarget.index === 'number' && cards[activeScanTarget.index - 1]) {
+              targetCard = cards[activeScanTarget.index - 1];
+            } else {
+              targetCard = cards.find(c => {
+                const isSelf = c.classList.contains('fm-member-card--self') || (c.textContent.includes('সদস্য - ১') && c.textContent.includes('নিজ'));
+                if (isSelf) return false;
+                const hasName = c.querySelector('input:not([disabled])')?.value;
+                return !hasName && c.dataset.fcMemberAutoFilled !== 'true';
+              });
+
+              if (!targetCard) {
+                triggerPortalAddMember();
+                await new Promise(r => setTimeout(r, 450));
+                const updatedCards = Array.from(document.querySelectorAll('.fm-members-stack .fm-member-card, [data-family-card-tab="6"] .fm-member-card'));
+                targetCard = updatedCards[updatedCards.length - 1];
+              }
             }
           }
 
@@ -788,7 +990,9 @@
           if (targetCard) {
             await fillMemberCard(targetCard, data);
             handleSection5AndCrossMatch();
-            const cardIdx = (typeof activeScanTarget.index === 'number') ? activeScanTarget.index : 2;
+            const allCards = Array.from(document.querySelectorAll('.fm-members-stack .fm-member-card, [data-family-card-tab="6"] .fm-member-card'));
+            const realIdx = allCards.indexOf(targetCard);
+            const cardIdx = realIdx >= 0 ? (realIdx + 1) : ((typeof activeScanTarget.index === 'number') ? activeScanTarget.index : allCards.length || 2);
             syncMemberToFirestore(data, cardIdx);
             showToast(`✅ সদস্য (${data.name_bn || data.doc_number}) সফলভাবে পূরণ হয়েছে!`);
           } else {
@@ -796,8 +1000,9 @@
           }
         } else {
           lastExtractedData = data;
+          window.__fcStep1FilledKey = '';
           updateWidgetPreview(data);
-          fillFormFields(data);
+          await fillFormFields(data);
           syncToFirestore(data);
           showToast('✅ এনআইডি তথ্য সফলভাবে পূরণ করা হয়েছে!');
         }
@@ -810,11 +1015,16 @@
   // --- WebSocket Connection for Cross-Device Mode ---
   function connectSocket() {
     if (typeof io === 'undefined') return;
+    if (window.location.protocol === 'https:' && /^http:\/\/(?!localhost\b|127\.0\.0\.1\b)/i.test(serverUrl)) {
+      updateBadgeStatus(false, 'সরাসরি স্ক্যান মোড');
+      return;
+    }
 
     try {
       socket = io(serverUrl, {
-        reconnectionAttempts: 5,
-        reconnectionDelay: 3000
+        reconnectionAttempts: 2,
+        reconnectionDelay: 3000,
+        timeout: 2500
       });
 
       socket.on('connect', () => {
@@ -830,11 +1040,13 @@
         updateBadgeStatus(false, 'সরাসরি স্ক্যান মোড');
       });
 
-      socket.on('nid-data-extracted', (payload) => {
+      socket.on('nid-data-extracted', async (payload) => {
         if (payload && payload.success && payload.data) {
           lastExtractedData = payload.data;
+          window.__fcStep1FilledKey = '';
           updateWidgetPreview(payload.data);
-          const filled = fillFormFields(payload.data);
+          const filled = await fillFormFields(payload.data);
+          syncToFirestore(payload.data);
           if (filled) {
             showToast('✅ মোবাইল থেকে এনআইডি তথ্য পূরণ হয়েছে!');
           }
@@ -879,7 +1091,7 @@
 
     const toast = document.createElement('div');
     toast.className = 'fc-toast';
-    toast.innerHTML = `<span>${message}</span>`;
+    toast.textContent = String(message || '');
     document.body.appendChild(toast);
 
     setTimeout(() => {
@@ -918,15 +1130,16 @@
     return true;
   }
 
-  function findInputByLabelText(keywords) {
-    const labels = Array.from(document.querySelectorAll('label'));
+  function findInputByLabelText(keywords, rootEl = null) {
+    const scope = rootEl || document;
+    const normKeys = keywords.map(k => normalizeBn(k));
+    const labels = Array.from(scope.querySelectorAll('label'));
     for (const label of labels) {
-      const text = label.textContent || '';
-      const matches = keywords.some(k => text.includes(k));
-      if (matches) {
+      const text = normalizeBn(label.textContent || '');
+      if (normKeys.some(k => text.includes(k))) {
         if (label.htmlFor) {
           const inp = document.getElementById(label.htmlFor);
-          if (inp && !inp.disabled) return inp;
+          if (inp && !inp.disabled && (!rootEl || rootEl.contains(inp))) return inp;
         }
         const parent = label.closest('.col, [class*="col-"], span, div');
         if (parent) {
@@ -993,33 +1206,36 @@
   // Direct Firestore REST API Sync (rajbari-city-app-16601)
   async function syncToFirestore(data) {
     try {
+      const docId = getSafeFamilyDocId(data);
+      if (!docId) {
+        console.warn('[FamilyCard Extension] Skipped Firestore sync: no family_id or document number');
+        return;
+      }
       const familyId = scrapeFamilyId() || data.family_id || '';
-      const docId = familyId || data.nid_number || ('card_' + Date.now());
-      const url = `https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(docId)}`;
-
-      const firestoreDoc = {
-        fields: {
-          family_id: { stringValue: familyId },
-          nid_number: { stringValue: data.nid_number || '' },
-          name_bn: { stringValue: data.name_bn || '' },
-          name_en: { stringValue: data.name_en || '' },
-          dob: { stringValue: data.dob || '' },
-          gender: { stringValue: data.gender || '' },
-          father_name_bn: { stringValue: data.father_name_bn || '' },
-          father_name_en: { stringValue: data.father_name_en || '' },
-          mother_name_bn: { stringValue: data.mother_name_bn || '' },
-          mother_name_en: { stringValue: data.mother_name_en || '' },
-          marital_status: { stringValue: data.marital_status || 'বিবাহিত' },
-          religion: { stringValue: data.religion || 'ইসলাম' },
-          mobile_number: { stringValue: data.mobile_number || '' },
-          synced_at: { timestampValue: new Date().toISOString() }
-        }
+      const fields = {
+        nid_number: { stringValue: data.nid_number || '' },
+        name_bn: { stringValue: data.name_bn || '' },
+        name_en: { stringValue: data.name_en || '' },
+        dob: { stringValue: data.dob || '' },
+        gender: { stringValue: data.gender || '' },
+        father_name_bn: { stringValue: data.father_name_bn || '' },
+        father_name_en: { stringValue: data.father_name_en || '' },
+        mother_name_bn: { stringValue: data.mother_name_bn || '' },
+        mother_name_en: { stringValue: data.mother_name_en || '' },
+        marital_status: { stringValue: data.marital_status || 'বিবাহিত' },
+        religion: { stringValue: data.religion || 'ইসলাম' },
+        mobile_number: { stringValue: data.mobile_number || '' },
+        synced_at: { timestampValue: new Date().toISOString() }
       };
+      if (familyId) fields.family_id = { stringValue: normalizeDigits(familyId) };
+
+      const updateMask = Object.keys(fields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
+      const url = `https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(docId)}?${updateMask}`;
 
       await fetch(url, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(firestoreDoc)
+        body: JSON.stringify({ fields })
       });
       console.log('[FamilyCard Extension] Firestore synced:', docId);
     } catch (e) {
@@ -1027,133 +1243,162 @@
     }
   }
 
-  function selectVuetifyDropdown(labelKeywords, targetValueText) {
-    if (!targetValueText) return;
-    const labels = Array.from(document.querySelectorAll('label'));
-    let container = null;
-    for (const l of labels) {
-      const text = l.textContent || '';
-      if (labelKeywords.some(k => text.includes(k))) {
-        container = l.closest('.col, [class*="col-"], span, div');
-        break;
+  function selectVuetifyDropdown(labelKeywords, targetValueText, rootEl = null) {
+    return new Promise((resolve) => {
+      if (!targetValueText) return resolve(false);
+      const scope = rootEl || document;
+      const normKeys = labelKeywords.map(k => normalizeBn(k));
+      const normTarget = normalizeBn(targetValueText);
+      const labels = Array.from(scope.querySelectorAll('label'));
+      let container = null;
+      for (const l of labels) {
+        if (normKeys.some(k => normalizeBn(l.textContent || '').includes(k))) {
+          container = l.closest('.col, [class*="col-"], span, div');
+          break;
+        }
       }
-    }
 
-    if (!container) return;
+      if (!container) return resolve(false);
 
-    const currentSelection = container.querySelector('.v-select__selection');
-    if (currentSelection && currentSelection.textContent.trim().includes(targetValueText)) {
-      return;
-    }
+      const currentSelection = container.querySelector('.v-select__selection');
+      if (currentSelection && normalizeBn(currentSelection.textContent).includes(normTarget)) {
+        return resolve(true);
+      }
 
-    const clickTarget = container.querySelector('.v-input__slot') || container.querySelector('input');
-    if (clickTarget) {
+      const clickTarget = container.querySelector('.v-input__slot') || container.querySelector('input');
+      if (!clickTarget) return resolve(false);
+
+      const listId = clickTarget.getAttribute('aria-owns') || container.querySelector('[aria-owns]')?.getAttribute('aria-owns');
       clickTarget.click();
       let attempts = 0;
       const interval = setInterval(() => {
         attempts++;
-        const menuItems = Array.from(document.querySelectorAll('.v-menu__content .v-list-item, .v-menu__content .v-list-item__title'));
-        for (const item of menuItems) {
-          if (item.textContent.trim().includes(targetValueText)) {
-            const clickable = item.closest('.v-list-item') || item;
-            clickable.click();
-            clearInterval(interval);
-            return;
-          }
+        let menuItems = [];
+        if (listId) {
+          const listEl = document.getElementById(listId);
+          if (listEl) menuItems = Array.from(listEl.querySelectorAll('.v-list-item'));
         }
-        if (attempts >= 8) clearInterval(interval);
-      }, 150);
-    }
+        if (menuItems.length === 0) {
+          menuItems = Array.from(document.querySelectorAll('.v-menu__content.menuable__content__active .v-list-item, .v-menu__content.menuable__content__active .v-list-item__title'));
+        }
+        if (menuItems.length === 0 && attempts >= 3) {
+          menuItems = Array.from(document.querySelectorAll('.v-menu__content .v-list-item, .v-menu__content .v-list-item__title')).filter(el => el.offsetParent !== null);
+        }
+
+        const exact = menuItems.find(item => normalizeBn(item.textContent) === normTarget);
+        const match = exact || menuItems.find(item => normalizeBn(item.textContent).includes(normTarget));
+        if (match) {
+          const clickable = match.closest('.v-list-item') || match;
+          clickable.click();
+          clearInterval(interval);
+          setTimeout(() => resolve(true), 120);
+          return;
+        }
+        if (attempts >= 8) {
+          clearInterval(interval);
+          resolve(false);
+        }
+      }, 120);
+    });
   }
 
+  let isFillingFormFields = false;
   // Main Autofill Routine
-  function fillFormFields(data) {
-    if (!data) return false;
+  async function fillFormFields(data) {
+    if (!data || isFillingFormFields) return false;
+    isFillingFormFields = true;
     let filledCount = 0;
 
-    // 1. সম্পূর্ণ নাম (বাংলা)
-    if (data.name_bn) {
-      const inp = findInputByLabelText(['সম্পূর্ণ নাম (বাংলা)']) || document.getElementById('input-211');
-      if (setReactiveValue(inp, data.name_bn)) filledCount++;
-    }
+    try {
+      const tab0 = document.querySelector('[data-family-card-tab="0"]');
+      const tab1 = document.querySelector('[data-family-card-tab="1"]');
 
-    // 2. সম্পূর্ণ নাম (ইংরেজি)
-    if (data.name_en) {
-      const inp = findInputByLabelText(['সম্পূর্ণ নাম (ইংরেজি)']) || document.getElementById('input-213');
-      if (setReactiveValue(inp, String(data.name_en).toUpperCase().trim())) filledCount++;
-    }
-
-    // 3. জাতীয় পরিচিতি নম্বর (এনআইডি) - শুধুমাত্র ১০ অথবা ১৭ ডিজিট
-    if (data.nid_number) {
-      let cleanNid = normalizeDigits(data.nid_number).replace(/[^0-9]/g, '');
-      if (cleanNid.length === 13) {
-        const yearMatch = String(data.dob || '').match(/\b(19\d{2}|20\d{2})\b/);
-        if (yearMatch) {
-          cleanNid = yearMatch[1] + cleanNid;
-        }
+      // Canonicalize DOB first so Bengali digits work for 13->17 NID conversion
+      if (data.dob) {
+        data.dob = standardizeDate(data.dob);
       }
-      data.nid_number = cleanNid;
-      const inp = findInputByLabelText(['জাতীয় পরিচিতি নম্বর (এনআইডি)', 'জাতীয় পরিচিতি নম্বর']) || document.getElementById('input-215');
-      if (setReactiveValue(inp, cleanNid)) filledCount++;
-    }
 
-    // 4. জন্ম তারিখ (DD/MM/YYYY)
-    if (data.dob) {
-      const cleanDob = standardizeDate(data.dob);
-      data.dob = cleanDob;
-      const inp = findInputByLabelText(['জন্ম তারিখ']) || document.getElementById('input-221');
-      if (setReactiveValue(inp, cleanDob)) filledCount++;
-    }
+      // 1. সম্পূর্ণ নাম (বাংলা)
+      if (data.name_bn) {
+        const inp = findInputByLabelText(['সম্পূর্ণ নাম (বাংলা)'], tab0) || findInputByLabelText(['সম্পূর্ণ নাম (বাংলা)']) || document.getElementById('input-211');
+        if (setReactiveValue(inp, data.name_bn)) filledCount++;
+      }
 
-    // 5. লিঙ্গ
-    if (data.gender) {
-      selectVuetifyDropdown(['লিঙ্গ'], data.gender);
-    }
+      // 2. সম্পূর্ণ নাম (ইংরেজি)
+      if (data.name_en) {
+        const inp = findInputByLabelText(['সম্পূর্ণ নাম (ইংরেজি)'], tab0) || findInputByLabelText(['সম্পূর্ণ নাম (ইংরেজি)']) || document.getElementById('input-213');
+        if (setReactiveValue(inp, String(data.name_en).toUpperCase().trim())) filledCount++;
+      }
 
-    // 6. বৈবাহিক অবস্থা (Default: বিবাহিত)
-    if (data.marital_status) {
-      selectVuetifyDropdown(['বৈবাহিক অবস্থা'], data.marital_status);
-    }
+      // 3. জাতীয় পরিচিতি নম্বর (এনআইডি) - শুধুমাত্র ১০ অথবা ১৭ ডিজিট
+      if (data.nid_number) {
+        let cleanNid = normalizeDigits(data.nid_number).replace(/[^0-9]/g, '');
+        if (cleanNid.length === 13) {
+          const yearMatch = String(data.dob || '').match(/\b(19\d{2}|20\d{2})\b/);
+          if (yearMatch) {
+            cleanNid = yearMatch[1] + cleanNid;
+          }
+        }
+        data.nid_number = cleanNid;
+        const inp = findInputByLabelText(['জাতীয় পরিচিতি নম্বর (এনআইডি)', 'জাতীয় পরিচিতি নম্বর'], tab0) || findInputByLabelText(['জাতীয় পরিচিতি নম্বর']) || document.getElementById('input-215');
+        if (setReactiveValue(inp, cleanNid)) filledCount++;
+      }
 
-    // 7. ধর্ম (Default: ইসলাম)
-    if (data.religion) {
-      selectVuetifyDropdown(['ধর্ম'], data.religion);
-    }
+      // 4. জন্ম তারিখ (DD/MM/YYYY)
+      if (data.dob) {
+        const inp = findInputByLabelText(['জন্ম তারিখ'], tab0) || findInputByLabelText(['জন্ম তারিখ']) || document.getElementById('input-221');
+        if (setReactiveValue(inp, data.dob)) filledCount++;
+      }
 
-    // 8. Personal details (Father's/Mother's name in Step 1)
-    if (data.father_name_bn) {
-      const inp = findInputByLabelText(['পিতার নাম (বাংলা)']) || document.getElementById('input-1286') || document.getElementById('input-242');
-      if (setReactiveValue(inp, data.father_name_bn)) filledCount++;
-    }
-    if (data.father_name_en) {
-      const fatEn = String(data.father_name_en).toUpperCase().trim();
-      const inp = findInputByLabelText(['পিতার নাম (ইংরেজি)']) || document.getElementById('input-1288') || document.getElementById('input-244');
-      if (setReactiveValue(inp, fatEn)) filledCount++;
-    }
-    if (data.mother_name_bn) {
-      const inp = findInputByLabelText(['মাতার নাম (বাংলা)']) || document.getElementById('input-1290') || document.getElementById('input-246');
-      if (setReactiveValue(inp, data.mother_name_bn)) filledCount++;
-    }
-    if (data.mother_name_en) {
-      const motEn = String(data.mother_name_en).toUpperCase().trim();
-      const inp = findInputByLabelText(['মাতার নাম (ইংরেজি)']) || document.getElementById('input-1292') || document.getElementById('input-248');
-      if (setReactiveValue(inp, motEn)) filledCount++;
-    }
+      // 5. লিঙ্গ
+      if (data.gender) {
+        await selectVuetifyDropdown(['লিঙ্গ'], data.gender, tab0 || document);
+      }
 
-    // 9. মোবাইল নম্বর (ঐচ্ছিক: শুধুমাত্র যদি পাঠানো হয়, অন্যথায় ব্যবহারকারী ম্যানুয়ালি টাইপ করবেন)
-    if (data.mobile_number) {
-      const cleanMobile = normalizeDigits(data.mobile_number);
-      const inp = findInputByLabelText(['মোবাইল নম্বর']) || document.getElementById('input-1294') || document.getElementById('input-250');
-      if (setReactiveValue(inp, cleanMobile)) filledCount++;
+      // 6. বৈবাহিক অবস্থা (Default: বিবাহিত)
+      if (data.marital_status) {
+        await selectVuetifyDropdown(['বৈবাহিক অবস্থা'], data.marital_status, tab1 || document);
+      }
+
+      // 7. ধর্ম (Default: ইসলাম)
+      if (data.religion) {
+        await selectVuetifyDropdown(['ধর্ম'], data.religion, tab1 || document);
+      }
+
+      // 8. Personal details (Father's/Mother's name in Step 1)
+      if (data.father_name_bn) {
+        const inp = findInputByLabelText(['পিতার নাম (বাংলা)'], tab1) || findInputByLabelText(['পিতার নাম (বাংলা)']) || document.getElementById('input-1286') || document.getElementById('input-242');
+        if (setReactiveValue(inp, data.father_name_bn)) filledCount++;
+      }
+      if (data.father_name_en) {
+        const fatEn = String(data.father_name_en).toUpperCase().trim();
+        const inp = findInputByLabelText(['পিতার নাম (ইংরেজি)'], tab1) || findInputByLabelText(['পিতার নাম (ইংরেজি)']) || document.getElementById('input-1288') || document.getElementById('input-244');
+        if (setReactiveValue(inp, fatEn)) filledCount++;
+      }
+      if (data.mother_name_bn) {
+        const inp = findInputByLabelText(['মাতার নাম (বাংলা)'], tab1) || findInputByLabelText(['মাতার নাম (বাংলা)']) || document.getElementById('input-1290') || document.getElementById('input-246');
+        if (setReactiveValue(inp, data.mother_name_bn)) filledCount++;
+      }
+      if (data.mother_name_en) {
+        const motEn = String(data.mother_name_en).toUpperCase().trim();
+        const inp = findInputByLabelText(['মাতার নাম (ইংরেজি)'], tab1) || findInputByLabelText(['মাতার নাম (ইংরেজি)']) || document.getElementById('input-1292') || document.getElementById('input-248');
+        if (setReactiveValue(inp, motEn)) filledCount++;
+      }
+
+      // 9. মোবাইল নম্বর
+      if (data.mobile_number) {
+        const cleanMobile = normalizeDigits(data.mobile_number);
+        const inp = findInputByLabelText(['মোবাইল নম্বর'], tab1) || findInputByLabelText(['মোবাইল নম্বর']) || document.getElementById('input-1294') || document.getElementById('input-250');
+        if (setReactiveValue(inp, cleanMobile)) filledCount++;
+      }
+
+      // Step 4: Collection Address Auto-fill
+      handleSection4Address();
+
+      return filledCount > 0;
+    } finally {
+      setTimeout(() => { isFillingFormFields = false; }, 200);
     }
-
-    // Step 4: Collection Address Auto-fill
-    handleSection4Address();
-
-    // Background Firestore Sync
-    syncToFirestore(data);
-
-    return filledCount > 0;
   }
 
   // --- SECTION 3: IMAGE GUARDIAN & COMPLIANCE SYSTEM ---
@@ -1174,37 +1419,49 @@
             height = Math.round(height * ratio);
           }
 
-          const canvas = document.createElement('canvas');
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          ctx.fillStyle = '#ffffff';
-          ctx.fillRect(0, 0, width, height);
-          ctx.drawImage(img, 0, 0, width, height);
-
           let quality = 0.88;
+          function drawScaled(w, h) {
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, w, h);
+            ctx.drawImage(img, 0, 0, w, h);
+          }
+          drawScaled(width, height);
+
           function tryEncode() {
             canvas.toBlob((blob) => {
               if (!blob) {
                 reject(new Error('Canvas blob generation failed'));
                 return;
               }
-              if (blob.size > maxBytes && quality > 0.42) {
-                quality -= 0.12;
-                tryEncode();
-              } else {
-                const baseName = (file.name || 'image.jpg').replace(/\.[^/.]+$/, "");
-                const optimizedFile = new File([blob], `${baseName}_optimized.jpg`, {
-                  type: 'image/jpeg',
-                  lastModified: Date.now()
-                });
-                resolve({
-                  file: optimizedFile,
-                  width,
-                  height,
-                  sizeKb: Math.round(blob.size / 1024)
-                });
+              if (blob.size > maxBytes) {
+                if (quality > 0.36) {
+                  quality -= 0.12;
+                  tryEncode();
+                  return;
+                }
+                if (width > 240 && height > 180) {
+                  width = Math.round(width * 0.78);
+                  height = Math.round(height * 0.78);
+                  quality = 0.76;
+                  drawScaled(width, height);
+                  tryEncode();
+                  return;
+                }
               }
+              const baseName = (file.name || 'image.jpg').replace(/\.[^/.]+$/, "");
+              const optimizedFile = new File([blob], `${baseName}_optimized.jpg`, {
+                type: 'image/jpeg',
+                lastModified: Date.now()
+              });
+              resolve({
+                file: optimizedFile,
+                width,
+                height,
+                sizeKb: Math.round(blob.size / 1024)
+              });
             }, 'image/jpeg', quality);
           }
           tryEncode();
@@ -1219,7 +1476,7 @@
     if (!inputEl || inputEl.__fcGuardianAttached) return;
     inputEl.__fcGuardianAttached = true;
 
-    inputEl.addEventListener('change', async () => {
+    inputEl.addEventListener('change', async (e) => {
       if (inputEl.__isOptimizing) return;
       const file = inputEl.files?.[0];
       if (!file) {
@@ -1234,6 +1491,7 @@
       const maxBytes = 195 * 1024;
 
       if (file.size > maxBytes || isHouse) {
+        e.stopImmediatePropagation();
         try {
           inputEl.__isOptimizing = true;
           const label = isHouse ? 'বাড়ির ছবি' : (isSig ? 'স্বাক্ষর' : 'আবেদনকারীর ছবি');
@@ -1252,12 +1510,12 @@
         } catch (err) {
           console.warn('[MediaGuardian] Failed to compress image:', err);
         } finally {
-          setTimeout(() => { inputEl.__isOptimizing = false; }, 600);
+          inputEl.__isOptimizing = false;
         }
       }
 
       setTimeout(traceSection3Media, 400);
-    });
+    }, true);
   }
 
   // --- SECTION 3: REAL-TIME HUD & SCRAPING TRACER ---
@@ -1403,8 +1661,8 @@
 
   async function syncMediaToFirestore(mediaData) {
     try {
-      const rawId = scrapeFamilyId() || (lastExtractedData && lastExtractedData.family_id) || '8743033825';
-      const cleanId = normalizeDigits(rawId).replace(/[^0-9]/g, '') || '8743033825';
+      const cleanId = getSafeFamilyDocId(lastExtractedData);
+      if (!cleanId) return;
 
       const fields = {
         section3_verified: { booleanValue: mediaData.completed_count === 3 },
@@ -1481,22 +1739,40 @@
     return { postCodeInput, villageInput };
   }
 
+  function attachSection4EditGuard(inp) {
+    if (!inp || inp.__fcS4GuardAttached) return;
+    inp.__fcS4GuardAttached = true;
+    inp.addEventListener('input', (e) => {
+      if (e.isTrusted) {
+        inp.dataset.fcS4UserEdited = 'true';
+        inp.dataset.fcS4AutoApplied = 'true';
+      }
+    });
+  }
+
   function handleSection4Address() {
     const { postCodeInput, villageInput } = getSection4CollectionInputs();
     if (!postCodeInput && !villageInput) return;
 
     const currentPostcode = localStorage.getItem('fc_default_postcode') || '7721';
-    const villageList = JSON.parse(localStorage.getItem('fc_village_list') || '["বসাকুষ্টিয়া", "চর কলিমহর"]');
+    const rawList = safeJsonParse(localStorage.getItem('fc_village_list'), ['বসাকুষ্টিয়া', 'চর কলিমহর']);
+    const villageList = Array.isArray(rawList) && rawList.length ? rawList : ['বসাকুষ্টিয়া', 'চর কলিমহর'];
     const currentVillage = localStorage.getItem('fc_default_village') || villageList[0] || 'বসাকুষ্টিয়া';
 
-    if (postCodeInput && !postCodeInput.value) {
-      setReactiveValue(postCodeInput, currentPostcode);
-      console.log('[FamilyCard Extension] Section 4 Post Code filled with default:', currentPostcode);
+    if (postCodeInput) {
+      attachSection4EditGuard(postCodeInput);
+      if (!postCodeInput.value && postCodeInput.dataset.fcS4UserEdited !== 'true' && postCodeInput.dataset.fcS4AutoApplied !== 'true') {
+        setReactiveValue(postCodeInput, currentPostcode);
+        postCodeInput.dataset.fcS4AutoApplied = 'true';
+        console.log('[FamilyCard Extension] Section 4 Post Code filled with default:', currentPostcode);
+      }
     }
 
     if (villageInput) {
-      if (!villageInput.value) {
+      attachSection4EditGuard(villageInput);
+      if (!villageInput.value && villageInput.dataset.fcS4UserEdited !== 'true' && villageInput.dataset.fcS4AutoApplied !== 'true') {
         setReactiveValue(villageInput, currentVillage);
+        villageInput.dataset.fcS4AutoApplied = 'true';
         console.log('[FamilyCard Extension] Section 4 Village filled with default:', currentVillage);
       }
       injectInlineVillageToolbar(villageInput, villageList, currentVillage, currentPostcode);
@@ -1511,7 +1787,7 @@
     bar.id = 'fc-inline-village-bar';
     bar.style.cssText = 'margin-bottom: 6px; padding: 6px 10px; background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; font-family: -apple-system, sans-serif; box-shadow: 0 2px 5px rgba(0,0,0,0.05);';
 
-    let optionsHtml = villageList.map(v => `<option value="${v}" ${v === currentVillage ? 'selected' : ''}>${v}</option>`).join('');
+    let optionsHtml = villageList.map(v => `<option value="${escapeHtml(v)}" ${v === currentVillage ? 'selected' : ''}>${escapeHtml(v)}</option>`).join('');
     optionsHtml += '<option value="__ADD_NEW__">➕ নতুন গ্রাম যোগ করুন...</option>';
 
     bar.innerHTML = `
@@ -1522,7 +1798,7 @@
         </select>
       </div>
       <div style="font-size: 11px; color: #15803d; font-weight: 600;">
-        📮 পোস্ট কোড: <b>${currentPostcode}</b> (তথ্য সংগ্রহের ঠিকানা)
+        📮 পোস্ট কোড: <b>${escapeHtml(currentPostcode)}</b> (তথ্য সংগ্রহের ঠিকানা)
       </div>
     `;
 
@@ -1534,13 +1810,17 @@
         const newName = prompt('নতুন গ্রামের নাম লিখুন:');
         if (newName && newName.trim()) {
           const trimmed = newName.trim();
-          let list = JSON.parse(localStorage.getItem('fc_village_list') || '["বসাকুষ্টিয়া", "চর কলিমহর"]');
+          const curList = safeJsonParse(localStorage.getItem('fc_village_list'), ['বসাকুষ্টিয়া', 'চর কলিমহর']);
+          const list = Array.isArray(curList) ? curList : ['বসাকুষ্টিয়া', 'চর কলিমহর'];
           if (!list.includes(trimmed)) {
             list.push(trimmed);
             localStorage.setItem('fc_village_list', JSON.stringify(list));
           }
           localStorage.setItem('fc_default_village', trimmed);
+          delete villageInput.dataset.fcS4UserEdited;
           setReactiveValue(villageInput, trimmed);
+          villageInput.dataset.fcS4AutoApplied = 'true';
+          updateModalVillageSelect();
           showToast(`✅ নতুন গ্রাম "${trimmed}" যোগ করা হয়েছে এবং ডিফল্ট করা হলো!`);
           bar.remove();
           injectInlineVillageToolbar(villageInput, list, trimmed, currentPostcode);
@@ -1550,7 +1830,10 @@
       } else {
         const chosen = sel.value;
         localStorage.setItem('fc_default_village', chosen);
+        delete villageInput.dataset.fcS4UserEdited;
         setReactiveValue(villageInput, chosen);
+        villageInput.dataset.fcS4AutoApplied = 'true';
+        updateModalVillageSelect();
         showToast(`✅ গ্রাম "${chosen}" সেট করা হয়েছে (সব ফর্মে প্রযোজ্য)!`);
       }
     });
@@ -1572,34 +1855,42 @@
   function trackSection5Data() {
     const panel = document.querySelector('[data-family-card-tab="3"]') ||
                   Array.from(document.querySelectorAll('.v-expansion-panel')).find(p => p.textContent.includes('ফ্যামিলি কার্ড অনুযায়ী বিস্তারিত'));
-    
-    const cached = JSON.parse(localStorage.getItem('fc_section5_data') || 'null');
+
+    const familyKey = scrapeFamilyId() || 'default';
+    const rawCache = safeJsonParse(localStorage.getItem('fc_section5_data'), null);
+    const cached = (rawCache && rawCache._familyKey === familyKey) ? rawCache : null;
 
     if (!panel) return cached;
 
     const data = {
-      maleCount: cached ? cached.maleCount : 0,
-      femaleCount: cached ? cached.femaleCount : 0,
-      transCount: cached ? cached.transCount : 0,
-      totalCount: cached ? cached.totalCount : 0,
-      training: cached ? cached.training : '',
-      mfsAccount: cached ? cached.mfsAccount : '',
-      abroadMale: cached ? cached.abroadMale : 0,
-      abroadFemale: cached ? cached.abroadFemale : 0,
-      abroadTrans: cached ? cached.abroadTrans : 0
+      _familyKey: familyKey,
+      maleCount: 0,
+      femaleCount: 0,
+      transCount: 0,
+      totalCount: 0,
+      training: '',
+      mfsAccount: '',
+      abroadMale: 0,
+      abroadFemale: 0,
+      abroadTrans: 0
     };
 
     let hasFoundFields = false;
+    let sawCountFieldsInDom = false;
     const cols = Array.from(panel.querySelectorAll('.col, [class*="col-"]'));
 
     cols.forEach(col => {
       const labelEl = col.querySelector('label');
       if (!labelEl) return;
-      const label = labelEl.textContent.replace(/[\*\s]+/g, ' ').trim();
+      const label = normalizeBn(labelEl.textContent).replace(/[\*\s]+/g, ' ').trim();
+
+      if (/পরিবারে\s*(পুরুষ|নারী|হিজড়া)\s*সদস্য\s*সংখ্যা/i.test(label)) {
+        sawCountFieldsInDom = true;
+      }
 
       const selEl = col.querySelector('.v-select__selection');
       const inputEl = col.querySelector('input:not([type="hidden"])');
-      const rawVal = (selEl ? selEl.textContent : (inputEl ? inputEl.value : '')).trim();
+      const rawVal = normalizeBn(selEl ? selEl.textContent : (inputEl ? inputEl.value : ''));
       if (!rawVal) return;
 
       if (/পরিবারে\s*পুরুষ\s*সদস্য\s*সংখ্যা/i.test(label)) {
@@ -1632,6 +1923,7 @@
       return data;
     }
 
+    if (sawCountFieldsInDom) return data;
     return cached;
   }
 
@@ -1650,22 +1942,35 @@
     let actualTrans = 0;
     const membersDetail = [];
 
-    let applicantGender = (lastExtractedData && lastExtractedData.gender) || '';
+    let applicantGender = normalizeBn((lastExtractedData && lastExtractedData.gender) || '');
     if (!applicantGender) {
-      const gLabels = Array.from(document.querySelectorAll('label')).filter(l => l.textContent.trim().startsWith('লিঙ্গ'));
+      const gLabels = Array.from(document.querySelectorAll('label')).filter(l => normalizeBn(l.textContent).startsWith('লিঙ্গ'));
       for (const gl of gLabels) {
+        if (gl.closest('.fm-member-card')) continue;
         const parent = gl.closest('.col, [class*="col-"]');
         const sel = parent?.querySelector('.v-select__selection');
         if (sel && sel.textContent.trim()) {
-          applicantGender = sel.textContent.trim();
+          applicantGender = normalizeBn(sel.textContent);
           break;
         }
       }
     }
 
-    const maleKeywords = ['পুরুষ', 'স্বামী', 'পুত্র', 'ছেলে', 'পিতা', 'বাবা', 'ভাই', 'দাদা', 'নানা', 'নাতি', 'শ্বশুর', 'চাচা', 'মামা', 'ফুফা', 'খালু', 'দেবর', 'ভাসুর'];
-    const femaleKeywords = ['নারী', 'মহিলা', 'স্ত্রী', 'কন্যা', 'মেয়ে', 'মাতা', 'মা', 'বোন', 'দাদী', 'নানী', 'নাতনি', 'শাশুড়ি', 'চাচী', 'মামী', 'ফুফু', 'খালা', 'ননদ', 'জা'];
-    const transKeywords = ['হিজড়া', 'অন্যান্য'];
+    const maleExactTerms = ['পুরুষ', 'স্বামী', 'পুত্র', 'ছেলে', 'পিতা', 'বাবা', 'ভাই', 'দাদা', 'নানা', 'নাতি', 'শ্বশুর', 'চাচা', 'মামা', 'ফুফা', 'খালু', 'দেবর', 'ভাসুর'];
+    const femaleExactTerms = ['নারী', 'মহিলা', 'স্ত্রী', 'কন্যা', 'মেয়ে', 'মেয়ে', 'মাতা', 'মা', 'বোন', 'দাদী', 'নানী', 'নাতনি', 'শাশুড়ি', 'শাশুড়ি', 'চাচী', 'মামী', 'ফুফু', 'খালা', 'ননদ', 'জা'];
+    const transExactTerms = ['হিজড়া', 'তৃতীয় লিঙ্গ'];
+
+    function matchGenderFromTerm(raw) {
+      const norm = normalizeBn(raw);
+      if (!norm) return '';
+      if (transExactTerms.some(t => norm === t || norm.includes(t))) return 'হিজড়া';
+      if (maleExactTerms.some(t => norm === t)) return 'পুরুষ';
+      if (femaleExactTerms.some(t => norm === t)) return 'নারী';
+      const tokens = norm.split(/[\s\/,\-\(\)]+/).filter(Boolean);
+      if (tokens.some(tk => maleExactTerms.includes(tk))) return 'পুরুষ';
+      if (tokens.some(tk => femaleExactTerms.includes(tk))) return 'নারী';
+      return '';
+    }
 
     memberCards.forEach((card, idx) => {
       const isSelf = card.classList.contains('fm-member-card--self') || (card.textContent.includes('সদস্য - ১') && card.textContent.includes('নিজ'));
@@ -1678,15 +1983,16 @@
           detectedGender = 'নারী';
         } else if (applicantGender.includes('হিজড়া')) {
           detectedGender = 'হিজড়া';
-        } else {
+        } else if (applicantGender.includes('পুরুষ')) {
           detectedGender = 'পুরুষ';
         }
       } else {
         const selects = Array.from(card.querySelectorAll('.v-select'));
         for (const sel of selects) {
           const parentCol = sel.closest('.col, [class*="col-"]') || sel.parentElement;
-          const lbl = parentCol?.querySelector('label')?.textContent || '';
-          const selVal = sel.querySelector('.v-select__selection')?.textContent.trim() || '';
+          const lbl = normalizeBn(parentCol?.querySelector('label')?.textContent || '');
+          const selVal = normalizeBn(sel.querySelector('.v-select__selection')?.textContent || '');
+          if (!selVal) continue;
 
           if (/লিঙ্গ/i.test(lbl)) {
             if (selVal.includes('পুরুষ')) detectedGender = 'পুরুষ';
@@ -1698,21 +2004,12 @@
         }
 
         if (!detectedGender && relationship) {
-          if (maleKeywords.some(k => relationship.includes(k))) detectedGender = 'পুরুষ';
-          else if (femaleKeywords.some(k => relationship.includes(k))) detectedGender = 'নারী';
-          else if (transKeywords.some(k => relationship.includes(k))) detectedGender = 'হিজড়া';
+          detectedGender = matchGenderFromTerm(relationship);
         }
 
         if (!detectedGender) {
-          const cardText = card.innerText || '';
-          for (const kw of femaleKeywords) {
-            if (cardText.includes(kw)) { detectedGender = 'নারী'; break; }
-          }
-          if (!detectedGender) {
-            for (const kw of maleKeywords) {
-              if (cardText.includes(kw)) { detectedGender = 'পুরুষ'; break; }
-            }
-          }
+          const titleText = card.querySelector('.fm-member-title')?.textContent || '';
+          detectedGender = matchGenderFromTerm(titleText);
         }
       }
 
@@ -1918,8 +2215,7 @@
     const scanBtn = banner.querySelector('#fc-s8-scan-member-btn');
     if (scanBtn) {
       scanBtn.onclick = () => {
-        setScanTarget('member');
-        openScannerModal();
+        openMemberScanner(null, 'auto');
       };
     }
     const addBtn = banner.querySelector('#fc-s8-add-member-btn');
@@ -1938,8 +2234,8 @@
 
   async function syncCrossMatchToFirestore(sec5Data, membersData, matchResult) {
     try {
-      const rawId = scrapeFamilyId() || (lastExtractedData && lastExtractedData.family_id) || '8743033825';
-      const cleanId = normalizeDigits(rawId).replace(/[^0-9]/g, '') || '8743033825';
+      const cleanId = getSafeFamilyDocId(lastExtractedData);
+      if (!cleanId) return;
 
       const fields = {
         section5_male_declared: { integerValue: String(sec5Data ? sec5Data.maleCount : 0) },
@@ -2138,93 +2434,125 @@
 
   let isSelectingBranch = false;
   let isSelectingOwnership = false;
+  let isFillingSection6 = false;
 
   function selectVuetifyAutocomplete(container, targetText, fallbackId) {
-    if (!container || !targetText) return;
+    return new Promise((resolve) => {
+      if (!container || !targetText) return resolve(false);
 
-    const currentSel = container.querySelector('.v-select__selection');
-    const inputEl = container.querySelector('input:not([type="hidden"])');
-    const hiddenEl = container.querySelector('input[type="hidden"]');
+      const normTarget = normalizeBn(targetText);
+      const currentSel = container.querySelector('.v-select__selection');
+      const inputEl = container.querySelector('input:not([type="hidden"])');
+      const hiddenEl = container.querySelector('input[type="hidden"]');
 
-    if (currentSel && (currentSel.textContent.includes('মাছপাড়া') || currentSel.textContent.includes('মাছপাড়া'))) return;
-    if (inputEl && inputEl.value && (inputEl.value.includes('মাছপাড়া') || inputEl.value.includes('মাছপাড়া'))) return;
-    if (hiddenEl && fallbackId && hiddenEl.value === String(fallbackId)) return;
+      if (currentSel && normalizeBn(currentSel.textContent).includes(normTarget)) return resolve(true);
+      if (inputEl && inputEl.value && normalizeBn(inputEl.value).includes(normTarget)) return resolve(true);
+      if (hiddenEl && fallbackId && hiddenEl.value === String(fallbackId)) return resolve(true);
 
-    if (isSelectingBranch) return;
-    isSelectingBranch = true;
+      if (isSelectingBranch) return resolve(false);
+      isSelectingBranch = true;
 
-    try {
-      const clickSlot = container.querySelector('.v-input__slot') || inputEl;
-      if (clickSlot) clickSlot.click();
+      try {
+        const clickSlot = container.querySelector('.v-input__slot') || inputEl;
+        const listId = clickSlot?.getAttribute('aria-owns') || container.querySelector('[aria-owns]')?.getAttribute('aria-owns');
+        if (clickSlot) clickSlot.click();
 
-      if (inputEl) {
-        inputEl.focus();
-        setReactiveValue(inputEl, targetText);
-        inputEl.dispatchEvent(new Event('input', { bubbles: true }));
-        inputEl.dispatchEvent(new Event('change', { bubbles: true }));
-      }
+        if (inputEl) {
+          inputEl.focus();
+          setReactiveValue(inputEl, targetText);
+          inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+          inputEl.dispatchEvent(new Event('change', { bubbles: true }));
+        }
 
-      let attempts = 0;
-      const pollInterval = setInterval(() => {
-        attempts++;
-        const menuItems = Array.from(document.querySelectorAll('.v-menu__content .v-list-item, .v-autocomplete__content .v-list-item'));
-        let found = false;
+        let attempts = 0;
+        const pollInterval = setInterval(() => {
+          attempts++;
+          let menuItems = [];
+          if (listId) {
+            const listEl = document.getElementById(listId);
+            if (listEl) menuItems = Array.from(listEl.querySelectorAll('.v-list-item'));
+          }
+          if (menuItems.length === 0) {
+            menuItems = Array.from(document.querySelectorAll('.v-menu__content.menuable__content__active .v-list-item, .v-autocomplete__content.menuable__content__active .v-list-item'));
+          }
+          if (menuItems.length === 0 && attempts >= 3) {
+            menuItems = Array.from(document.querySelectorAll('.v-menu__content .v-list-item, .v-autocomplete__content .v-list-item')).filter(el => el.offsetParent !== null);
+          }
 
-        for (const item of menuItems) {
-          const text = item.textContent || '';
-          if (text.includes('মাছপাড়া') || text.includes('মাছপাড়া') || text.includes(targetText)) {
-            const clickable = item.closest('.v-list-item') || item;
+          const exact = menuItems.find(item => normalizeBn(item.textContent) === normTarget);
+          const match = exact || menuItems.find(item => normalizeBn(item.textContent).includes(normTarget));
+
+          if (match) {
+            const clickable = match.closest('.v-list-item') || match;
             clickable.click();
-            found = true;
             clearInterval(pollInterval);
-            console.log('[FamilyCard Extension] Selected branch:', text.trim());
-            showToast(`✅ ব্যাংক শাখা "${text.trim()}" নির্বাচিত হয়েছে!`);
-            setTimeout(() => { isSelectingBranch = false; }, 500);
-            break;
+            console.log('[FamilyCard Extension] Selected branch:', normalizeBn(match.textContent));
+            showToast(`✅ ব্যাংক শাখা "${normalizeBn(match.textContent)}" নির্বাচিত হয়েছে!`);
+            setTimeout(() => { isSelectingBranch = false; resolve(true); }, 350);
+            return;
           }
-        }
 
-        if (found || attempts >= 8) {
-          clearInterval(pollInterval);
-          if (!found && fallbackId && hiddenEl) {
-            setReactiveValue(hiddenEl, String(fallbackId));
+          if (attempts >= 8) {
+            clearInterval(pollInterval);
+            if (fallbackId && hiddenEl) {
+              setReactiveValue(hiddenEl, String(fallbackId));
+            }
+            setTimeout(() => { isSelectingBranch = false; resolve(false); }, 350);
           }
-          setTimeout(() => { isSelectingBranch = false; }, 600);
-        }
-      }, 150);
-    } catch (e) {
-      console.warn('[FamilyCard Extension] Error in selectVuetifyAutocomplete:', e);
-      isSelectingBranch = false;
-    }
+        }, 140);
+      } catch (e) {
+        console.warn('[FamilyCard Extension] Error in selectVuetifyAutocomplete:', e);
+        isSelectingBranch = false;
+        resolve(false);
+      }
+    });
   }
 
   function selectVuetifyDropdown(container, targetText, fallbackId) {
-    if (!container || !targetText) return;
+    return new Promise((resolve) => {
+      if (!container || !targetText) return resolve(false);
 
-    const currentSel = container.querySelector('.v-select__selection');
-    if (currentSel && currentSel.textContent.trim().includes(targetText)) return;
+      const normTarget = normalizeBn(targetText);
+      const currentSel = container.querySelector('.v-select__selection');
+      if (currentSel && normalizeBn(currentSel.textContent).includes(normTarget)) return resolve(true);
 
-    if (isSelectingOwnership) return;
-    isSelectingOwnership = true;
+      if (isSelectingOwnership) return resolve(false);
+      isSelectingOwnership = true;
 
-    try {
-      const clickTarget = container.querySelector('.v-input__slot') || container.querySelector('input');
-      if (clickTarget) {
+      try {
+        const clickTarget = container.querySelector('.v-input__slot') || container.querySelector('input');
+        if (!clickTarget) {
+          isSelectingOwnership = false;
+          return resolve(false);
+        }
+
+        const listId = clickTarget.getAttribute('aria-owns') || container.querySelector('[aria-owns]')?.getAttribute('aria-owns');
         clickTarget.click();
         let attempts = 0;
         const interval = setInterval(() => {
           attempts++;
-          const items = Array.from(document.querySelectorAll('.v-menu__content .v-list-item'));
-          for (const it of items) {
-            if (it.textContent.trim().includes(targetText)) {
-              const clickable = it.closest('.v-list-item') || it;
-              clickable.click();
-              clearInterval(interval);
-              console.log('[FamilyCard Extension] Selected ownership:', targetText);
-              showToast(`✅ অ্যাকাউন্টের মালিকানা "${targetText}" নির্বাচিত হয়েছে!`);
-              setTimeout(() => { isSelectingOwnership = false; }, 400);
-              return;
-            }
+          let items = [];
+          if (listId) {
+            const listEl = document.getElementById(listId);
+            if (listEl) items = Array.from(listEl.querySelectorAll('.v-list-item'));
+          }
+          if (items.length === 0) {
+            items = Array.from(document.querySelectorAll('.v-menu__content.menuable__content__active .v-list-item'));
+          }
+          if (items.length === 0 && attempts >= 3) {
+            items = Array.from(document.querySelectorAll('.v-menu__content .v-list-item')).filter(el => el.offsetParent !== null);
+          }
+
+          const exact = items.find(it => normalizeBn(it.textContent) === normTarget);
+          const match = exact || items.find(it => normalizeBn(it.textContent).includes(normTarget));
+          if (match) {
+            const clickable = match.closest('.v-list-item') || match;
+            clickable.click();
+            clearInterval(interval);
+            console.log('[FamilyCard Extension] Selected ownership:', targetText);
+            showToast(`✅ অ্যাকাউন্টের মালিকানা "${targetText}" নির্বাচিত হয়েছে!`);
+            setTimeout(() => { isSelectingOwnership = false; resolve(true); }, 300);
+            return;
           }
           if (attempts >= 8) {
             clearInterval(interval);
@@ -2232,16 +2560,15 @@
             if (fallbackId && hiddenEl) {
               setReactiveValue(hiddenEl, String(fallbackId));
             }
-            setTimeout(() => { isSelectingOwnership = false; }, 400);
+            setTimeout(() => { isSelectingOwnership = false; resolve(false); }, 300);
           }
-        }, 150);
-      } else {
+        }, 130);
+      } catch (e) {
+        console.warn('[FamilyCard Extension] Error in selectVuetifyDropdown:', e);
         isSelectingOwnership = false;
+        resolve(false);
       }
-    } catch (e) {
-      console.warn('[FamilyCard Extension] Error in selectVuetifyDropdown:', e);
-      isSelectingOwnership = false;
-    }
+    });
   }
 
   function injectSection6Toolbar(panel, currentOwnership, currentBranch) {
@@ -2254,11 +2581,12 @@
     bar.style.cssText = 'margin-bottom: 14px; padding: 10px 14px; background: #f0f9ff; border: 1.5px solid #0284c7; border-radius: 10px; font-family: -apple-system, sans-serif; box-shadow: 0 2px 6px rgba(0,0,0,0.05); font-size: 12px;';
 
     const ownershipOptions = ['নিজ', 'পিতা', 'মাতা', 'স্বামী', 'স্ত্রী', 'অভিভাবক'];
-    let ownHtml = ownershipOptions.map(o => `<option value="${o}" ${o === currentOwnership ? 'selected' : ''}>${o}</option>`).join('');
+    let ownHtml = ownershipOptions.map(o => `<option value="${escapeHtml(o)}" ${o === currentOwnership ? 'selected' : ''}>${escapeHtml(o)}</option>`).join('');
 
-    const branchList = JSON.parse(localStorage.getItem('fc_branch_list') || '["মাছপাড়া শাখা", "পাংশা শাখা", "রাজবাড়ী শাখা"]');
-    if (!branchList.includes(currentBranch)) branchList.unshift(currentBranch);
-    let branchHtml = branchList.map(b => `<option value="${b}" ${b === currentBranch ? 'selected' : ''}>${b}</option>`).join('');
+    const rawBranchList = safeJsonParse(localStorage.getItem('fc_branch_list'), ['মাছপাড়া শাখা', 'পাংশা শাখা', 'রাজবাড়ী শাখা']);
+    const branchList = Array.isArray(rawBranchList) && rawBranchList.length ? [...rawBranchList] : ['মাছপাড়া শাখা', 'পাংশা শাখা', 'রাজবাড়ী শাখা'];
+    if (currentBranch && !branchList.some(b => normalizeBn(b) === normalizeBn(currentBranch))) branchList.unshift(currentBranch);
+    let branchHtml = branchList.map(b => `<option value="${escapeHtml(b)}" ${normalizeBn(b) === normalizeBn(currentBranch) ? 'selected' : ''}>${escapeHtml(b)}</option>`).join('');
     branchHtml += '<option value="__ADD_NEW_BRANCH__">➕ নতুন শাখা লিখুন...</option>';
 
     bar.innerHTML = `
@@ -2292,27 +2620,34 @@
     wrap.insertBefore(bar, wrap.firstChild);
 
     const ownSelect = bar.querySelector('#fc-s6-ownership-select');
-    ownSelect.addEventListener('change', () => {
+    ownSelect.addEventListener('change', async () => {
       const val = ownSelect.value;
       localStorage.setItem('fc_default_account_ownership', val);
       const elems = getSection6BankElements();
-      if (elems?.ownershipSelect) selectVuetifyDropdown(elems.ownershipSelect, val, '142');
+      if (elems?.ownershipSelect) {
+        delete elems.ownershipSelect.dataset.fcS6UserEdited;
+        await selectVuetifyDropdown(elems.ownershipSelect, val, normalizeBn(val) === 'নিজ' ? '142' : null);
+      }
     });
 
     const branchSelectEl = bar.querySelector('#fc-s6-branch-select');
-    branchSelectEl.addEventListener('change', () => {
+    branchSelectEl.addEventListener('change', async () => {
       if (branchSelectEl.value === '__ADD_NEW_BRANCH__') {
         const newBranch = prompt('নতুন ব্যাংক শাখার নাম লিখুন (যেমন: মাছপাড়া শাখা):');
         if (newBranch && newBranch.trim()) {
           const trimmed = newBranch.trim();
-          let list = JSON.parse(localStorage.getItem('fc_branch_list') || '["মাছপাড়া শাখা", "পাংশা শাখা", "রাজবাড়ী শাখা"]');
+          const curList = safeJsonParse(localStorage.getItem('fc_branch_list'), ['মাছপাড়া শাখা', 'পাংশা শাখা', 'রাজবাড়ী শাখা']);
+          const list = Array.isArray(curList) ? curList : ['মাছপাড়া শাখা', 'পাংশা শাখা', 'রাজবাড়ী শাখা'];
           if (!list.includes(trimmed)) list.push(trimmed);
           localStorage.setItem('fc_branch_list', JSON.stringify(list));
           localStorage.setItem('fc_default_bank_branch', trimmed);
           bar.remove();
           injectSection6Toolbar(panel, ownSelect.value, trimmed);
           const elems = getSection6BankElements();
-          if (elems?.branchSelect) selectVuetifyAutocomplete(elems.branchSelect, trimmed, '7680');
+          if (elems?.branchSelect) {
+            delete elems.branchSelect.dataset.fcS6UserEdited;
+            await selectVuetifyAutocomplete(elems.branchSelect, trimmed, normalizeBn(trimmed).includes('মাছপাড়া') ? '7680' : null);
+          }
         } else {
           branchSelectEl.value = currentBranch;
         }
@@ -2320,25 +2655,32 @@
         const val = branchSelectEl.value;
         localStorage.setItem('fc_default_bank_branch', val);
         const elems = getSection6BankElements();
-        if (elems?.branchSelect) selectVuetifyAutocomplete(elems.branchSelect, val, '7680');
+        if (elems?.branchSelect) {
+          delete elems.branchSelect.dataset.fcS6UserEdited;
+          await selectVuetifyAutocomplete(elems.branchSelect, val, normalizeBn(val).includes('মাছপাড়া') ? '7680' : null);
+        }
       }
     });
 
     const btnAuto = bar.querySelector('#fc-s6-auto-fill-btn');
-    btnAuto.addEventListener('click', () => {
+    btnAuto.addEventListener('click', async () => {
       const elems = getSection6BankElements();
       if (!elems) return;
       const own = localStorage.getItem('fc_default_account_ownership') || 'নিজ';
       const br = localStorage.getItem('fc_default_bank_branch') || 'মাছপাড়া শাখা';
-      if (elems.ownershipSelect) selectVuetifyDropdown(elems.ownershipSelect, own, '142');
-      setTimeout(() => {
-        if (elems.branchSelect) selectVuetifyAutocomplete(elems.branchSelect, br, '7680');
-      }, 300);
-      showToast('⚡ ব্যাংক তথ্য অটো-সিলেক্ট চালু করা হয়েছে...');
+      if (elems.ownershipSelect) {
+        delete elems.ownershipSelect.dataset.fcS6UserEdited;
+        await selectVuetifyDropdown(elems.ownershipSelect, own, normalizeBn(own) === 'নিজ' ? '142' : null);
+      }
+      if (elems.branchSelect) {
+        delete elems.branchSelect.dataset.fcS6UserEdited;
+        await selectVuetifyAutocomplete(elems.branchSelect, br, normalizeBn(br).includes('মাছপাড়া') ? '7680' : null);
+      }
+      showToast('⚡ ব্যাংক তথ্য অটো-সিলেক্ট সম্পন্ন হয়েছে!');
     });
   }
 
-  function handleSection6Bank() {
+  async function handleSection6Bank() {
     const elems = getSection6BankElements();
     if (!elems || !elems.panel) return;
 
@@ -2353,21 +2695,36 @@
 
     injectSection6Toolbar(elems.panel, currentOwnership, currentBranch);
 
-    if (elems.ownershipSelect) {
-      const curOwn = elems.ownershipSelect.querySelector('.v-select__selection')?.textContent.trim();
-      if (!curOwn) {
-        selectVuetifyDropdown(elems.ownershipSelect, currentOwnership, '142');
+    [elems.ownershipSelect, elems.branchSelect].forEach(el => {
+      if (el && !el.__fcS6GuardAttached) {
+        el.__fcS6GuardAttached = true;
+        el.addEventListener('mousedown', (e) => {
+          if (e.isTrusted) el.dataset.fcS6UserEdited = 'true';
+        }, true);
       }
-    }
+    });
 
-    if (elems.branchSelect) {
-      const curBranch = elems.branchSelect.querySelector('.v-select__selection')?.textContent.trim() ||
-                        elems.branchSelect.querySelector('input:not([type="hidden"])')?.value.trim();
-      const hiddenVal = elems.branchSelect.querySelector('input[type="hidden"]')?.value;
-
-      if (!curBranch && !hiddenVal) {
-        selectVuetifyAutocomplete(elems.branchSelect, currentBranch, '7680');
+    if (isFillingSection6) return;
+    isFillingSection6 = true;
+    try {
+      if (elems.ownershipSelect && elems.ownershipSelect.dataset.fcS6UserEdited !== 'true') {
+        const curOwn = elems.ownershipSelect.querySelector('.v-select__selection')?.textContent.trim();
+        if (!curOwn) {
+          await selectVuetifyDropdown(elems.ownershipSelect, currentOwnership, normalizeBn(currentOwnership) === 'নিজ' ? '142' : null);
+        }
       }
+
+      if (elems.branchSelect && elems.branchSelect.dataset.fcS6UserEdited !== 'true') {
+        const curBranch = elems.branchSelect.querySelector('.v-select__selection')?.textContent.trim() ||
+                          elems.branchSelect.querySelector('input:not([type="hidden"])')?.value.trim();
+        const hiddenVal = elems.branchSelect.querySelector('input[type="hidden"]')?.value;
+
+        if (!curBranch && !hiddenVal) {
+          await selectVuetifyAutocomplete(elems.branchSelect, currentBranch, normalizeBn(currentBranch).includes('মাছপাড়া') ? '7680' : null);
+        }
+      }
+    } finally {
+      setTimeout(() => { isFillingSection6 = false; }, 350);
     }
   }
 
@@ -2392,17 +2749,29 @@
   let isFillingSection7 = false;
 
   function normOptionText(s) {
-    return String(s || '').replace(/[\/\sঁ]+/g, '').trim();
+    return normalizeBn(s).replace(/[\/\s\u0981]+/g, '').trim();
   }
 
   function selectSingleVuetifyOption(col, candidates) {
     return new Promise((resolve) => {
       if (!col || !candidates || candidates.length === 0) return resolve(false);
 
+      const hasVSelect = !!col.querySelector('.v-select');
+      const plainInput = !hasVSelect ? col.querySelector('input:not([type="hidden"]):not([disabled])') : null;
+      if (plainInput) {
+        if (plainInput.value && candidates.some(c => normOptionText(plainInput.value) === normOptionText(c))) {
+          col.dataset.fcS7DefaultApplied = 'true';
+          return resolve(true);
+        }
+        setReactiveValue(plainInput, candidates[0]);
+        col.dataset.fcS7DefaultApplied = 'true';
+        return resolve(true);
+      }
+
       const currentSel = col.querySelector('.v-select__selection');
       const curText = currentSel ? currentSel.textContent.trim() : '';
 
-      if (curText && candidates.some(c => curText === c || normOptionText(curText) === normOptionText(c))) {
+      if (curText && candidates.some(c => normalizeBn(curText) === normalizeBn(c) || normOptionText(curText) === normOptionText(c))) {
         col.dataset.fcS7DefaultApplied = 'true';
         return resolve(true);
       }
@@ -2413,6 +2782,7 @@
       const listId = slot.getAttribute('aria-owns') || col.querySelector('[aria-owns]')?.getAttribute('aria-owns');
       slot.click();
 
+      const normCands = candidates.map(c => normalizeBn(c));
       let attempts = 0;
       const timer = setInterval(() => {
         attempts++;
@@ -2422,16 +2792,19 @@
           if (listEl) items = Array.from(listEl.querySelectorAll('.v-list-item'));
         }
         if (items.length === 0) {
-          items = Array.from(document.querySelectorAll('.v-menu__content.menuable__content__active .v-list-item, .v-menu__content .v-list-item'));
+          items = Array.from(document.querySelectorAll('.v-menu__content.menuable__content__active .v-list-item'));
+        }
+        if (items.length === 0 && attempts >= 3) {
+          items = Array.from(document.querySelectorAll('.v-menu__content .v-list-item')).filter(el => el.offsetParent !== null);
         }
 
         if (items.length > 0) {
-          let matchedItem = items.find(it => candidates.some(c => it.textContent.trim() === c));
+          let matchedItem = items.find(it => normCands.some(c => normalizeBn(it.textContent) === c));
           if (!matchedItem) {
             matchedItem = items.find(it => candidates.some(c => normOptionText(it.textContent) === normOptionText(c)));
           }
           if (!matchedItem) {
-            matchedItem = items.find(it => candidates.some(c => c.length > 2 && it.textContent.trim().includes(c)));
+            matchedItem = items.find(it => normCands.some(c => c.length > 2 && normalizeBn(it.textContent).includes(c)));
           }
 
           if (matchedItem) {
@@ -2454,7 +2827,7 @@
   }
 
   function getSection7Rules(sec5Data) {
-    const customDefaults = JSON.parse(localStorage.getItem('fc_section7_custom_defaults') || '{}');
+    const customDefaults = safeJsonParse(localStorage.getItem('fc_section7_custom_defaults'), {});
     const totalMembers = (sec5Data && sec5Data.totalCount > 0) ? sec5Data.totalCount : 0;
     const abroadTotal = sec5Data
       ? ((sec5Data.abroadMale || 0) + (sec5Data.abroadFemale || 0) + (sec5Data.abroadTrans || 0))
@@ -2619,7 +2992,7 @@
     saveBtn.onclick = () => {
       const rules = getSection7Rules(sec5Data);
       const cols = Array.from(panel.querySelectorAll('.col, [class*="col-"]'));
-      const custom = JSON.parse(localStorage.getItem('fc_section7_custom_defaults') || '{}');
+      const custom = safeJsonParse(localStorage.getItem('fc_section7_custom_defaults'), {});
       cols.forEach(col => {
         const lbl = col.querySelector('label')?.textContent.replace(/[\*\s]+/g, ' ').trim() || '';
         if (!lbl) return;
@@ -2685,8 +3058,10 @@
         }, true);
       }
 
-      const curVal = col.querySelector('.v-select__selection')?.textContent.trim() || '';
-      const alreadyMatches = curVal && rule.candidates.some(c => curVal === c || normOptionText(curVal) === normOptionText(c));
+      const curSelVal = col.querySelector('.v-select__selection')?.textContent.trim() || '';
+      const curPlainVal = !col.querySelector('.v-select') ? (col.querySelector('input:not([type="hidden"])')?.value.trim() || '') : '';
+      const curVal = curSelVal || curPlainVal;
+      const alreadyMatches = curVal && rule.candidates.some(c => normalizeBn(curVal) === normalizeBn(c) || normOptionText(curVal) === normOptionText(c));
 
       if (forceAll) {
         if (!alreadyMatches) {
@@ -2788,23 +3163,23 @@
       other: null
     };
 
-    const rows = Array.from(panel.querySelectorAll('.row.row--dense, .row'));
-    for (const r of rows) {
-      const textDiv = r.querySelector('.text-body-2.font-weight-medium, .font-weight-medium, label');
-      if (!textDiv) continue;
-      const txt = textDiv.textContent || '';
-      const inp = r.querySelector('input[type="number"], input');
+    const labelNodes = Array.from(panel.querySelectorAll('.text-body-2.font-weight-medium, .font-weight-medium, label'));
+    for (const textDiv of labelNodes) {
+      const r = textDiv.closest('.row');
+      if (!r) continue;
+      const txt = normalizeBn(textDiv.textContent || '');
+      const inp = r.querySelector('input[type="number"], input:not([type="hidden"])');
       if (!inp) continue;
 
-      if (txt.includes('খাদ্য') || txt.includes('ভরণপোষণ')) fields.food = inp;
-      else if (txt.includes('চিকিৎসা')) fields.health = inp;
-      else if (txt.includes('শিক্ষা')) fields.education = inp;
-      else if (txt.includes('বাসস্থান') || txt.includes('মেরামত')) fields.housing = inp;
-      else if (txt.includes('পোশাক') || txt.includes('বস্ত্র') || txt.includes('কাপড়') || txt.includes('কাপড়')) fields.clothing = inp;
-      else if (txt.includes('আয়বর্ধক') || txt.includes('আয়বর্ধক')) fields.income = inp;
-      else if (txt.includes('সঞ্চয়') || txt.includes('সঞ্চয়')) fields.savings = inp;
-      else if (txt.includes('ঋণ')) fields.debt = inp;
-      else if (txt.includes('অন্যান্য')) fields.other = inp;
+      if (!fields.food && (txt.includes('খাদ্য') || txt.includes('ভরণপোষণ'))) fields.food = inp;
+      else if (!fields.health && txt.includes('চিকিৎসা')) fields.health = inp;
+      else if (!fields.education && txt.includes('শিক্ষা')) fields.education = inp;
+      else if (!fields.housing && (txt.includes('বাসস্থান') || txt.includes('মেরামত'))) fields.housing = inp;
+      else if (!fields.clothing && (txt.includes('পোশাক') || txt.includes('বস্ত্র') || txt.includes('কাপড়'))) fields.clothing = inp;
+      else if (!fields.income && txt.includes('আয়বর্ধক')) fields.income = inp;
+      else if (!fields.savings && txt.includes('সঞ্চয়')) fields.savings = inp;
+      else if (!fields.debt && txt.includes('ঋণ')) fields.debt = inp;
+      else if (!fields.other && txt.includes('অন্যান্য')) fields.other = inp;
     }
 
     const count = Object.values(fields).filter(Boolean).length;
@@ -2815,6 +3190,7 @@
   function scrapeFamilyConditionsForAI() {
     let totalMembers = 7;
     let childrenCount = 2;
+    let explicitChildrenCount = false;
     let hasDisabledOrElderly = false;
     let isAgriLabor = true;
     let hasRemittance = false;
@@ -2837,33 +3213,59 @@
         const selVal = childLbl.closest('.col, [class*="col-"]')?.querySelector('.v-select__selection')?.textContent.trim();
         if (selVal) {
           const num = parseInt(normalizeDigits(selVal).replace(/[^0-9]/g, ''), 10);
-          if (!isNaN(num)) childrenCount = num;
+          if (!isNaN(num)) {
+            childrenCount = num;
+            explicitChildrenCount = true;
+          }
         }
       }
 
       const memLbl = s7Labels.find(l => l.textContent.includes('সদস্য সংখ্যা') && !l.textContent.includes('শিশু'));
       if (memLbl) {
-        const selVal = memLbl.closest('.col, [class*="col-"]')?.querySelector('.v-select__selection')?.textContent.trim();
+        const col = memLbl.closest('.col, [class*="col-"]');
+        const selVal = col?.querySelector('.v-select__selection')?.textContent.trim() || col?.querySelector('input:not([type="hidden"])')?.value.trim();
         if (selVal) {
           const num = parseInt(normalizeDigits(selVal).replace(/[^0-9]/g, ''), 10);
           if (!isNaN(num) && num > 0) totalMembers = num;
         }
       }
 
-      const laborLbl = s7Labels.find(l => l.textContent.includes('শ্রমিক হিসেবে নিয়োজিত'));
+      const laborLbl = s7Labels.find(l => normalizeBn(l.textContent).includes('শ্রমিক হিসেবে নিয়োজিত'));
       if (laborLbl) {
-        const selVal = laborLbl.closest('.col, [class*="col-"]')?.querySelector('.v-select__selection')?.textContent.trim();
+        const selVal = normalizeBn(laborLbl.closest('.col, [class*="col-"]')?.querySelector('.v-select__selection')?.textContent || '');
         if (selVal && !selVal.includes('কৃষি')) isAgriLabor = false;
       }
     }
 
-    // Check Tab 6 member cards for disability or elderly
+    // Check Tab 6 member cards accurately via select values and DOBs
     const memberCards = Array.from(document.querySelectorAll('.fm-members-stack .fm-member-card, [data-family-card-tab="6"] .fm-member-card'));
+    let dobChildrenCount = 0;
+    const nowYear = new Date().getFullYear();
+
     for (const card of memberCards) {
-      const txt = card.textContent || '';
-      if (txt.includes('প্রতিবন্ধী') && !txt.includes('প্রতিবন্ধী নন') && !txt.includes('না')) {
-        hasDisabledOrElderly = true;
+      const selects = Array.from(card.querySelectorAll('.v-select'));
+      for (const sel of selects) {
+        const lbl = normalizeBn(sel.closest('.col, [class*="col-"]')?.querySelector('label')?.textContent || '');
+        const selVal = normalizeBn(sel.querySelector('.v-select__selection')?.textContent || '');
+        if (!selVal) continue;
+        if (/প্রতিবন্ধিতা|প্রতিবন্ধী/.test(lbl)) {
+          if (selVal !== 'না' && !selVal.includes('প্রতিবন্ধী নন') && !selVal.includes('নাই')) {
+            hasDisabledOrElderly = true;
+          }
+        }
       }
+
+      const dobLbl = Array.from(card.querySelectorAll('label')).find(l => normalizeBn(l.textContent).includes('জন্ম তারিখ'));
+      const dobVal = dobLbl?.closest('.col, [class*="col-"]')?.querySelector('input:not([type="hidden"])')?.value || '';
+      const ym = normalizeDigits(dobVal).match(/\b(19\d{2}|20\d{2})\b/);
+      if (ym) {
+        const age = nowYear - parseInt(ym[1], 10);
+        if (age >= 60) hasDisabledOrElderly = true;
+        if (age >= 0 && age < 18) dobChildrenCount++;
+      }
+    }
+    if (!explicitChildrenCount && dobChildrenCount > 0) {
+      childrenCount = dobChildrenCount;
     }
 
     return { totalMembers, childrenCount, hasDisabledOrElderly, isAgriLabor, hasRemittance };
@@ -2979,7 +3381,8 @@
       }
     }
     updateSection9HUD(fields);
-    syncMoneyDistributionToFirestore(dist);
+    const syncedDist = readCurrentMoneyDistribution(fields);
+    syncMoneyDistributionToFirestore(syncedDist);
     if (isUserAction) {
       showToast('✅ অর্থ বরাদ্দ ২৫০০ টাকা সফলভাবে পূরণ করা হয়েছে!');
     }
@@ -2987,8 +3390,8 @@
 
   async function syncMoneyDistributionToFirestore(dist) {
     try {
-      const rawId = scrapeFamilyId() || (lastExtractedData && lastExtractedData.family_id) || '8743033825';
-      const cleanId = normalizeDigits(rawId).replace(/[^0-9]/g, '') || '8743033825';
+      const cleanId = getSafeFamilyDocId(lastExtractedData);
+      if (!cleanId) return;
 
       const fields = {
         money_food: { integerValue: String(dist.food || 0) },
@@ -3153,17 +3556,21 @@
       showToast('💾 এই ২৫০০ টাকা বণ্টনটি ভবিষ্যৎ সকল ফ্যামিলি কার্ডের জন্য ডিফল্ট সেভ করা হয়েছে!');
     });
 
-    // Attach listeners to fields for live typing HUD update
+    // Attach listeners to fields for live typing HUD update (debounced Firestore sync)
+    let moneySyncTimer = null;
     for (const inp of Object.values(fields)) {
       if (!inp || inp.__fcMoneyListenerAttached) continue;
       inp.__fcMoneyListenerAttached = true;
       inp.addEventListener('input', (e) => {
         if (e.isTrusted) inp.dataset.fcMoneyUserEdited = 'true';
         updateSection9HUD(fields);
-        const cur = readCurrentMoneyDistribution(fields);
-        if (cur.total === 2500) {
-          syncMoneyDistributionToFirestore(cur);
-        }
+        clearTimeout(moneySyncTimer);
+        moneySyncTimer = setTimeout(() => {
+          const cur = readCurrentMoneyDistribution(fields);
+          if (cur.total === 2500) {
+            syncMoneyDistributionToFirestore(cur);
+          }
+        }, 700);
       });
       inp.addEventListener('change', () => {
         updateSection9HUD(fields);
@@ -3197,12 +3604,9 @@
       isFillingSection9 = true;
       try {
         let targetDist = BENCHMARK_MONEY_DISTRIBUTION;
-        const savedCustom = localStorage.getItem('fc_custom_money_dist');
-        if (savedCustom) {
-          try {
-            const parsed = JSON.parse(savedCustom);
-            if (parsed && typeof parsed === 'object') targetDist = parsed;
-          } catch (_) {}
+        const parsed = safeJsonParse(localStorage.getItem('fc_custom_money_dist'), null);
+        if (parsed && typeof parsed === 'object') {
+          targetDist = parsed;
         } else {
           // Dynamic AI analysis based on current family conditions
           const cond = scrapeFamilyConditionsForAI();
@@ -3218,17 +3622,17 @@
   }
 
 
-  // Auto-fill Step 1 (ব্যক্তিগত তথ্য) when the user advances or switches to Tab 1
+  // Auto-fill Step 1 (ব্যক্তিগত তথ্য) and Sections 3-9 safely with debounced MutationObserver
   function setupStepObserver() {
-    let lastFilledTab = -1;
-
-    const observer = new MutationObserver(() => {
+    function runExtensionAutomations() {
       if (lastExtractedData) {
         const tab1 = document.querySelector('[data-family-card-tab="1"]');
-        if (tab1 && tab1.style.display !== 'none') {
-          const fatherInput = findInputByLabelText(['পিতার নাম (বাংলা)']) || document.getElementById('input-1286');
-          if (fatherInput && !fatherInput.value && lastFilledTab !== 1) {
-            lastFilledTab = 1;
+        const isTab1Visible = !tab1 || tab1.style.display !== 'none';
+        const stepSig = `${scrapeFamilyId() || ''}_${lastExtractedData.nid_number || lastExtractedData.doc_number || ''}`;
+        if (isTab1Visible && window.__fcStep1FilledKey !== stepSig) {
+          const fatherInput = findInputByLabelText(['পিতার নাম (বাংলা)'], tab1) || findInputByLabelText(['পিতার নাম (বাংলা)']) || document.getElementById('input-1286');
+          if (fatherInput && !fatherInput.value) {
+            window.__fcStep1FilledKey = stepSig;
             fillFormFields(lastExtractedData);
             showToast('✅ পিতা-মাতা, বৈবাহিক অবস্থা ও ধর্ম অটো-ফিল করা হয়েছে!');
           }
@@ -3240,6 +3644,17 @@
       handleSection6Bank();
       handleSection7Eligibility();
       handleSection9MoneyUsage();
+    }
+
+    let observerTimer = null;
+    const observer = new MutationObserver((mutations) => {
+      const hasPortalMutation = mutations.some(m => {
+        const t = m.target;
+        return t && t.nodeType === 1 && !t.closest('[id^="fc-"], [class*="fc-"], .fc-card-scan-btn');
+      });
+      if (!hasPortalMutation) return;
+      clearTimeout(observerTimer);
+      observerTimer = setTimeout(runExtensionAutomations, 250);
     });
 
     observer.observe(document.body, {
@@ -3249,20 +3664,13 @@
       attributeFilter: ['style', 'class']
     });
 
-    setInterval(() => {
-      traceSection3Media();
-      handleSection4Address();
-      handleSection5AndCrossMatch();
-      handleSection6Bank();
-      handleSection7Eligibility();
-      handleSection9MoneyUsage();
-    }, 1500);
+    setInterval(runExtensionAutomations, 1500);
 
     document.addEventListener('click', (e) => {
       const stepItem = e.target.closest('.family-card-form-step, .v-expansion-panel-header, .v-list-item');
       if (stepItem && lastExtractedData) {
         setTimeout(() => {
-          fillFormFields(lastExtractedData);
+          runExtensionAutomations();
         }, 300);
       }
     });

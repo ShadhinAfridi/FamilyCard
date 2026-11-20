@@ -152,19 +152,68 @@
       </div>
     </div>
 
-    <!-- Step 1: Copy Code -->
-    <div class="card">
-      <h2>📋 ধাপ ১: বুকমার্কলেট কোড কপি করুন</h2>
-      <p style="font-size: 13px; color: #64748b; margin-top: 0;">
-        নিচের বাটনে চাপ দিলে কোডটি আপনার ট্যাবলেটের ক্লিপবোর্ডে কপি হয়ে যাবে:
-      </p>
-      <button id="btnCopy" class="btn btn-success">
-        <span>📋 বুকমার্ক কোড কপি করুন (Copy Code)</span>
-      </button>
-      <div id="copyMsg" style="display: none; color: #166534; font-weight: bold; font-size: 13px; text-align: center; margin-top: 8px;">
-        ✅ কোড সফলভাবে কপি হয়েছে! এবার নিচের ধাপগুলো অনুসরণ করুন।
+    <!-- Step 1: Copy Code (Mobile 1-Line Cloud Loader + Alternatives) -->
+    <div class="card" style="border: 2.5px solid #16a34a; background: #f0fdf4;">
+      <div style="display: inline-block; background: #16a34a; color: #fff; font-size: 11px; font-weight: 800; padding: 3px 10px; border-radius: 20px; margin-bottom: 8px;">
+        ✅ মোবাইল ক্রোমের জন্য ১০০% কার্যকর (১৮৫ KB-এর বদলে মাত্র ১ লাইন!)
       </div>
-      <div class="code-box" id="codePreview">লোড হচ্ছে...</div>
+      <h2 style="color: #166534; margin-top: 0;">📋 পদ্ধতি ১: ১-লাইনের মোবাইল ক্রোম শর্ট বুকমার্কলেট (সবচেয়ে সহজ)</h2>
+      <p style="font-size: 13px; color: #334155; margin-top: 0; line-height: 1.5;">
+        মোবাইলের গুগল ক্রোম ব্রাউজার ১৮৫,০০০ ক্যারেক্টারের বিশাল কোড বুকমার্কে পেস্ট করলে কেটে ফেলে (Truncate করে)। তাই মোবাইলের জন্য তৈরি করা হয়েছে <b>মাত্র ১ লাইনের (২৪০ ক্যারেক্টার) ক্লাউড লোডার কোড</b>—যা এক ক্লিকেই আমাদের সার্ভার থেকে সম্পূর্ণ অটোমেশন ইঞ্জিন লোড করে নেয় এবং ভবিষ্যতে অটো-আপডেট হয়!
+      </p>
+
+      <button id="btnCopyShort" class="btn btn-success" style="margin-bottom: 10px; background: linear-gradient(135deg, #16a34a, #15803d); font-size: 15px;">
+        <span>📱 ১-লাইনের মোবাইল শর্ট কোড কপি করুন (Recommended)</span>
+      </button>
+
+      <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+        <button id="btnCopyOfflineLoader" class="btn" style="flex: 1; background: #0284c7; color: #fff; padding: 10px 12px; font-size: 12.5px; border-radius: 10px;">
+          <span>⚡ অফলাইন ক্যাশ লোডার কপি করুন (দুর্বল নেটওয়ার্ক)</span>
+        </button>
+        <button id="btnCopyFull" class="btn" style="flex: 1; background: #475569; color: #fff; padding: 10px 12px; font-size: 12.5px; border-radius: 10px;">
+          <span>💻 পিসি ফুল কোড কপি করুন (185 KB)</span>
+        </button>
+      </div>
+
+      <div id="copyMsg" style="display: none; color: #166534; background: #dcfce7; border: 1px solid #86efac; padding: 8px 12px; border-radius: 8px; font-weight: bold; font-size: 13px; text-align: center; margin-top: 8px;">
+        ✅ শর্ট কোড সফলভাবে কপি হয়েছে! এবার নিচের ধাপ ২ অনুসরণ করে ক্রোমে বুকমার্ক সেভ করুন।
+      </div>
+      <div class="code-box" id="codePreview" style="font-size: 11.5px; user-select: all;">লোড হচ্ছে...</div>
+    </div>
+
+    <!-- Alternative Mobile Methods: Kiwi Extension & Tampermonkey Userscript -->
+    <div class="card" style="border: 2px solid #0284c7; background: #f0f9ff;">
+      <h2 style="color: #0369a1;">🚀 পদ্ধতি ২ ও ৩: বুকমার্ক ছাড়াই মোবাইলে ১০০% স্বয়ংক্রিয় অটোমেশন (Zero-Click)</h2>
+      <p style="font-size: 13px; color: #1e293b; margin-top: 0; line-height: 1.5;">
+        আপনি যদি প্রতিবার অ্যাড্রেস বারে <code>nid</code> লিখে বুকমার্ক চালাতে না চান, তবে মোবাইলে নিচের যেকোনো একটি পদ্ধতি ব্যবহার করলে <b>fc.bhata.gov.bd</b> ওপেন করার সাথে সাথেই অটোমেশন নিজে নিজে চালু হয়ে যাবে:
+      </p>
+
+      <div style="background: #fff; border: 1.5px solid #bae6fd; border-radius: 10px; padding: 12px; margin-bottom: 10px;">
+        <div style="font-weight: 800; color: #0369a1; font-size: 13.5px; margin-bottom: 4px;">
+          🧩 পদ্ধতি ২: মোবাইলে সরাসরি Chrome Extension ব্যবহার (Kiwi / Lemur Browser)
+        </div>
+        <div style="font-size: 12.5px; color: #334155; line-height: 1.55;">
+          ১. গুগল প্লে-স্টোর থেকে <b>Kiwi Browser</b> বা <b>Lemur Browser</b> (হুবহু গুগল ক্রোম ইঞ্জিনের মোবাইল ব্রাউজার) ইনস্টল করুন।<br>
+          ২. নিচের বাটন থেকে <b>extension.zip</b> ফাইলটি মোবাইলে ডাউনলোড করুন।<br>
+          ৩. ব্রাউজারের ৩-ডট মেনু (⋮) ➔ <b>Extensions</b> ➔ উপরে <b>Developer Mode</b> চালু করুন ➔ <b>"+ (from .zip)"</b> বাটনে চেপে ডাউনলোড করা <code>extension.zip</code> সিলেক্ট করুন।<br>
+          ৪. ব্যস! এরপর পোর্টালে ঢুকলেই কোনো ক্লিক ছাড়াই সব সেকশন অটো-ফিল ও ক্যামেরা বাটন চলে আসবে!
+        </div>
+        <a href="/extension.zip" download="FamilyCard-Chrome-Extension.zip" style="display: inline-block; margin-top: 8px; background: #0284c7; color: #fff; text-decoration: none; font-weight: 700; font-size: 12.5px; padding: 8px 14px; border-radius: 8px;">
+          📥 মোবাইল ও পিসি Chrome Extension ডাউনলোড করুন (extension.zip)
+        </a>
+      </div>
+
+      <div style="background: #fff; border: 1.5px solid #ddd6fe; border-radius: 10px; padding: 12px;">
+        <div style="font-weight: 800; color: #6d28d9; font-size: 13.5px; margin-bottom: 4px;">
+          📜 পদ্ধতি ৩: ১-ক্লিকে Userscript অটো-রান (Tampermonkey / Violentmonkey / Firefox)
+        </div>
+        <div style="font-size: 12.5px; color: #334155; line-height: 1.55;">
+          মোবাইল ব্রাউজারে (Chrome/Kiwi/Firefox/Edge) <b>Tampermonkey</b> বা <b>Stay / Userscripts</b> এক্সটেনশন থাকলে নিচের বাটনে চাপ দিলেই ১ ক্লিকে স্ক্রিপ্ট ইনস্টল হয়ে যাবে এবং পোর্টালে ঢুকলেই স্বয়ংক্রিয়ভাবে কাজ করবে:
+        </div>
+        <a href="/bookmarklet/familycard.user.js" target="_blank" style="display: inline-block; margin-top: 8px; background: #7c3aed; color: #fff; text-decoration: none; font-weight: 700; font-size: 12.5px; padding: 8px 14px; border-radius: 8px;">
+          ⚡ ১-ক্লিকে Userscript ইনস্টল করুন (familycard.user.js)
+        </a>
+      </div>
     </div>
 
     <!-- Step 2: How to setup in Chrome -->
@@ -262,41 +311,131 @@
         <li><b>🛡️ স্থায়ী ঠিকানা নিরাপদ:</b> <b>"স্থায়ী ঠিকানা"</b> অংশটি সম্পূর্ণ অপরিবর্তিত থাকবে — আপনি নিজে ম্যানুয়ালি পূরণ করবেন।</li>
       </ul>
     </div>
+
+    <!-- Section 5 & Tab 6 Cross-Matching Engine Note -->
+    <div class="card" style="border: 2px solid #0d9488; background: #f0fdfa;">
+      <h2 style="color: #0f766e;">👥 সেকশন ৫ ট্র্যাকার ও ট্যাব ৬ ফ্যামিলি সদস্য ক্রস-ম্যাচ ইঞ্জিন</h2>
+      <p style="font-size: 13.5px; color: #1e293b; margin: 0 0 8px 0;">
+        সেকশন ৫ (ফ্যামিলি কার্ড অনুযায়ী বিস্তারিত)-এর সমস্ত তথ্য স্বয়ংক্রিয়ভাবে পর্যবেক্ষণ ও সংরক্ষণ করা হয় এবং ট্যাব ৬ (ফ্যামিলি সদস্য)-এর সাথে লাইভ ক্রস-ম্যাচ করা হয়:
+      </p>
+      <ul style="font-size: 13px; color: #334155; margin: 0; padding-left: 20px; line-height: 1.6;">
+        <li><b>📊 সেকশন ৫ পর্যবেক্ষণ:</b> পুরুষ সদস্য, নারী সদস্য, হিজড়া সদস্য সংখ্যা, এমএফএস একাউন্ট (নগদ/বিকাশ), প্রশিক্ষণ সুবিধা ও প্রবাসী সদস্য সংখ্যা স্বয়ংক্রিয়ভাবে ট্র্যাক ও ফায়ারবেস ক্লাউডে সিঙ্ক হয়।</li>
+        <li><b>🔍 রিয়েল-টাইম ক্রস-ম্যাচ:</b> ট্যাব ৬-এ সদস্য এন্ট্রি করার সময় আবেদনকারী (সদস্য-১ নিজ) এবং অন্যান্য সদস্যদের জেন্ডার ও সম্পর্ক অনুযায়ী লাইভ গণনা চলে।</li>
+        <li><b>🛡️ রিজেকশন প্রতিরোধক HUD:</b> ঘোষিত সংখ্যা বনাম বর্তমান এন্ট্রির মধ্যে কোনো অমিল থাকলে তাৎক্ষণিক সতর্কতা (যেমন: "⚠️ আরও ১ জন নারী সদস্য বাকি" বা "❌ অতিরিক্ত সদস্য") প্রদর্শন করে সাবমিশন রিজেকশন ১০০% প্রতিরোধ করে।</li>
+      </ul>
+    </div>
+
+    <!-- Section 6 Bank/MFS Feature Note -->
+    <div class="card" style="border: 2px solid #2563eb; background: #eff6ff;">
+      <h2 style="color: #1d4ed8;">🏦 সেকশন ৬: ব্যাংক/এমএফএস তথ্য (স্বয়ংক্রিয় নির্বাচন)</h2>
+      <p style="font-size: 13.5px; color: #1e293b; margin: 0 0 8px 0;">
+        ব্যাংক/এমএফএস তথ্য সেকশনে প্রয়োজনীয় ড্রপডাউন এবং অটোকমপ্লিট ফিল্ড স্বয়ংক্রিয়ভাবে ডিফল্ট মান অনুযায়ী সিলেক্ট হবে:
+      </p>
+      <ul style="font-size: 13px; color: #334155; margin: 0; padding-left: 20px; line-height: 1.6;">
+        <li><b>👤 অ্যাকাউন্টের মালিকানা:</b> ডিফল্ট হিসেবে সবসময় <b>"নিজ"</b> সিলেক্ট হবে (প্রয়োজনে আপনি পিতা/মাতা/অন্যান্য পরিবর্তন করতে পারবেন)।</li>
+        <li><b>🏛️ ব্যাংক শাখার নাম:</b> অটোকমপ্লিট ফিল্ডে সোনালী ব্যাংকের জন্য ডিফল্ট <b>"মাছপাড়া শাখা"</b> স্বয়ংক্রিয়ভাবে টাইপ ও সিলেক্ট হয়ে যাবে।</li>
+        <li><b>⚡ কাস্টমাইজেশন টুলবার:</b> ফর্মের ভেতরে থাকা কুইক টুলবার থেকে যেকোনো সময় অন্য শাখা বা মালিকানা নির্বাচন করে চিরতরে ডিফল্ট সেট করতে পারবেন।</li>
+      </ul>
+    </div>
+
+    <!-- Section 7 Eligibility Feature Note -->
+    <div class="card" style="border: 2px solid #16a34a; background: #f0fdf4;">
+      <h2 style="color: #15803d;">🏡 সেকশন ৭: যোগ্যতার অন্যান্য তথ্য (১৪টি স্মার্ট ডিফল্ট সক্রিয়)</h2>
+      <p style="font-size: 13.5px; color: #1e293b; margin: 0 0 8px 0;">
+        সেকশন ৭ (ট্যাব ৫: যোগ্যতার অন্যান্য তথ্য)-এ ১৪টি প্রয়োজনীয় ড্রপডাউন ফিল্ড নিয়ম অনুযায়ী স্বয়ংক্রিয়ভাবে সিলেক্ট হবে এবং বাকি ১০টি ফিল্ড ম্যানুয়াল ইনপুটের জন্য অক্ষত থাকবে:
+      </p>
+      <ul style="font-size: 13px; color: #334155; margin: 0; padding-left: 20px; line-height: 1.6;">
+        <li><b>🏠 নির্ধারিত স্মার্ট ডিফল্ট:</b> ক্ষুদ্র নৃগোষ্ঠী (<b>না</b>), বাসস্থান (<b>ইউনিয়ন/পল্লী এলাকায়</b>), মালিকানা (<b>নিজস্ব</b>), পৃথক রান্নাঘর (<b>হ্যা</b>), পৃথক খাবার ঘর (<b>না</b>), খাবার পানির উৎস (<b>টিউবওয়েল</b>), জ্বালানি (<b>খড়/পাতা/তুষ/ভূষি</b>), বিদ্যুৎ লাইন (<b>জাতীয় গ্রিড</b>), কৃষি শ্রমিক (<b>কৃষি খাতে শ্রম</b>), ডিজেল ব্যবহার (<b>০ কেজি</b>), প্রধান ঘরের ছাদ ও দেয়াল (<b>টিন/কাঠ</b>)।</li>
+        <li><b>👨‍👩‍👧‍👦 সেকশন ৫ হতে সদস্য গণনা:</b> "খানার সদস্য সংখ্যা" সেকশন ৫-এ ঘোষিত মোট সদস্য সংখ্যার সাথে মিলিয়ে স্বয়ংক্রিয়ভাবে বাংলা সংখ্যায় (যেমন: ৭) সিলেক্ট হবে।</li>
+        <li><b>✈️ রেমিট্যান্স লজিক:</b> সেকশন ৫-এ প্রবাসী সদস্য সংখ্যা ০-এর বেশি হলে "গত ২ বছরে বিদেশ হতে অর্থ গ্রহণ" স্বয়ংক্রিয়ভাবে <b>"হ্যা"</b> সিলেক্ট হবে, অন্যথায় <b>"না"</b> থাকবে।</li>
+        <li><b>🛡️ ব্যবহারকারীর অগ্রাধিকার ও মেমোরি:</b> কোনো ফিল্ডে আপনি পরিবর্তন আনলে সিস্টেম তা ওভাররাইট করবে না। ফর্মের শীর্ষে থাকা টুলবারের <b>"💾 পরিবর্তিত মান ডিফল্ট সেভ করুন"</b> বাটনে চাপলে তা ভবিষ্যৎ সব ফর্মের জন্য কার্যকর হয়ে যাবে।</li>
+      </ul>
+    </div>
+
+    <!-- Section 8 Family Members Feature Note -->
+    <div class="card" style="border: 2px solid #7c3aed; background: #faf5ff;">
+      <h2 style="color: #6d28d9;">👨‍👩‍👧‍👦 সেকশন ৮: পারিবারিক তথ্য ও সদস্য অটোমেশন (NID ও ডিজিটাল জন্ম নিবন্ধন স্ক্যানার)</h2>
+      <p style="font-size: 13.5px; color: #1e293b; margin: 0 0 8px 0;">
+        সেকশন ৮ (ট্যাব ৬: ফ্যামিলি সদস্য)-এ পরিবার সদস্যদের জাতীয় পরিচয়পত্র (NID) ও ডিজিটাল জন্ম নিবন্ধন সনদ (BRC) নিখুঁতভাবে স্ক্যান করে স্বয়ংক্রিয় ফর্ম পূরণ:
+      </p>
+      <ul style="font-size: 13px; color: #334155; margin: 0; padding-left: 20px; line-height: 1.6;">
+        <li><b>📑 ডুয়াল ডকুমেন্ট OCR (NID + জন্ম নিবন্ধন):</b> স্মার্ট কার্ড (১০ ডিজিট), পুরাতন এনআইডি (১৭ ডিজিট, ১৩ ডিজিটের ক্ষেত্রে জন্মসাল উপসর্গ যুক্ত হয়ে ১৭ ডিজিট) এবং ডিজিটাল জন্ম নিবন্ধন সনদ (১৭ ডিজিট) স্বয়ংক্রিয়ভাবে ক্লাসিফাই ও নির্ভুল এক্সট্রাক্ট করে।</li>
+        <li><b>🎯 কার্ড-স্পেসিফিক স্ক্যানার:</b> ট্যাব ৬-এর প্রতিটি সদস্য কার্ডের হেডার-এ সরাসরি <b>"📸 NID / জন্ম নিবন্ধন স্ক্যান"</b> বাটন যুক্ত রয়েছে—একটি ক্লিকেই ক্যামেরা খুলে সেই নির্দিষ্ট সদস্যের ফিল্ডগুলো পূরণ হয়।</li>
+        <li><b>⚡ স্বয়ংক্রিয় পূরণ ও স্মার্ট ডিফল্ট:</b> ভেরিফিকেশন রেডিও বাটন (NID বনাম জন্ম নিবন্ধন), নম্বর, জন্ম তারিখ, বাংলা নাম, ইংরেজি নাম (UPPERCASE), পিতা/মাতার নাম (বাংলা ও ইংরেজি ট্র্যান্সলিটারেশন), সম্পর্ক, বয়স অনুযায়ী বৈবাহিক অবস্থা, ধর্ম (ইসলাম) ও প্রতিবন্ধিতা (না) এক নিমিষে পূরণ হয়।</li>
+        <li><b>➕ এক ক্লিকে সদস্য যোগ ও স্মার্ট ডিফল্ট:</b> ব্যানারের <b>"➕ নতুন সদস্য যোগ করুন"</b> এবং <b>"⚡ স্মার্ট ডিফল্ট দিন"</b> বাটনে চাপলে এক ক্লিকে নতুন সদস্য কার্ড খোলা ও সকল কার্ডে আদর্শ ডিফল্ট প্রয়োগ করা যায়।</li>
+        <li><b>☁️ সদস্য-ভিত্তিক ক্লাউড ব্যাকআপ:</b> প্রতিটি সদস্যের তথ্য ফায়ারবেস ফায়ারস্টোরে সাব-কালেকশন <code>family_cards/{familyId}/members</code> হিসেবে লাইভ সিঙ্ক হয়।</li>
+      </ul>
+    </div>
+
+    <!-- Section 9 / Tab 10: Money Usage & 2500 TK AI Demand Distribution -->
+    <div class="card" style="border: 2px solid #059669; background: #f0fdf4;">
+      <h2 style="color: #047857;">💰 সেকশন ৯ (ট্যাব ১০): অর্থ ব্যবহার ও ২৫০০ টাকা এআই চাহিদাভিত্তিক বণ্টন (Family Card Allowance AI Engine)</h2>
+      <p style="font-size: 13.5px; color: #1e293b; margin: 0 0 8px 0;">
+        ফ্যামিলি কার্ড ভাতা কার্যক্রমের <b>"অর্থ ব্যবহার" (Money Usage)</b> সেকশনে সরকারি সর্বোচ্চ সীমা <b>২৫০০ টাকার</b> মধ্যে পরিবারের বাস্তব চাহিদা অনুযায়ী কৃত্রিম বুদ্ধিমত্তা (AI) দিয়ে স্বয়ংক্রিয় ও সুষম বণ্টন:
+      </p>
+      <ul style="font-size: 13px; color: #334155; margin: 0; padding-left: 20px; line-height: 1.6;">
+        <li><b>⚖️ কঠোর ২৫০০ টাকা সিলিং সুরক্ষা:</b> সরকারি শর্তানুযায়ী ৯টি খাতের মোট পরিমাণ সবসময় ঠিক ২৫০০ টাকা বজায় থাকে—কখনোই কম বা বেশি হতে পারবে না।</li>
+        <li><b>🌾 আপনার নির্ধারিত আদর্শ বেঞ্চমার্ক:</b> খাদ্য ও ভরণপোষণ (৫০০), চিকিৎসা (৫০০), সন্তানের শিক্ষা (৩০০), বাসস্থান (০), পোশাক/বস্ত্র (২০০), আয়বর্ধক কর্মসূচি (১০০০), সঞ্চয় (০), ঋণ (০), অন্যান্য (০) = মোট ২৫০০ টাকা ডিফল্ট হিসেবে স্বয়ংক্রিয়ভাবে ইনপুট হয়।</li>
+        <li><b>🧠 এআই ফ্যামিলি ডিমান্ড অ্যানালাইসিস:</b> পূর্ববর্তী সেকশনগুলোর তথ্য (মোট সদস্য সংখ্যা, সন্তানের সংখ্যা, বয়োবৃদ্ধ বা প্রতিবন্ধী সদস্যের উপস্থিতি, কৃষি পেশা ও প্রবাসী রেমিট্যান্স) বিশ্লেষণ করে পরিবারের জন্য সবচেয়ে বাস্তবসম্মত বণ্টন স্বয়ংক্রিয়ভাবে গণনা করে।</li>
+        <li><b>🎛️ ৫টি এক-ক্লিক এআই প্রিসেট:</b> <code>🧠 এআই বণ্টন</code> (পারিবারিক ডেটা অনুযায়ী), <code>🌾 আদর্শ ডিফল্ট</code> (ইউজারের বেঞ্চমার্ক), <code>📚 শিক্ষা প্রধান</code> (সন্তানদের পড়াশোনা কেন্দ্রিক), <code>🏥 স্বাস্থ্য প্রধান</code> (চিকিৎসা অগ্রাধিকার), এবং <code>💼 ক্ষুদ্র ব্যবসা</code> (আয়বর্ধক কর্মসংস্থান)।</li>
+        <li><b>⚖️ ব্যালেন্সার ও কাস্টম ডিফল্ট মেমোরি:</b> আপনি নিজে কোনো খাতে সংখ্যা পরিবর্তন করলে <b>"⚖️ ২৫০০ টাকায় ব্যালেন্স করুন"</b> বাটনে এক ক্লিকেই আয়বর্ধক খাতে স্বয়ংক্রিয় অ্যাডজাস্ট করে মোট ২৫০০ নিশ্চিত করা যায়; এবং <b>"💾 ডিফল্ট সেভ করুন"</b> বাটনে চাপলে আপনার পছন্দের বণ্টন স্থায়ীভাবে সংরক্ষিত হয়।</li>
+        <li><b>⚡ লাইভ ব্যালেন্স HUD ও রিঅ্যাক্টিভ স্টেট:</b> টাইপ করার সাথে সাথে রিয়েল-টাইম ব্যালেন্স ইন্ডিকেটর সবুজ/হলুদ/লাল রঙে অবস্থা প্রদর্শন করে এবং সরকারি পোর্টালের নিচের <code>মোট: ২৫০০</code> কাউন্টার স্বয়ংক্রিয়ভাবে সক্রিয় হয়ে ওঠে।</li>
+      </ul>
+    </div>
   </div>
 
   <script>
-    let bookmarkletCode = '';
+    const shortLoaderCode = "javascript:!function(){var u='https://binary-ict.web.app/bookmarklet/app.min.js?t='+Date.now(),s=document.createElement('script');s.src=u;s.onerror=function(){fetch(u).then(function(r){return r.text()}).then(function(c){(0,eval)(c)}).catch(function(){alert('স্ক্রিপ্ট লোড করা যায়নি। অফলাইন বা এক্সটেনশন ব্যবহার করুন।')})};(document.head||document.documentElement).appendChild(s)}();";
+
+    const offlineCacheLoaderCode = "javascript:!function(){var k='fc_app_v15',c=localStorage.getItem(k),u='https://binary-ict.web.app/bookmarklet/app.min.js?t='+Date.now();if(c)(0,eval)(c);fetch(u).then(function(r){if(!r.ok)throw 0;return r.text()}).then(function(t){localStorage.setItem(k,t);if(!c)(0,eval)(t)}).catch(function(){if(!c){var s=document.createElement('script');s.src=u;(document.head||document.documentElement).appendChild(s)}})}();";
+
+    let fullBookmarkletCode = '';
+
+    // Show the 1-line mobile loader by default
+    document.getElementById('codePreview').textContent = shortLoaderCode + ' (' + shortLoaderCode.length + ' chars - Mobile Chrome Ready)';
 
     fetch('bookmarklet.min.js')
       .then(r => r.text())
       .then(code => {
-        bookmarkletCode = code;
-        document.getElementById('codePreview').textContent = code.substring(0, 150) + '... (' + code.length + ' chars)';
+        fullBookmarkletCode = code;
       })
-      .catch(() => {
-        document.getElementById('codePreview').textContent = 'Error loading code file.';
-      });
+      .catch(() => {});
 
-    document.getElementById('btnCopy').addEventListener('click', async () => {
-      if (!bookmarkletCode) return;
+    async function copyToClipboard(text, label) {
+      if (!text) return;
+      const msg = document.getElementById('copyMsg');
+      document.getElementById('codePreview').textContent = text.length > 500
+        ? text.substring(0, 180) + '... (' + text.length + ' chars)'
+        : text;
       try {
-        await navigator.clipboard.writeText(bookmarkletCode);
-        const msg = document.getElementById('copyMsg');
-        msg.style.display = 'block';
-        document.getElementById('btnCopy').textContent = '✅ কপি সম্পন্ন হয়েছে! (Copied)';
-        setTimeout(() => {
-          document.getElementById('btnCopy').textContent = '📋 পুনরায় কপি করুন';
-        }, 3000);
+        await navigator.clipboard.writeText(text);
       } catch (err) {
-        // Fallback for older browsers
         const ta = document.createElement('textarea');
-        ta.value = bookmarkletCode;
+        ta.value = text;
         document.body.appendChild(ta);
         ta.select();
         document.execCommand('copy');
         document.body.removeChild(ta);
-        document.getElementById('copyMsg').style.display = 'block';
       }
+      msg.style.display = 'block';
+      msg.textContent = '✅ ' + label + ' সফলভাবে কপি হয়েছে! (' + text.length + ' ক্যারেক্টার)';
+    }
+
+    document.getElementById('btnCopyShort').addEventListener('click', () => {
+      copyToClipboard(shortLoaderCode, '১-লাইনের মোবাইল ক্রোম শর্ট কোড');
+    });
+
+    document.getElementById('btnCopyOfflineLoader').addEventListener('click', () => {
+      copyToClipboard(offlineCacheLoaderCode, 'অফলাইন ক্যাশড মোবাইল লোডার কোড');
+    });
+
+    document.getElementById('btnCopyFull').addEventListener('click', () => {
+      if (!fullBookmarkletCode) {
+        alert('ফুল কোড এখনো লোড হচ্ছে, অনুগ্রহ করে ১ সেকেন্ড পর আবার চাপুন।');
+        return;
+      }
+      const kb = Math.round(fullBookmarkletCode.length / 1024);
+      copyToClipboard(fullBookmarkletCode, `পিসি ফুল বুকমার্কলেট কোড (${kb} KB)`);
     });
   </script>
 </body>

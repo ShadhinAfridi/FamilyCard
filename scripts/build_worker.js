@@ -4,50 +4,67 @@ import path from 'path';
 const publicHtml = fs.readFileSync('public/index.html', 'utf8');
 const publicCss = fs.readFileSync('public/style.css', 'utf8');
 const publicJs = fs.readFileSync('public/app.js', 'utf8');
-const bookmarkletHtml = fs.readFileSync('bookmarklet/index.html', 'utf8');
-const bookmarkletMin = fs.readFileSync('bookmarklet/bookmarklet.min.js', 'utf8');
+const bookmarkletHtml = fs.readFileSync('public/bookmarklet/index.html', 'utf8');
+const bookmarkletMin = fs.readFileSync('public/bookmarklet/bookmarklet.min.js', 'utf8');
+const appMin = fs.readFileSync('public/bookmarklet/app.min.js', 'utf8');
+const loaderMin = fs.readFileSync('public/bookmarklet/loader.min.js', 'utf8');
+const userScriptJs = fs.readFileSync('public/bookmarklet/familycard.user.js', 'utf8');
 
 const workerCode = `// Cloudflare Worker for familycard.afridi.app
-// Edge-deployed Family Card NID AI Scanner & Bookmarklet Suite
+// Edge-deployed Family Card NID & Birth Certificate AI Scanner & Bookmarklet Suite
 
 const PUBLIC_HTML = ${JSON.stringify(publicHtml)};
 const PUBLIC_CSS = ${JSON.stringify(publicCss)};
 const PUBLIC_JS = ${JSON.stringify(publicJs)};
 const BOOKMARKLET_HTML = ${JSON.stringify(bookmarkletHtml)};
 const BOOKMARKLET_MIN = ${JSON.stringify(bookmarkletMin)};
+const APP_MIN = ${JSON.stringify(appMin)};
+const LOADER_MIN = ${JSON.stringify(loaderMin)};
+const USERSCRIPT_JS = ${JSON.stringify(userScriptJs)};
+
+function normalizeDigits(str) {
+  if (!str) return '';
+  const bn = ['০','১','২','৩','৪','৫','৬','৭','৮','৯'];
+  return String(str).replace(/[০-৯]/g, d => {
+    const idx = bn.indexOf(d);
+    return idx !== -1 ? idx : d;
+  });
+}
+
+function standardizeDate(dobStr) {
+  if (!dobStr) return '';
+  let str = normalizeDigits(dobStr).trim();
+  const isoMatch = str.match(/^(\\d{4})[-\\/.](\\d{1,2})[-\\/.](\\d{1,2})/);
+  if (isoMatch) return \`\${isoMatch[3].padStart(2, '0')}/\${isoMatch[2].padStart(2, '0')}/\${isoMatch[1]}\`;
+  const months = { jan:'01', feb:'02', mar:'03', apr:'04', may:'05', jun:'06', jul:'07', aug:'08', sep:'09', oct:'10', nov:'11', dec:'12' };
+  const monthMatch = str.match(/^(\\d{1,2})\\s+([a-zA-Z]{3,})\\s+(\\d{4})/i);
+  if (monthMatch) return \`\${monthMatch[1].padStart(2, '0')}/\${months[monthMatch[2].toLowerCase().substring(0, 3)] || '01'}/\${monthMatch[3]}\`;
+  str = str.replace(/[-\\.]/g, '/');
+  const dmyMatch = str.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})/);
+  if (dmyMatch) return \`\${dmyMatch[1].padStart(2, '0')}/\${dmyMatch[2].padStart(2, '0')}/\${dmyMatch[3]}\`;
+  return str;
+}
 
 const GEMINI_PROMPT = \`
-You are an expert OCR and document understanding system specializing in Bangladeshi National Identity (NID) Cards.
-Analyze the provided image of a Bangladeshi NID card and extract the required information into valid JSON format.
+You are an expert OCR AI for Bangladeshi Identity Documents:
+1. Bangladeshi National Identity (NID) Cards (Smart NID and Old Laminated/Paper NID).
+2. Bangladeshi Digital Birth Registration Certificates (ডিজিটাল জন্ম নিবন্ধন সনদপত্র / BRC).
 
-RULES:
-1. "name_bn": Extract the full name in Bengali exactly as printed under "নাম:".
-2. "name_en": Extract the full name in English exactly as printed under "Name:". Format in UPPERCASE.
-3. "nid_number": Extract the National ID number. 
-   - CRITICAL NID DIGIT RULE: 
-     Only 10-digit (Smart NID) or 17-digit (legacy NID) numbers are accepted by the portal.
-     If the NID is an old 13-digit number, you MUST prepend the 4-digit birth year extracted from the Date of Birth to make it exactly 17 digits.
-     (For example: if Birth year is 1988 and NID is 1234567890123, return "19881234567890123").
-     Remove all spaces or hyphens.
-4. "dob": Extract Date of Birth in DD/MM/YYYY format.
-5. "gender": Identify whether the person is male ("পুরুষ") or female ("নারী").
-6. "father_name_bn": Extract the Father's name in Bengali as printed under "পিতা:".
-7. "father_name_en": The NID card does NOT print the father's name in English. You MUST translate/transliterate the Bengali father's name into English letters following standard Bangladeshi spelling conventions, formatted in ALL UPPERCASE (e.g., "সিরাজ ব্যাপারী" -> "SHIRAJ BEPARI", "মো: আক্তার হোসেন" -> "MD. AKTER HOSSAIN").
-8. "mother_name_bn": Extract the Mother's name in Bengali as printed under "মাতা:".
-9. "mother_name_en": Translate/transliterate the Bengali mother's name into English letters following standard Bangladeshi spelling conventions, formatted in ALL UPPERCASE (e.g., "নুরজাহান নেছা" -> "NURJAHAN NESA", "মোসা: খাদিজা বেগম" -> "MOSA. KHADIJA BEGUM").
+Classify and extract all fields into a valid JSON object:
+- "doc_type": "nid" or "birth_certificate"
+1. "doc_number": 10 or 17 digits for NID (if 13-digit legacy NID, prepend 4-digit birth year from dob to make 17 digits), or 17-digit Birth Registration Number. Strip spaces/hyphens.
+2. "name_bn": Complete Bengali name.
+3. "name_en": Complete English name in ALL CAPITAL LETTERS.
+4. "dob": Date of Birth in DD/MM/YYYY format (English digits).
+5. "gender": Strictly "পুরুষ", "নারী", or "হিজড়া".
+6. "father_name_bn": Father's Bengali name.
+7. "father_name_en": Father's English name transliterated in ALL CAPITAL LETTERS.
+8. "mother_name_bn": Mother's Bengali name.
+9. "mother_name_en": Mother's English name transliterated in ALL CAPITAL LETTERS.
+10. "relation_suggestion": One of ("স্বামী", "স্ত্রী", "পুত্র", "কন্যা", "পিতা", "মাতা", "ভাই", "বোন", "অন্যান্য").
+11. "marital_status_suggestion": One of ("বিবাহিত", "অবিবাহিত", "বিধবা", "বিপত্নীক", "তালাকপ্রাপ্ত", "পরিত্যক্ত").
 
-Return ONLY a single valid JSON object with these keys:
-{
-  "name_bn": "...",
-  "name_en": "...",
-  "nid_number": "...",
-  "dob": "DD/MM/YYYY",
-  "gender": "...",
-  "father_name_bn": "...",
-  "father_name_en": "...",
-  "mother_name_bn": "...",
-  "mother_name_en": "..."
-}
+Return ONLY a single raw JSON object with keys: doc_type, doc_number, name_bn, name_en, dob, gender, father_name_bn, father_name_en, mother_name_bn, mother_name_en, relation_suggestion, marital_status_suggestion.
 \`;
 
 export default {
@@ -83,21 +100,61 @@ export default {
       return new Response(BOOKMARKLET_MIN, {
         headers: {
           'Content-Type': 'application/javascript; charset=utf-8',
-          'Access-Control-Allow-Origin': '*'
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache, no-store, must-revalidate'
+        }
+      });
+    }
+    if (path === '/bookmarklet/app.min.js') {
+      return new Response(APP_MIN, {
+        headers: {
+          'Content-Type': 'application/javascript; charset=utf-8',
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache, no-store, must-revalidate'
+        }
+      });
+    }
+    if (path === '/bookmarklet/loader.min.js') {
+      return new Response(LOADER_MIN, {
+        headers: {
+          'Content-Type': 'application/javascript; charset=utf-8',
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache, no-store, must-revalidate'
+        }
+      });
+    }
+    if (path === '/bookmarklet/familycard.user.js') {
+      return new Response(USERSCRIPT_JS, {
+        headers: {
+          'Content-Type': 'application/javascript; charset=utf-8',
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache, no-store, must-revalidate'
         }
       });
     }
 
-    // API: OCR Endpoint
-    if (path === '/api/extract-nid' && request.method === 'POST') {
+    // API: OCR Endpoint (supports both /api/extract-nid and /api/ocr-nid)
+    if ((path === '/api/extract-nid' || path === '/api/ocr-nid') && request.method === 'POST') {
       try {
         const body = await request.json();
         const apiKey = body.apiKey || env.GEMINI_API_KEY;
         if (!apiKey) {
-          return Response.json({ success: false, error: 'Gemini API Key প্রয়োজন।' }, { status: 400 });
+          return Response.json({ success: false, error: 'Gemini API Key প্রয়োজন।' }, { status: 400, headers: { 'Access-Control-Allow-Origin': '*' } });
         }
 
-        const rawBase64 = (body.imageBase64 || '').replace(/^data:image\\/[a-zA-Z]+;base64,/, '');
+        const rawInput = body.imageBase64 || body.image || '';
+        if (!rawInput) {
+          return Response.json({ success: false, error: 'Image is required' }, { status: 400, headers: { 'Access-Control-Allow-Origin': '*' } });
+        }
+
+        let mimeType = body.mimeType || 'image/jpeg';
+        let rawBase64 = rawInput;
+        if (rawInput.includes(';base64,')) {
+          const parts = rawInput.split(';base64,');
+          mimeType = parts[0].replace('data:', '') || mimeType;
+          rawBase64 = parts[1];
+        }
+
         const geminiUrl = \`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=\${encodeURIComponent(apiKey)}\`;
 
         const geminiRes = await fetch(geminiUrl, {
@@ -107,7 +164,7 @@ export default {
             contents: [{
               parts: [
                 { text: GEMINI_PROMPT },
-                { inline_data: { mime_type: body.mimeType || 'image/jpeg', data: rawBase64 } }
+                { inline_data: { mime_type: mimeType, data: rawBase64 } }
               ]
             }],
             generationConfig: {
@@ -119,30 +176,45 @@ export default {
 
         if (!geminiRes.ok) {
           const errTxt = await geminiRes.text();
-          return Response.json({ success: false, error: \`Gemini Error: \${errTxt}\` }, { status: 500 });
+          return Response.json({ success: false, error: \`Gemini Error: \${errTxt}\` }, { status: 500, headers: { 'Access-Control-Allow-Origin': '*' } });
         }
 
         const geminiJson = await geminiRes.json();
-        let outText = geminiJson.candidates?.[0]?.content?.parts?.[0]?.text || '';
-        outText = outText.trim().replace(/^\`\`\`json/, '').replace(/\`\`\`$/, '').trim();
-        const parsed = JSON.parse(outText);
+        const outText = geminiJson.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        const fenceMatch = outText.match(/\`\`\`(?:json)?\\s*([\\s\\S]*?)\\s*\`\`\`/i);
+        let cleaned = fenceMatch ? fenceMatch[1].trim() : outText.trim();
+        const objMatch = cleaned.match(/\\{[\\s\\S]*\\}/);
+        if (objMatch) cleaned = objMatch[0];
 
-        if (parsed.nid_number) {
-          let cleanNid = String(parsed.nid_number).replace(/[^0-9]/g, '');
-          if (cleanNid.length === 13) {
-            const ym = String(parsed.dob || '').match(/\\b(19\\d{2}|20\\d{2})\\b/);
-            if (ym) cleanNid = ym[1] + cleanNid;
+        const parsed = JSON.parse(cleaned);
+        if (body.docType && body.docType !== 'auto') parsed.doc_type = body.docType;
+        if (parsed.dob) parsed.dob = standardizeDate(parsed.dob);
+
+        const genderMap = { 'তৃতীয় লিঙ্গ': 'হিজড়া', 'তৃতীয় লিঙ্গ': 'হিজড়া', 'হিজড়া': 'হিজড়া' };
+        if (parsed.gender && genderMap[parsed.gender.trim()]) parsed.gender = genderMap[parsed.gender.trim()];
+        const relMap = { 'ছেলে': 'পুত্র', 'মেয়ে': 'কন্যা', 'মেয়ে': 'কন্যা', 'বাবা': 'পিতা', 'মা': 'মাতা' };
+        if (parsed.relation_suggestion && relMap[parsed.relation_suggestion.trim()]) parsed.relation_suggestion = relMap[parsed.relation_suggestion.trim()];
+
+        const rawDocNum = parsed.doc_number || (parsed.doc_type === 'birth_certificate' ? parsed.birth_reg_no : parsed.nid_number) || parsed.nid_number || parsed.birth_reg_no || '';
+        let cleanDoc = normalizeDigits(rawDocNum).replace(/[^0-9]/g, '');
+        if (parsed.doc_type !== 'birth_certificate' && cleanDoc.length === 13) {
+          const ym = String(parsed.dob || '').match(/\\b(19\\d{2}|20\\d{2})\\b/);
+          if (ym) {
+            cleanDoc = ym[1] + cleanDoc;
+            parsed.nid_converted_to_17 = true;
           }
-          parsed.nid_number = cleanNid;
         }
+        parsed.doc_number = cleanDoc;
+        if (parsed.doc_type === 'birth_certificate') parsed.birth_reg_no = cleanDoc;
+        else { parsed.doc_type = parsed.doc_type || 'nid'; parsed.nid_number = cleanDoc; }
 
-        if (parsed.name_en) parsed.name_en = String(parsed.name_en).toUpperCase();
-        if (parsed.father_name_en) parsed.father_name_en = String(parsed.father_name_en).toUpperCase();
-        if (parsed.mother_name_en) parsed.mother_name_en = String(parsed.mother_name_en).toUpperCase();
+        if (parsed.name_en) parsed.name_en = String(parsed.name_en).toUpperCase().trim();
+        if (parsed.father_name_en) parsed.father_name_en = String(parsed.father_name_en).toUpperCase().trim();
+        if (parsed.mother_name_en) parsed.mother_name_en = String(parsed.mother_name_en).toUpperCase().trim();
 
-        parsed.marital_status = body.maritalStatus || 'বিবাহিত';
+        parsed.marital_status = body.maritalStatus || parsed.marital_status_suggestion || 'বিবাহিত';
         parsed.religion = body.religion || 'ইসলাম';
-        parsed.mobile_number = body.mobileNumber ? String(body.mobileNumber).trim() : '';
+        parsed.mobile_number = body.mobileNumber ? normalizeDigits(body.mobileNumber).trim() : '';
 
         return Response.json({ success: true, data: parsed }, {
           headers: { 'Access-Control-Allow-Origin': '*' }

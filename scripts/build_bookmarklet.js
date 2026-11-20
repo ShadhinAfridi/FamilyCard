@@ -37,14 +37,14 @@ async function build() {
   // 2. Full inline bookmarklet (for desktop drag & drop)
   const bookmarkletCode = 'javascript:' + encodeURI(rawMinCode).replace(/#/g, '%23');
 
-  // 3. Tiny 1-line Mobile Chrome Loader Bookmarklet (~240 chars, bypasses Android Chrome URL limit)
-  const mobileLoaderCode = "javascript:!function(){var u='https://binary-ict.web.app/bookmarklet/app.min.js?t='+Date.now(),s=document.createElement('script');s.src=u;s.onerror=function(){fetch(u).then(function(r){return r.text()}).then(function(c){(0,eval)(c)})};document.head.appendChild(s)}();";
+  // 3. Tiny 1-line Mobile Chrome Loader Bookmarklet (~270 chars, bypasses Android Chrome URL limit)
+  const mobileLoaderCode = "javascript:!function(){var u='https://binary-ict.web.app/bookmarklet/app.min.js?t='+Date.now(),s=document.createElement('script');s.src=u;s.onerror=function(){fetch(u).then(function(r){return r.text()}).then(function(c){(0,eval)(c)}).catch(function(){alert('স্ক্রিপ্ট লোড করা যায়নি। অফলাইন বা এক্সটেনশন ব্যবহার করুন।')})};(document.head||document.documentElement).appendChild(s)}();";
 
   // 4. Tampermonkey / Violentmonkey Userscript for automatic execution on mobile & desktop
   const userScriptHeader = `// ==UserScript==
 // @name         Family Card AI Assistant (NID & BRC Scanner + Auto-Fill)
 // @namespace    https://binary-ict.web.app/
-// @version      1.4.0
+// @version      1.5.0
 // @description  Automated NID/Birth Certificate OCR, Section 3-9 Smart Defaults & 2500 Tk AI Distribution for fc.bhata.gov.bd
 // @author       Binary ICT
 // @match        https://fc.bhata.gov.bd/*

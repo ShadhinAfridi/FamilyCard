@@ -24,12 +24,12 @@ EXTRACTION RULES:
 2. "name_bn": Extract the full Bengali name exactly as printed (under "নাম:" or "নাম").
 3. "name_en": Extract the full English name (under "Name:"). Format in ALL UPPERCASE letters.
 4. "dob": Extract Date of Birth in standard DD/MM/YYYY format.
-5. "gender": Identify gender as "পুরুষ" (Male), "নারী" (Female), or "তৃতীয় লিঙ্গ" (Transgender / Hijra).
+5. "gender": Identify gender strictly as "পুরুষ" (Male), "নারী" (Female), or "হিজড়া" (Transgender / Hijra).
 6. "father_name_bn": Extract the Father's name in Bengali as printed under "পিতা:" / "পিতার নাম:".
 7. "father_name_en": Translate or transliterate Father's name into English letters in ALL UPPERCASE (e.g. "MD. ABDUL HOQUE").
 8. "mother_name_bn": Extract the Mother's name in Bengali as printed under "মাতা:" / "মাতার নাম:".
 9. "mother_name_en": Translate or transliterate Mother's name into English letters in ALL UPPERCASE (e.g. "ROKEYA BEGUM").
-10. "relation_suggestion": If this document is for a family member, suggest the relationship relative to the household head ("স্বামী", "স্ত্রী", "ছেলে", "মেয়ে", "বাবা", "মা", "ভাই", "বোন", "অন্যান্য").
+10. "relation_suggestion": If this document is for a family member, suggest the relationship relative to the household head strictly from ("স্বামী", "স্ত্রী", "পুত্র", "কন্যা", "পিতা", "মাতা", "ভাই", "বোন", "অন্যান্য").
 11. "marital_status_suggestion":
     - If age is under 18 or unmarried, suggest "অবিবাহিত".
     - If adult with spouse or children or typical married adult, suggest "বিবাহিত".
@@ -107,7 +107,7 @@ chrome.runtime.onMessage.addListener((req, sender, sendResponse) => {
 });
 
 async function handleDirectOCR(req) {
-  const { imageBase64, mimeType = 'image/jpeg', maritalStatus = 'বিবাহিত', religion = 'ইসলাম', mobileNumber = '' } = req;
+  const { imageBase64, mimeType = 'image/jpeg', maritalStatus = 'বিবাহিত', religion = 'ইসলাম', mobileNumber = '', docType = 'auto' } = req;
 
   // Retrieve stored API key or fallback to req.apiKey
   let apiKey = req.apiKey;
@@ -116,7 +116,7 @@ async function handleDirectOCR(req) {
     apiKey = stored.geminiApiKey;
     if (!apiKey && stored.serverUrl) {
       // If no direct key, forward to relay server endpoint
-      return await forwardToServer(stored.serverUrl, imageBase64, mimeType, maritalStatus, religion, mobileNumber);
+      return await forwardToServer(stored.serverUrl, imageBase64, mimeType, maritalStatus, religion, mobileNumber, docType);
     }
   }
 
@@ -168,34 +168,54 @@ async function handleDirectOCR(req) {
     throw new Error('Gemini API থেকে কোনো ফলাফল পাওয়া যায়নি।');
   }
 
-  // Clean markdown delimiters if present
-  let cleanText = textOutput.trim();
-  if (cleanText.startsWith('```json')) cleanText = cleanText.substring(7);
-  if (cleanText.startsWith('```')) cleanText = cleanText.substring(3);
-  if (cleanText.endsWith('```')) cleanText = cleanText.substring(0, cleanText.length - 3);
+  // Clean markdown delimiters / extract JSON object safely
+  const fenceMatch = textOutput.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  let cleanText = fenceMatch ? fenceMatch[1].trim() : textOutput.trim();
+  const objMatch = cleanText.match(/\{[\s\S]*\}/);
+  if (objMatch) cleanText = objMatch[0];
 
-  const parsedData = JSON.parse(cleanText.trim());
+  const parsedData = JSON.parse(cleanText);
+
+  if (docType && docType !== 'auto') {
+    parsedData.doc_type = docType;
+  }
+
+  if (parsedData.dob) {
+    parsedData.dob = standardizeDate(parsedData.dob);
+  }
+
+  // Canonicalize gender and relation
+  const genderMap = { 'তৃতীয় লিঙ্গ': 'হিজড়া', 'তৃতীয় লিঙ্গ': 'হিজড়া', 'হিজড়া': 'হিজড়া' };
+  if (parsedData.gender && genderMap[parsedData.gender.trim()]) {
+    parsedData.gender = genderMap[parsedData.gender.trim()];
+  }
+  const relMap = { 'ছেলে': 'পুত্র', 'মেয়ে': 'কন্যা', 'মেয়ে': 'কন্যা', 'বাবা': 'পিতা', 'মা': 'মাতা' };
+  if (parsedData.relation_suggestion && relMap[parsedData.relation_suggestion.trim()]) {
+    parsedData.relation_suggestion = relMap[parsedData.relation_suggestion.trim()];
+  }
 
   // 10 or 17 digit NID / 17 digit BRC rule validation & transformation
-  const rawDocNum = parsedData.doc_number || parsedData.nid_number || '';
+  const rawDocNum = parsedData.doc_number || (parsedData.doc_type === 'birth_certificate' ? parsedData.birth_reg_no : parsedData.nid_number) || parsedData.nid_number || parsedData.birth_reg_no || '';
   let cleanDocNum = normalizeDigits(rawDocNum).replace(/[^0-9]/g, '');
 
   if (parsedData.doc_type === 'birth_certificate' || cleanDocNum.length === 17) {
     parsedData.doc_number = cleanDocNum;
   } else if (cleanDocNum.length === 13) {
     const yearMatch = String(parsedData.dob || '').match(/\b(19\d{2}|20\d{2})\b/);
-    if (yearMatch) cleanDocNum = yearMatch[1] + cleanDocNum;
+    if (yearMatch) {
+      cleanDocNum = yearMatch[1] + cleanDocNum;
+      parsedData.nid_converted_to_17 = true;
+    }
     parsedData.doc_number = cleanDocNum;
   } else {
     parsedData.doc_number = cleanDocNum;
   }
 
-  if (parsedData.doc_type === 'nid' || !parsedData.doc_type) {
+  if (parsedData.doc_type === 'birth_certificate') {
+    parsedData.birth_reg_no = parsedData.doc_number;
+  } else {
+    parsedData.doc_type = parsedData.doc_type || 'nid';
     parsedData.nid_number = parsedData.doc_number;
-  }
-
-  if (parsedData.dob) {
-    parsedData.dob = standardizeDate(parsedData.dob);
   }
 
   // Ensure uppercase english names
@@ -215,7 +235,7 @@ async function handleDirectOCR(req) {
 }
 
 // Forward to backend server if user has a server configured
-async function forwardToServer(serverUrl, imageBase64, mimeType, maritalStatus, religion, mobileNumber) {
+async function forwardToServer(serverUrl, imageBase64, mimeType, maritalStatus, religion, mobileNumber, docType = 'auto') {
   const url = `${serverUrl.replace(/\/+$/, '')}/api/extract-nid`;
   const response = await fetch(url, {
     method: 'POST',
@@ -225,7 +245,8 @@ async function forwardToServer(serverUrl, imageBase64, mimeType, maritalStatus, 
       mimeType,
       maritalStatus,
       religion,
-      mobileNumber
+      mobileNumber,
+      docType
     })
   });
 

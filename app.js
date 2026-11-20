@@ -156,16 +156,17 @@ tabCamera.addEventListener('click', () => switchMode('camera'));
 tabGallery.addEventListener('click', () => switchMode('gallery'));
 
 // Resize & downscale image via Canvas to ensure fast transmission & clear OCR
-function downscaleImage(imgOrVideo, maxWidth = 1600, quality = 0.88) {
+function downscaleImage(imgOrVideo, maxDim = 1600, quality = 0.88) {
   const width = imgOrVideo.videoWidth || imgOrVideo.naturalWidth || imgOrVideo.width;
   const height = imgOrVideo.videoHeight || imgOrVideo.naturalHeight || imgOrVideo.height;
 
   let targetWidth = width;
   let targetHeight = height;
 
-  if (targetWidth > maxWidth) {
-    targetHeight = Math.round((targetHeight * maxWidth) / targetWidth);
-    targetWidth = maxWidth;
+  if (targetWidth > maxDim || targetHeight > maxDim) {
+    const ratio = Math.min(maxDim / targetWidth, maxDim / targetHeight);
+    targetWidth = Math.round(targetWidth * ratio);
+    targetHeight = Math.round(targetHeight * ratio);
   }
 
   photoCanvas.width = targetWidth;
@@ -270,7 +271,7 @@ function displayResults(data) {
 
   document.getElementById('resNameBn').textContent = data.name_bn || 'পাওয়া যায়নি';
   document.getElementById('resNameEn').textContent = data.name_en || 'পাওয়া যায়নি';
-  let nidDisplay = data.nid_number || 'পাওয়া যায়নি';
+  let nidDisplay = data.doc_number || data.nid_number || data.birth_reg_no || 'পাওয়া যায়নি';
   if (data.nid_converted_to_17) {
     nidDisplay += ' (১৭ ডিজিট করা হয়েছে)';
   }

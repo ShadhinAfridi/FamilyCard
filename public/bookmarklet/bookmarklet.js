@@ -1,10 +1,10 @@
-// Family Card NID AI Auto-Filler Bookmarklet (v1.3 Production - Zero Bugs)
+// Family Card NID AI Auto-Filler Bookmarklet (v1.5 Production)
 // Fixes:
-// 1. Strict Bengali-to-English numeral normalization (০-৯ -> 0-9)
+// 1. Strict Bengali-to-English numeral & Unicode normalization (০-৯ -> 0-9, ড়/য়/ঢ় canonicalization)
 // 2. Comprehensive Date Standardization (DD/MM/YYYY, ISO, Month Names)
-// 3. Resilient Vuetify Dropdown Polling (Handles animations on slow tablets)
+// 3. Resilient Sequential Vuetify Dropdown Polling (Active menu & aria-owns scoped)
 // 4. Live In-Page WebRTC Camera + Canvas Capture (Prevents Android LMK tab reloading)
-// 5. Automatic DOM Scraping of 'পরিবার আইডি' (Family ID)
+// 5. Automatic DOM Scraping of 'পরিবার আইডি' (Family ID) with Safe Firestore Sync
 // 6. Direct Real-Time Firebase Firestore Replication (rajbari-city-app-16601)
 (function () {
   'use strict';
@@ -18,13 +18,46 @@
   }
   window.__familyCardAssistantLoaded = true;
 
-  console.log('[FamilyCard Assistant v1.3] Initializing on target portal...');
+  console.log('[FamilyCard Assistant v1.5] Initializing on target portal...');
+
+  function safeJsonParse(raw, fallback) {
+    if (!raw) return fallback;
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed !== null && parsed !== undefined ? parsed : fallback;
+    } catch (_) {
+      return fallback;
+    }
+  }
+
+  function escapeHtml(str) {
+    return String(str ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function normalizeBn(str) {
+    if (!str) return '';
+    return String(str)
+      .normalize('NFC')
+      .replace(/\u09A1\u09BC/g, '\u09DC')
+      .replace(/\u09A2\u09BC/g, '\u09DD')
+      .replace(/\u09AF\u09BC/g, '\u09DF')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
 
   let lastExtractedData = null;
   let savedApiKey = localStorage.getItem('fc_gemini_api_key') || '';
   let activeMediaStream = null;
   let savedPostcode = localStorage.getItem('fc_default_postcode') || '7721';
-  let savedVillageList = JSON.parse(localStorage.getItem('fc_village_list') || '["বসাকুষ্টিয়া", "চর কলিমহর"]');
+  let savedVillageList = safeJsonParse(localStorage.getItem('fc_village_list'), ['বসাকুষ্টিয়া', 'চর কলিমহর']);
+  if (!Array.isArray(savedVillageList) || savedVillageList.length === 0) {
+    savedVillageList = ['বসাকুষ্টিয়া', 'চর কলিমহর'];
+  }
   let savedDefaultVillage = localStorage.getItem('fc_default_village') || savedVillageList[0] || 'বসাকুষ্টিয়া';
 
   // --- Utility: Bengali-to-English Digit Normalizer ---
@@ -77,6 +110,15 @@
     const match = text.match(/পরিবার আইডি:\s*([০-৯0-9]+)/);
     if (match) return normalizeDigits(match[1]);
     return null;
+  }
+
+  function getSafeFamilyDocId(data) {
+    const rawId = scrapeFamilyId() || (data && data.family_id) || (lastExtractedData && lastExtractedData.family_id) || '';
+    const cleanFamily = normalizeDigits(rawId).replace(/[^0-9]/g, '');
+    if (cleanFamily) return cleanFamily;
+    const fallbackDoc = data ? (data.nid_number || data.birth_reg_no || data.doc_number || '') : '';
+    const cleanDoc = normalizeDigits(fallbackDoc).replace(/[^0-9]/g, '');
+    return cleanDoc || null;
   }
 
   const GEMINI_PROMPT = `
@@ -475,12 +517,12 @@ Return ONLY a single valid JSON object with these exact keys:
             <div class="fc-bm-row">
               <div class="fc-bm-col">
                 <label for="fc-bm-postcode">📮 পোস্ট কোড* (ডিফল্ট: 7721)</label>
-                <input type="text" id="fc-bm-postcode" value="${savedPostcode}" placeholder="7721">
+                <input type="text" id="fc-bm-postcode" value="${escapeHtml(savedPostcode)}" placeholder="7721">
               </div>
               <div class="fc-bm-col">
                 <label for="fc-bm-village">🏠 গ্রাম নির্বাচন*</label>
                 <select id="fc-bm-village">
-                  ${savedVillageList.map(v => `<option value="${v}" ${v === savedDefaultVillage ? 'selected' : ''}>${v}</option>`).join('')}
+                  ${savedVillageList.map(v => `<option value="${escapeHtml(v)}" ${v === savedDefaultVillage ? 'selected' : ''}>${escapeHtml(v)}</option>`).join('')}
                 </select>
               </div>
             </div>
@@ -493,7 +535,7 @@ Return ONLY a single valid JSON object with these exact keys:
 
         <div class="fc-bm-col">
           <label for="fc-bm-apikey">⚙️ Gemini API Key:</label>
-          <input type="password" id="fc-bm-apikey" placeholder="AIzaSy..." value="${savedApiKey}">
+          <input type="password" id="fc-bm-apikey" placeholder="AIzaSy..." value="${escapeHtml(savedApiKey)}">
         </div>
 
         <div id="fc-bm-loading" style="display: none; text-align: center; padding: 10px;">
@@ -538,10 +580,21 @@ Return ONLY a single valid JSON object with these exact keys:
       if (isSelf) return;
       const title = c.querySelector('.fm-member-title')?.textContent.trim() || `সদস্য - ${toBnDigits(i + 1)}`;
       const isSel = (selectedIndex === (i + 1)) ? 'selected' : '';
-      html += `<option value="${i + 1}" ${isSel}>${title}</option>`;
+      html += `<option value="${i + 1}" ${isSel}>${escapeHtml(title)}</option>`;
     });
     html += '<option value="new">➕ নতুন সদস্য কার্ড যোগ করে ফিল করুন</option>';
     selectTargetMember.innerHTML = html;
+    if (selectedIndex === 'new') selectTargetMember.value = 'new';
+  }
+
+  function updateVillageSelectDropdown() {
+    if (!selectVillage) return;
+    const vList = safeJsonParse(localStorage.getItem('fc_village_list'), savedVillageList);
+    savedVillageList = Array.isArray(vList) && vList.length ? vList : ['বসাকুষ্টিয়া', 'চর কলিমহর'];
+    savedDefaultVillage = localStorage.getItem('fc_default_village') || savedVillageList[0] || 'বসাকুষ্টিয়া';
+    savedPostcode = localStorage.getItem('fc_default_postcode') || '7721';
+    if (inputPostcode) inputPostcode.value = savedPostcode;
+    selectVillage.innerHTML = savedVillageList.map(v => `<option value="${escapeHtml(v)}" ${v === savedDefaultVillage ? 'selected' : ''}>${escapeHtml(v)}</option>`).join('');
   }
 
   function setScanTarget(type, card = null, index = 1) {
@@ -590,11 +643,17 @@ Return ONLY a single valid JSON object with these exact keys:
   inputPostcode.addEventListener('change', () => {
     savedPostcode = inputPostcode.value.trim() || '7721';
     localStorage.setItem('fc_default_postcode', savedPostcode);
+    const bar = document.getElementById('fc-inline-village-bar');
+    if (bar) bar.remove();
+    handleSection4Address();
   });
 
   selectVillage.addEventListener('change', () => {
     savedDefaultVillage = selectVillage.value;
     localStorage.setItem('fc_default_village', savedDefaultVillage);
+    const bar = document.getElementById('fc-inline-village-bar');
+    if (bar) bar.remove();
+    handleSection4Address();
   });
 
   btnAddVillage.addEventListener('click', () => {
@@ -606,12 +665,16 @@ Return ONLY a single valid JSON object with these exact keys:
     }
     savedDefaultVillage = newName;
     localStorage.setItem('fc_default_village', savedDefaultVillage);
-    selectVillage.innerHTML = savedVillageList.map(v => `<option value="${v}" ${v === savedDefaultVillage ? 'selected' : ''}>${v}</option>`).join('');
+    updateVillageSelectDropdown();
+    const bar = document.getElementById('fc-inline-village-bar');
+    if (bar) bar.remove();
+    handleSection4Address();
     inputNewVillage.value = '';
     showToast(`✅ গ্রাম "${newName}" সফলভাবে যোগ করা হয়েছে এবং ডিফল্ট করা হলো!`);
   });
 
   fab.addEventListener('click', () => {
+    updateVillageSelectDropdown();
     const tab6 = document.querySelector('[data-family-card-tab="6"]');
     const isTab6Active = tab6 && (tab6.style.display !== 'none' || tab6.classList.contains('v-expansion-panel--active'));
     if (isTab6Active) {
@@ -718,6 +781,8 @@ Return ONLY a single valid JSON object with these exact keys:
       runGeminiOCR(base64Data);
     } catch (err) {
       alert('ছবি প্রক্রিয়াকরণ ব্যর্থ: ' + err.message);
+    } finally {
+      fileInput.value = '';
     }
   });
 
@@ -809,31 +874,60 @@ Return ONLY a single valid JSON object with these exact keys:
       const outputText = jsonRes.candidates?.[0]?.content?.parts?.[0]?.text;
       if (!outputText) throw new Error('Gemini থেকে উত্তর পাওয়া যায়নি।');
 
-      let cleanText = outputText.trim();
-      if (cleanText.startsWith('```json')) cleanText = cleanText.substring(7);
-      if (cleanText.startsWith('```')) cleanText = cleanText.substring(3);
-      if (cleanText.endsWith('```')) cleanText = cleanText.substring(0, cleanText.length - 3);
+      const fenceMatch = outputText.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+      let cleanText = fenceMatch ? fenceMatch[1].trim() : outputText.trim();
+      const objMatch = cleanText.match(/\{[\s\S]*\}/);
+      if (objMatch) cleanText = objMatch[0];
 
-      const data = JSON.parse(cleanText.trim());
+      const data = JSON.parse(cleanText);
 
-      // 1. Bengali to English numeral normalization
-      let num = data.doc_number || data.nid_number || '';
-      num = normalizeDigits(num).replace(/[^0-9]/g, '');
-
-      // Strict NID rule: if NID and 13 digits, prepend birth year
-      if ((data.doc_type === 'nid' || !data.doc_type) && num.length === 13) {
-        const ym = String(data.dob || '').match(/\b(19\d{2}|20\d{2})\b/);
-        if (ym) num = ym[1] + num;
+      // Respect manual document type selection from modal when Scanning Member
+      const docTypeChoice = activeScanTarget.type === 'member'
+        ? (document.getElementById('fc-bm-doc-type')?.value || 'auto')
+        : 'auto';
+      if (docTypeChoice && docTypeChoice !== 'auto') {
+        data.doc_type = docTypeChoice;
       }
-      data.doc_number = num;
-      data.nid_number = num;
 
+      // Standardize DOB first so Bengali digits work in 13->17 NID conversion
       if (data.dob) data.dob = standardizeDate(data.dob);
 
+      // Canonicalize gender & relationship terms
+      const genderMap = { 'তৃতীয় লিঙ্গ': 'হিজড়া', 'তৃতীয় লিঙ্গ': 'হিজড়া', 'হিজড়া': 'হিজড়া' };
+      if (data.gender) {
+        const ng = normalizeBn(data.gender);
+        data.gender = genderMap[ng] || ng;
+      }
+      const relMap = { 'ছেলে': 'পুত্র', 'মেয়ে': 'কন্যা', 'মেয়ে': 'কন্যা', 'বাবা': 'পিতা', 'মা': 'মাতা' };
+      if (data.relation_suggestion) {
+        const nr = normalizeBn(data.relation_suggestion);
+        data.relation_suggestion = relMap[nr] || nr;
+      }
+
+      // 1. Bengali to English numeral normalization
+      const rawNum = data.doc_number || (data.doc_type === 'birth_certificate' ? data.birth_reg_no : data.nid_number) || data.nid_number || data.birth_reg_no || '';
+      let num = normalizeDigits(rawNum).replace(/[^0-9]/g, '');
+
+      // Strict NID rule: if NID and 13 digits, prepend birth year
+      if (data.doc_type !== 'birth_certificate' && num.length === 13) {
+        const ym = String(data.dob || '').match(/\b(19\d{2}|20\d{2})\b/);
+        if (ym) {
+          num = ym[1] + num;
+          data.nid_converted_to_17 = true;
+        }
+      }
+      data.doc_number = num;
+      if (data.doc_type === 'birth_certificate') {
+        data.birth_reg_no = num;
+      } else {
+        data.doc_type = data.doc_type || 'nid';
+        data.nid_number = num;
+      }
+
       // 2. Uppercase English names
-      if (data.name_en) data.name_en = String(data.name_en).toUpperCase();
-      if (data.father_name_en) data.father_name_en = String(data.father_name_en).toUpperCase();
-      if (data.mother_name_en) data.mother_name_en = String(data.mother_name_en).toUpperCase();
+      if (data.name_en) data.name_en = String(data.name_en).toUpperCase().trim();
+      if (data.father_name_en) data.father_name_en = String(data.father_name_en).toUpperCase().trim();
+      if (data.mother_name_en) data.mother_name_en = String(data.mother_name_en).toUpperCase().trim();
 
       data.family_id = scrapeFamilyId() || '';
 
@@ -841,18 +935,27 @@ Return ONLY a single valid JSON object with these exact keys:
         let targetCard = activeScanTarget.card;
         if (!targetCard) {
           const cards = Array.from(document.querySelectorAll('.fm-members-stack .fm-member-card, [data-family-card-tab="6"] .fm-member-card'));
-          targetCard = cards.find(c => {
-            const isSelf = c.classList.contains('fm-member-card--self') || (c.textContent.includes('সদস্য - ১') && c.textContent.includes('নিজ'));
-            if (isSelf) return false;
-            const hasName = c.querySelector('input:not([disabled])')?.value;
-            return !hasName && c.dataset.fcMemberAutoFilled !== 'true';
-          });
-
-          if (!targetCard) {
+          if (activeScanTarget.index === 'new') {
             triggerPortalAddMember();
             await new Promise(r => setTimeout(r, 450));
             const updatedCards = Array.from(document.querySelectorAll('.fm-members-stack .fm-member-card, [data-family-card-tab="6"] .fm-member-card'));
             targetCard = updatedCards[updatedCards.length - 1];
+          } else if (typeof activeScanTarget.index === 'number' && cards[activeScanTarget.index - 1]) {
+            targetCard = cards[activeScanTarget.index - 1];
+          } else {
+            targetCard = cards.find(c => {
+              const isSelf = c.classList.contains('fm-member-card--self') || (c.textContent.includes('সদস্য - ১') && c.textContent.includes('নিজ'));
+              if (isSelf) return false;
+              const hasName = c.querySelector('input:not([disabled])')?.value;
+              return !hasName && c.dataset.fcMemberAutoFilled !== 'true';
+            });
+
+            if (!targetCard) {
+              triggerPortalAddMember();
+              await new Promise(r => setTimeout(r, 450));
+              const updatedCards = Array.from(document.querySelectorAll('.fm-members-stack .fm-member-card, [data-family-card-tab="6"] .fm-member-card'));
+              targetCard = updatedCards[updatedCards.length - 1];
+            }
           }
         }
 
@@ -867,7 +970,9 @@ Return ONLY a single valid JSON object with these exact keys:
         if (targetCard) {
           await fillMemberCard(targetCard, data);
           handleSection5AndCrossMatch();
-          const cardIdx = (typeof activeScanTarget.index === 'number') ? activeScanTarget.index : 2;
+          const allCards = Array.from(document.querySelectorAll('.fm-members-stack .fm-member-card, [data-family-card-tab="6"] .fm-member-card'));
+          const realIdx = allCards.indexOf(targetCard);
+          const cardIdx = realIdx >= 0 ? (realIdx + 1) : ((typeof activeScanTarget.index === 'number') ? activeScanTarget.index : allCards.length || 2);
           syncMemberToFirestore(data, cardIdx);
           showToast(`✅ সদস্য (${data.name_bn || data.doc_number}) সফলভাবে পূরণ হয়েছে!`);
         } else {
@@ -880,9 +985,10 @@ Return ONLY a single valid JSON object with these exact keys:
         data.mobile_number = normalizeDigits(document.getElementById('fc-bm-mobile').value.trim());
 
         lastExtractedData = data;
+        window.__fcStep1FilledKey = '';
         modal.style.display = 'none';
 
-        fillPortalFields(data);
+        await fillPortalFields(data);
         showToast('✅ এনআইডি তথ্য সফলভাবে পূরণ হয়েছে!');
         syncToFirestore(data);
       }
@@ -898,32 +1004,36 @@ Return ONLY a single valid JSON object with these exact keys:
   // Direct Firestore REST API Sync (rajbari-city-app-16601)
   async function syncToFirestore(data) {
     try {
-      const docId = data.family_id || data.nid_number || ('card_' + Date.now());
-      const url = `https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(docId)}`;
-      
-      const firestoreDoc = {
-        fields: {
-          family_id: { stringValue: data.family_id || '' },
-          nid_number: { stringValue: data.nid_number || '' },
-          name_bn: { stringValue: data.name_bn || '' },
-          name_en: { stringValue: data.name_en || '' },
-          dob: { stringValue: data.dob || '' },
-          gender: { stringValue: data.gender || '' },
-          father_name_bn: { stringValue: data.father_name_bn || '' },
-          father_name_en: { stringValue: data.father_name_en || '' },
-          mother_name_bn: { stringValue: data.mother_name_bn || '' },
-          mother_name_en: { stringValue: data.mother_name_en || '' },
-          marital_status: { stringValue: data.marital_status || 'বিবাহিত' },
-          religion: { stringValue: data.religion || 'ইসলাম' },
-          mobile_number: { stringValue: data.mobile_number || '' },
-          synced_at: { timestampValue: new Date().toISOString() }
-        }
+      const docId = getSafeFamilyDocId(data);
+      if (!docId) {
+        console.warn('[FamilyCard] Skipped Firestore applicant sync: no family_id or document number');
+        return;
+      }
+
+      const fields = {
+        nid_number: { stringValue: data.nid_number || '' },
+        name_bn: { stringValue: data.name_bn || '' },
+        name_en: { stringValue: data.name_en || '' },
+        dob: { stringValue: data.dob || '' },
+        gender: { stringValue: data.gender || '' },
+        father_name_bn: { stringValue: data.father_name_bn || '' },
+        father_name_en: { stringValue: data.father_name_en || '' },
+        mother_name_bn: { stringValue: data.mother_name_bn || '' },
+        mother_name_en: { stringValue: data.mother_name_en || '' },
+        marital_status: { stringValue: data.marital_status || 'বিবাহিত' },
+        religion: { stringValue: data.religion || 'ইসলাম' },
+        mobile_number: { stringValue: data.mobile_number || '' },
+        synced_at: { timestampValue: new Date().toISOString() }
       };
+      if (data.family_id) fields.family_id = { stringValue: normalizeDigits(data.family_id) };
+
+      const updateMask = Object.keys(fields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
+      const url = `https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(docId)}?${updateMask}`;
 
       await fetch(url, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(firestoreDoc)
+        body: JSON.stringify({ fields })
       });
       console.log('[FamilyCard] Firestore synced successfully:', docId);
     } catch (e) {
@@ -1104,19 +1214,18 @@ Return ONLY a single valid JSON object with these exact keys:
     });
   }
 
-  function applySmartDefaultsToAllMembers() {
+  async function applySmartDefaultsToAllMembers() {
     const cards = Array.from(document.querySelectorAll('.fm-members-stack .fm-member-card, [data-family-card-tab="6"] .fm-member-card'));
     let count = 0;
-    cards.forEach(card => {
+    for (const card of cards) {
       const isSelf = card.classList.contains('fm-member-card--self') || (card.textContent.includes('সদস্য - ১') && card.textContent.includes('নিজ'));
-      if (isSelf) return;
+      if (isSelf) continue;
 
       const relLabels = Array.from(card.querySelectorAll('label')).filter(l => l.textContent.includes('ধর্ম'));
       for (const rl of relLabels) {
         const col = rl.closest('.col, [class*="col-"]');
         if (col && !col.querySelector('.v-select__selection')?.textContent.trim()) {
-          selectSingleVuetifyOption(col, ['ইসলাম']);
-          count++;
+          if (await selectSingleVuetifyOption(col, ['ইসলাম'])) count++;
         }
       }
 
@@ -1124,18 +1233,20 @@ Return ONLY a single valid JSON object with these exact keys:
       for (const dl of disLabels) {
         const col = dl.closest('.col, [class*="col-"]');
         if (col && !col.querySelector('.v-select__selection')?.textContent.trim()) {
-          selectSingleVuetifyOption(col, ['না', 'প্রতিবন্ধী নন']);
-          count++;
+          if (await selectSingleVuetifyOption(col, ['না', 'প্রতিবন্ধী নন'])) count++;
         }
       }
-    });
+    }
     showToast(`⚡ ${toBnDigits(count)}টি সদস্য ফিল্ডে স্মার্ট ডিফল্ট প্রয়োগ করা হয়েছে!`);
   }
 
   async function syncMemberToFirestore(memberData, memberIndex) {
     try {
-      const rawId = scrapeFamilyId() || (lastExtractedData && lastExtractedData.family_id) || '8743033825';
-      const cleanId = normalizeDigits(rawId).replace(/[^0-9]/g, '') || '8743033825';
+      const cleanId = getSafeFamilyDocId(lastExtractedData || memberData);
+      if (!cleanId) {
+        console.warn('[FamilyCard] Skipped Firestore member sync: no family_id available');
+        return;
+      }
       const memberDocId = `member_${memberIndex}_${memberData.doc_number || Date.now()}`;
       const url = `https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(cleanId)}/members/${encodeURIComponent(memberDocId)}`;
 
@@ -1194,14 +1305,16 @@ Return ONLY a single valid JSON object with these exact keys:
     return true;
   }
 
-  function findInputByLabel(keywords) {
-    const labels = Array.from(document.querySelectorAll('label'));
+  function findInputByLabel(keywords, rootEl = null) {
+    const scope = rootEl || document;
+    const normKeys = keywords.map(k => normalizeBn(k));
+    const labels = Array.from(scope.querySelectorAll('label'));
     for (const label of labels) {
-      const text = label.textContent || '';
-      if (keywords.some(k => text.includes(k))) {
+      const text = normalizeBn(label.textContent || '');
+      if (normKeys.some(k => text.includes(k))) {
         if (label.htmlFor) {
           const inp = document.getElementById(label.htmlFor);
-          if (inp && !inp.disabled) return inp;
+          if (inp && !inp.disabled && (!rootEl || rootEl.contains(inp))) return inp;
         }
         const parent = label.closest('.col, [class*="col-"], span, div');
         if (parent) {
@@ -1213,67 +1326,96 @@ Return ONLY a single valid JSON object with these exact keys:
     return null;
   }
 
-  // Polling Vuetify Dropdown Selector with retry for slow tablets
-  function selectDropdown(labelKeywords, targetText) {
-    if (!targetText) return;
-    const labels = Array.from(document.querySelectorAll('label'));
-    let container = null;
-    for (const l of labels) {
-      if (labelKeywords.some(k => (l.textContent || '').includes(k))) {
-        container = l.closest('.col, [class*="col-"], span, div');
-        break;
+  // Sequential Awaitable Vuetify Dropdown Selector scoped by aria-owns / active menu
+  function selectDropdown(labelKeywords, targetText, rootEl = null) {
+    return new Promise((resolve) => {
+      if (!targetText) return resolve(false);
+      const scope = rootEl || document;
+      const normKeys = labelKeywords.map(k => normalizeBn(k));
+      const normTarget = normalizeBn(targetText);
+      const labels = Array.from(scope.querySelectorAll('label'));
+      let container = null;
+      for (const l of labels) {
+        if (normKeys.some(k => normalizeBn(l.textContent || '').includes(k))) {
+          container = l.closest('.col, [class*="col-"], span, div');
+          break;
+        }
       }
-    }
-    if (!container) return;
+      if (!container) return resolve(false);
 
-    const currentSel = container.querySelector('.v-select__selection');
-    if (currentSel && currentSel.textContent.trim().includes(targetText)) return;
+      const currentSel = container.querySelector('.v-select__selection');
+      if (currentSel && normalizeBn(currentSel.textContent).includes(normTarget)) return resolve(true);
 
-    const clickTarget = container.querySelector('.v-input__slot') || container.querySelector('input');
-    if (clickTarget) {
+      const clickTarget = container.querySelector('.v-input__slot') || container.querySelector('input');
+      if (!clickTarget) return resolve(false);
+
+      const listId = clickTarget.getAttribute('aria-owns') || container.querySelector('[aria-owns]')?.getAttribute('aria-owns');
       clickTarget.click();
       let attempts = 0;
       const interval = setInterval(() => {
         attempts++;
-        const items = Array.from(document.querySelectorAll('.v-menu__content .v-list-item, .v-menu__content .v-list-item__title'));
-        for (const it of items) {
-          if (it.textContent.trim().includes(targetText)) {
-            const clickable = it.closest('.v-list-item') || it;
-            clickable.click();
-            clearInterval(interval);
-            return;
-          }
+        let items = [];
+        if (listId) {
+          const listEl = document.getElementById(listId);
+          if (listEl) items = Array.from(listEl.querySelectorAll('.v-list-item'));
         }
-        if (attempts >= 8) clearInterval(interval);
-      }, 150);
-    }
+        if (items.length === 0) {
+          items = Array.from(document.querySelectorAll('.v-menu__content.menuable__content__active .v-list-item, .v-menu__content.menuable__content__active .v-list-item__title'));
+        }
+        if (items.length === 0 && attempts >= 3) {
+          items = Array.from(document.querySelectorAll('.v-menu__content .v-list-item, .v-menu__content .v-list-item__title')).filter(el => el.offsetParent !== null);
+        }
+
+        const exact = items.find(it => normalizeBn(it.textContent) === normTarget);
+        const partial = exact || items.find(it => normalizeBn(it.textContent).includes(normTarget));
+        if (partial) {
+          const clickable = partial.closest('.v-list-item') || partial;
+          clickable.click();
+          clearInterval(interval);
+          setTimeout(() => resolve(true), 120);
+          return;
+        }
+        if (attempts >= 8) {
+          clearInterval(interval);
+          resolve(false);
+        }
+      }, 120);
+    });
   }
 
-  function fillPortalFields(data) {
-    if (!data) return;
+  let isFillingPortalFields = false;
+  async function fillPortalFields(data) {
+    if (!data || isFillingPortalFields) return;
+    isFillingPortalFields = true;
+    try {
+      const tab0 = document.querySelector('[data-family-card-tab="0"]');
+      const tab1 = document.querySelector('[data-family-card-tab="1"]');
 
-    // Step 0: NID Verification
-    if (data.name_bn) setReactiveValue(findInputByLabel(['সম্পূর্ণ নাম (বাংলা)']) || document.getElementById('input-211'), data.name_bn);
-    if (data.name_en) setReactiveValue(findInputByLabel(['সম্পূর্ণ নাম (ইংরেজি)']) || document.getElementById('input-213'), data.name_en);
-    if (data.nid_number) setReactiveValue(findInputByLabel(['জাতীয় পরিচিতি নম্বর (এনআইডি)', 'জাতীয় পরিচিতি নম্বর']) || document.getElementById('input-215'), data.nid_number);
-    if (data.dob) setReactiveValue(findInputByLabel(['জন্ম তারিখ']) || document.getElementById('input-221'), data.dob);
-    if (data.gender) selectDropdown(['লিঙ্গ'], data.gender);
+      // Step 0: NID Verification
+      if (data.name_bn) setReactiveValue(findInputByLabel(['সম্পূর্ণ নাম (বাংলা)'], tab0) || findInputByLabel(['সম্পূর্ণ নাম (বাংলা)']) || document.getElementById('input-211'), data.name_bn);
+      if (data.name_en) setReactiveValue(findInputByLabel(['সম্পূর্ণ নাম (ইংরেজি)'], tab0) || findInputByLabel(['সম্পূর্ণ নাম (ইংরেজি)']) || document.getElementById('input-213'), data.name_en);
+      if (data.nid_number) setReactiveValue(findInputByLabel(['জাতীয় পরিচিতি নম্বর (এনআইডি)', 'জাতীয় পরিচিতি নম্বর'], tab0) || findInputByLabel(['জাতীয় পরিচিতি নম্বর']) || document.getElementById('input-215'), data.nid_number);
+      if (data.dob) setReactiveValue(findInputByLabel(['জন্ম তারিখ'], tab0) || findInputByLabel(['জন্ম তারিখ']) || document.getElementById('input-221'), data.dob);
+      if (data.gender) await selectDropdown(['লিঙ্গ'], data.gender, tab0 || document);
 
-    // Step 1: Personal Details
-    if (data.father_name_bn) setReactiveValue(findInputByLabel(['পিতার নাম (বাংলা)']) || document.getElementById('input-1286') || document.getElementById('input-242'), data.father_name_bn);
-    if (data.father_name_en) setReactiveValue(findInputByLabel(['পিতার নাম (ইংরেজি)']) || document.getElementById('input-1288') || document.getElementById('input-244'), data.father_name_en);
-    if (data.mother_name_bn) setReactiveValue(findInputByLabel(['মাতার নাম (বাংলা)']) || document.getElementById('input-1290') || document.getElementById('input-246'), data.mother_name_bn);
-    if (data.mother_name_en) setReactiveValue(findInputByLabel(['মাতার নাম (ইংরেজি)']) || document.getElementById('input-1292') || document.getElementById('input-248'), data.mother_name_en);
-    if (data.marital_status) selectDropdown(['বৈবাহিক অবস্থা'], data.marital_status);
-    if (data.religion) selectDropdown(['ধর্ম'], data.religion);
+      // Step 1: Personal Details
+      if (data.father_name_bn) setReactiveValue(findInputByLabel(['পিতার নাম (বাংলা)'], tab1) || findInputByLabel(['পিতার নাম (বাংলা)']) || document.getElementById('input-1286') || document.getElementById('input-242'), data.father_name_bn);
+      if (data.father_name_en) setReactiveValue(findInputByLabel(['পিতার নাম (ইংরেজি)'], tab1) || findInputByLabel(['পিতার নাম (ইংরেজি)']) || document.getElementById('input-1288') || document.getElementById('input-244'), data.father_name_en);
+      if (data.mother_name_bn) setReactiveValue(findInputByLabel(['মাতার নাম (বাংলা)'], tab1) || findInputByLabel(['মাতার নাম (বাংলা)']) || document.getElementById('input-1290') || document.getElementById('input-246'), data.mother_name_bn);
+      if (data.mother_name_en) setReactiveValue(findInputByLabel(['মাতার নাম (ইংরেজি)'], tab1) || findInputByLabel(['মাতার নাম (ইংরেজি)']) || document.getElementById('input-1292') || document.getElementById('input-248'), data.mother_name_en);
+      if (data.marital_status) await selectDropdown(['বৈবাহিক অবস্থা'], data.marital_status, tab1 || document);
+      if (data.religion) await selectDropdown(['ধর্ম'], data.religion, tab1 || document);
 
-    // Mobile number
-    if (data.mobile_number) {
-      setReactiveValue(findInputByLabel(['মোবাইল নম্বর']) || document.getElementById('input-1294') || document.getElementById('input-250'), data.mobile_number);
+      // Mobile number
+      if (data.mobile_number) {
+        setReactiveValue(findInputByLabel(['মোবাইল নম্বর'], tab1) || findInputByLabel(['মোবাইল নম্বর']) || document.getElementById('input-1294') || document.getElementById('input-250'), data.mobile_number);
+      }
+
+      // Step 4: Collection Address Auto-fill
+      handleSection4Address();
+    } finally {
+      setTimeout(() => { isFillingPortalFields = false; }, 200);
     }
-
-    // Step 4: Collection Address Auto-fill
-    handleSection4Address();
   }
 
   // --- SECTION 3: IMAGE GUARDIAN & COMPLIANCE SYSTEM ---
@@ -1298,37 +1440,49 @@ Return ONLY a single valid JSON object with these exact keys:
             height = Math.round(height * ratio);
           }
 
-          const canvas = document.createElement('canvas');
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          ctx.fillStyle = '#ffffff';
-          ctx.fillRect(0, 0, width, height);
-          ctx.drawImage(img, 0, 0, width, height);
-
           let quality = 0.88;
+          function drawScaled(w, h) {
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, w, h);
+            ctx.drawImage(img, 0, 0, w, h);
+          }
+          drawScaled(width, height);
+
           function tryEncode() {
             canvas.toBlob((blob) => {
               if (!blob) {
                 reject(new Error('Canvas blob generation failed'));
                 return;
               }
-              if (blob.size > maxBytes && quality > 0.42) {
-                quality -= 0.12;
-                tryEncode();
-              } else {
-                const baseName = (file.name || 'image.jpg').replace(/\.[^/.]+$/, "");
-                const optimizedFile = new File([blob], `${baseName}_optimized.jpg`, {
-                  type: 'image/jpeg',
-                  lastModified: Date.now()
-                });
-                resolve({
-                  file: optimizedFile,
-                  width,
-                  height,
-                  sizeKb: Math.round(blob.size / 1024)
-                });
+              if (blob.size > maxBytes) {
+                if (quality > 0.36) {
+                  quality -= 0.12;
+                  tryEncode();
+                  return;
+                }
+                if (width > 240 && height > 180) {
+                  width = Math.round(width * 0.78);
+                  height = Math.round(height * 0.78);
+                  quality = 0.76;
+                  drawScaled(width, height);
+                  tryEncode();
+                  return;
+                }
               }
+              const baseName = (file.name || 'image.jpg').replace(/\.[^/.]+$/, "");
+              const optimizedFile = new File([blob], `${baseName}_optimized.jpg`, {
+                type: 'image/jpeg',
+                lastModified: Date.now()
+              });
+              resolve({
+                file: optimizedFile,
+                width,
+                height,
+                sizeKb: Math.round(blob.size / 1024)
+              });
             }, 'image/jpeg', quality);
           }
           tryEncode();
@@ -1343,7 +1497,7 @@ Return ONLY a single valid JSON object with these exact keys:
     if (!inputEl || inputEl.__fcGuardianAttached) return;
     inputEl.__fcGuardianAttached = true;
 
-    inputEl.addEventListener('change', async () => {
+    inputEl.addEventListener('change', async (e) => {
       if (inputEl.__isOptimizing) return;
       const file = inputEl.files?.[0];
       if (!file) {
@@ -1357,8 +1511,9 @@ Return ONLY a single valid JSON object with these exact keys:
       const maxH = isHouse ? 400 : (isSig ? 400 : 800);
       const maxBytes = 195 * 1024;
 
-      // Check if image exceeds portal 200KB limit or 600x400
+      // Intercept oversized or house photos in capture phase BEFORE Vue/Vuetify uploads the original
       if (file.size > maxBytes || isHouse) {
+        e.stopImmediatePropagation();
         try {
           inputEl.__isOptimizing = true;
           const label = isHouse ? 'বাড়ির ছবি' : (isSig ? 'স্বাক্ষর' : 'আবেদনকারীর ছবি');
@@ -1366,25 +1521,25 @@ Return ONLY a single valid JSON object with these exact keys:
 
           const result = await compressAndFitImage(file, maxW, maxH, maxBytes);
 
-          // Replace files via standard DataTransfer
+          // Replace files via standard DataTransfer before passing change to Vue
           const dt = new DataTransfer();
           dt.items.add(result.file);
           inputEl.files = dt.files;
 
           showToast(`✅ ${label} সরকারি মাপে ফিট (${result.sizeKb} KB, ${result.width}x${result.height}) হয়েছে!`);
 
-          // Notify Vuetify & Vue reactivity
+          // Re-dispatch compliant file events cleanly while __isOptimizing stays true synchronously
           inputEl.dispatchEvent(new Event('input', { bubbles: true }));
           inputEl.dispatchEvent(new Event('change', { bubbles: true }));
         } catch (err) {
           console.warn('[MediaGuardian] Failed to compress image:', err);
         } finally {
-          setTimeout(() => { inputEl.__isOptimizing = false; }, 600);
+          inputEl.__isOptimizing = false;
         }
       }
 
       setTimeout(traceSection3Media, 400);
-    });
+    }, true);
   }
 
   // --- SECTION 3: REAL-TIME HUD & SCRAPING TRACER ---
@@ -1530,8 +1685,8 @@ Return ONLY a single valid JSON object with these exact keys:
 
   async function syncMediaToFirestore(mediaData) {
     try {
-      const rawId = scrapeFamilyId() || (lastExtractedData && lastExtractedData.family_id) || '8743033825';
-      const cleanId = normalizeDigits(rawId).replace(/[^0-9]/g, '') || '8743033825';
+      const cleanId = getSafeFamilyDocId(lastExtractedData);
+      if (!cleanId) return;
 
       const fields = {
         section3_verified: { booleanValue: mediaData.completed_count === 3 },
@@ -1613,22 +1768,40 @@ Return ONLY a single valid JSON object with these exact keys:
     return { postCodeInput, villageInput };
   }
 
+  function attachSection4EditGuard(inp) {
+    if (!inp || inp.__fcS4GuardAttached) return;
+    inp.__fcS4GuardAttached = true;
+    inp.addEventListener('input', (e) => {
+      if (e.isTrusted) {
+        inp.dataset.fcS4UserEdited = 'true';
+        inp.dataset.fcS4AutoApplied = 'true';
+      }
+    });
+  }
+
   function handleSection4Address() {
     const { postCodeInput, villageInput } = getSection4CollectionInputs();
     if (!postCodeInput && !villageInput) return;
 
     const currentPostcode = localStorage.getItem('fc_default_postcode') || '7721';
-    const villageList = JSON.parse(localStorage.getItem('fc_village_list') || '["বসাকুষ্টিয়া", "চর কলিমহর"]');
+    const rawList = safeJsonParse(localStorage.getItem('fc_village_list'), ['বসাকুষ্টিয়া', 'চর কলিমহর']);
+    const villageList = Array.isArray(rawList) && rawList.length ? rawList : ['বসাকুষ্টিয়া', 'চর কলিমহর'];
     const currentVillage = localStorage.getItem('fc_default_village') || villageList[0] || 'বসাকুষ্টিয়া';
 
-    if (postCodeInput && !postCodeInput.value) {
-      setReactiveValue(postCodeInput, currentPostcode);
-      console.log('[FamilyCard] Section 4 Post Code filled with default:', currentPostcode);
+    if (postCodeInput) {
+      attachSection4EditGuard(postCodeInput);
+      if (!postCodeInput.value && postCodeInput.dataset.fcS4UserEdited !== 'true' && postCodeInput.dataset.fcS4AutoApplied !== 'true') {
+        setReactiveValue(postCodeInput, currentPostcode);
+        postCodeInput.dataset.fcS4AutoApplied = 'true';
+        console.log('[FamilyCard] Section 4 Post Code filled with default:', currentPostcode);
+      }
     }
 
     if (villageInput) {
-      if (!villageInput.value) {
+      attachSection4EditGuard(villageInput);
+      if (!villageInput.value && villageInput.dataset.fcS4UserEdited !== 'true' && villageInput.dataset.fcS4AutoApplied !== 'true') {
         setReactiveValue(villageInput, currentVillage);
+        villageInput.dataset.fcS4AutoApplied = 'true';
         console.log('[FamilyCard] Section 4 Village filled with default:', currentVillage);
       }
       injectInlineVillageToolbar(villageInput, villageList, currentVillage, currentPostcode);
@@ -1643,7 +1816,7 @@ Return ONLY a single valid JSON object with these exact keys:
     bar.id = 'fc-inline-village-bar';
     bar.style.cssText = 'margin-bottom: 6px; padding: 6px 10px; background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; font-family: -apple-system, sans-serif; box-shadow: 0 2px 5px rgba(0,0,0,0.05);';
 
-    let optionsHtml = villageList.map(v => `<option value="${v}" ${v === currentVillage ? 'selected' : ''}>${v}</option>`).join('');
+    let optionsHtml = villageList.map(v => `<option value="${escapeHtml(v)}" ${v === currentVillage ? 'selected' : ''}>${escapeHtml(v)}</option>`).join('');
     optionsHtml += '<option value="__ADD_NEW__">➕ নতুন গ্রাম যোগ করুন...</option>';
 
     bar.innerHTML = `
@@ -1654,7 +1827,7 @@ Return ONLY a single valid JSON object with these exact keys:
         </select>
       </div>
       <div style="font-size: 11px; color: #15803d; font-weight: 600;">
-        📮 পোস্ট কোড: <b>${currentPostcode}</b> (তথ্য সংগ্রহের ঠিকানা)
+        📮 পোস্ট কোড: <b>${escapeHtml(currentPostcode)}</b> (তথ্য সংগ্রহের ঠিকানা)
       </div>
     `;
 
@@ -1666,13 +1839,17 @@ Return ONLY a single valid JSON object with these exact keys:
         const newName = prompt('নতুন গ্রামের নাম লিখুন:');
         if (newName && newName.trim()) {
           const trimmed = newName.trim();
-          let list = JSON.parse(localStorage.getItem('fc_village_list') || '["বসাকুষ্টিয়া", "চর কলিমহর"]');
+          const curList = safeJsonParse(localStorage.getItem('fc_village_list'), ['বসাকুষ্টিয়া', 'চর কলিমহর']);
+          const list = Array.isArray(curList) ? curList : ['বসাকুষ্টিয়া', 'চর কলিমহর'];
           if (!list.includes(trimmed)) {
             list.push(trimmed);
             localStorage.setItem('fc_village_list', JSON.stringify(list));
           }
           localStorage.setItem('fc_default_village', trimmed);
+          delete villageInput.dataset.fcS4UserEdited;
           setReactiveValue(villageInput, trimmed);
+          villageInput.dataset.fcS4AutoApplied = 'true';
+          updateVillageSelectDropdown();
           showToast(`✅ নতুন গ্রাম "${trimmed}" যোগ করা হয়েছে এবং ডিফল্ট করা হলো!`);
           bar.remove();
           injectInlineVillageToolbar(villageInput, list, trimmed, currentPostcode);
@@ -1682,7 +1859,10 @@ Return ONLY a single valid JSON object with these exact keys:
       } else {
         const chosen = sel.value;
         localStorage.setItem('fc_default_village', chosen);
+        delete villageInput.dataset.fcS4UserEdited;
         setReactiveValue(villageInput, chosen);
+        villageInput.dataset.fcS4AutoApplied = 'true';
+        updateVillageSelectDropdown();
         showToast(`✅ গ্রাম "${chosen}" সেট করা হয়েছে (সব ফর্মে প্রযোজ্য)!`);
       }
     });
@@ -1704,35 +1884,42 @@ Return ONLY a single valid JSON object with these exact keys:
   function trackSection5Data() {
     const panel = document.querySelector('[data-family-card-tab="3"]') ||
                   Array.from(document.querySelectorAll('.v-expansion-panel')).find(p => p.textContent.includes('ফ্যামিলি কার্ড অনুযায়ী বিস্তারিত'));
-    
-    // Check if previously cached in localStorage
-    const cached = JSON.parse(localStorage.getItem('fc_section5_data') || 'null');
+
+    const familyKey = scrapeFamilyId() || 'default';
+    const rawCache = safeJsonParse(localStorage.getItem('fc_section5_data'), null);
+    const cached = (rawCache && rawCache._familyKey === familyKey) ? rawCache : null;
 
     if (!panel) return cached;
 
     const data = {
-      maleCount: cached ? cached.maleCount : 0,
-      femaleCount: cached ? cached.femaleCount : 0,
-      transCount: cached ? cached.transCount : 0,
-      totalCount: cached ? cached.totalCount : 0,
-      training: cached ? cached.training : '',
-      mfsAccount: cached ? cached.mfsAccount : '',
-      abroadMale: cached ? cached.abroadMale : 0,
-      abroadFemale: cached ? cached.abroadFemale : 0,
-      abroadTrans: cached ? cached.abroadTrans : 0
+      _familyKey: familyKey,
+      maleCount: 0,
+      femaleCount: 0,
+      transCount: 0,
+      totalCount: 0,
+      training: '',
+      mfsAccount: '',
+      abroadMale: 0,
+      abroadFemale: 0,
+      abroadTrans: 0
     };
 
     let hasFoundFields = false;
+    let sawCountFieldsInDom = false;
     const cols = Array.from(panel.querySelectorAll('.col, [class*="col-"]'));
 
     cols.forEach(col => {
       const labelEl = col.querySelector('label');
       if (!labelEl) return;
-      const label = labelEl.textContent.replace(/[\*\s]+/g, ' ').trim();
+      const label = normalizeBn(labelEl.textContent).replace(/[\*\s]+/g, ' ').trim();
+
+      if (/পরিবারে\s*(পুরুষ|নারী|হিজড়া)\s*সদস্য\s*সংখ্যা/i.test(label)) {
+        sawCountFieldsInDom = true;
+      }
 
       const selEl = col.querySelector('.v-select__selection');
       const inputEl = col.querySelector('input:not([type="hidden"])');
-      const rawVal = (selEl ? selEl.textContent : (inputEl ? inputEl.value : '')).trim();
+      const rawVal = normalizeBn(selEl ? selEl.textContent : (inputEl ? inputEl.value : ''));
       if (!rawVal) return;
 
       if (/পরিবারে\s*পুরুষ\s*সদস্য\s*সংখ্যা/i.test(label)) {
@@ -1765,6 +1952,7 @@ Return ONLY a single valid JSON object with these exact keys:
       return data;
     }
 
+    if (sawCountFieldsInDom) return data;
     return cached;
   }
 
@@ -1784,22 +1972,36 @@ Return ONLY a single valid JSON object with these exact keys:
     const membersDetail = [];
 
     // Determine applicant's gender (for Member 1 / Self)
-    let applicantGender = (lastExtractedData && lastExtractedData.gender) || '';
+    let applicantGender = normalizeBn((lastExtractedData && lastExtractedData.gender) || '');
     if (!applicantGender) {
-      const gLabels = Array.from(document.querySelectorAll('label')).filter(l => l.textContent.trim().startsWith('লিঙ্গ'));
+      const gLabels = Array.from(document.querySelectorAll('label')).filter(l => normalizeBn(l.textContent).startsWith('লিঙ্গ'));
       for (const gl of gLabels) {
+        if (gl.closest('.fm-member-card')) continue;
         const parent = gl.closest('.col, [class*="col-"]');
         const sel = parent?.querySelector('.v-select__selection');
         if (sel && sel.textContent.trim()) {
-          applicantGender = sel.textContent.trim();
+          applicantGender = normalizeBn(sel.textContent);
           break;
         }
       }
     }
 
-    const maleKeywords = ['পুরুষ', 'স্বামী', 'পুত্র', 'ছেলে', 'পিতা', 'বাবা', 'ভাই', 'দাদা', 'নানা', 'নাতি', 'শ্বশুর', 'চাচা', 'মামা', 'ফুফা', 'খালু', 'দেবর', 'ভাসুর'];
-    const femaleKeywords = ['নারী', 'মহিলা', 'স্ত্রী', 'কন্যা', 'মেয়ে', 'মাতা', 'মা', 'বোন', 'দাদী', 'নানী', 'নাতনি', 'শাশুড়ি', 'চাচী', 'মামী', 'ফুফু', 'খালা', 'ননদ', 'জা'];
-    const transKeywords = ['হিজড়া', 'অন্যান্য'];
+    const maleExactTerms = ['পুরুষ', 'স্বামী', 'পুত্র', 'ছেলে', 'পিতা', 'বাবা', 'ভাই', 'দাদা', 'নানা', 'নাতি', 'শ্বশুর', 'চাচা', 'মামা', 'ফুফা', 'খালু', 'দেবর', 'ভাসুর'];
+    const femaleExactTerms = ['নারী', 'মহিলা', 'স্ত্রী', 'কন্যা', 'মেয়ে', 'মেয়ে', 'মাতা', 'মা', 'বোন', 'দাদী', 'নানী', 'নাতনি', 'শাশুড়ি', 'শাশুড়ি', 'চাচী', 'মামী', 'ফুফু', 'খালা', 'ননদ', 'জা'];
+    const transExactTerms = ['হিজড়া', 'তৃতীয় লিঙ্গ'];
+
+    function matchGenderFromTerm(raw) {
+      const norm = normalizeBn(raw);
+      if (!norm) return '';
+      if (transExactTerms.some(t => norm === t || norm.includes(t))) return 'হিজড়া';
+      if (maleExactTerms.some(t => norm === t)) return 'পুরুষ';
+      if (femaleExactTerms.some(t => norm === t)) return 'নারী';
+      // Multi-word relationship/title tokens (split on whitespace/punctuation to avoid 'মাতা'/'জা' matching inside unrelated words)
+      const tokens = norm.split(/[\s\/,\-\(\)]+/).filter(Boolean);
+      if (tokens.some(tk => maleExactTerms.includes(tk))) return 'পুরুষ';
+      if (tokens.some(tk => femaleExactTerms.includes(tk))) return 'নারী';
+      return '';
+    }
 
     memberCards.forEach((card, idx) => {
       const isSelf = card.classList.contains('fm-member-card--self') || (card.textContent.includes('সদস্য - ১') && card.textContent.includes('নিজ'));
@@ -1812,16 +2014,17 @@ Return ONLY a single valid JSON object with these exact keys:
           detectedGender = 'নারী';
         } else if (applicantGender.includes('হিজড়া')) {
           detectedGender = 'হিজড়া';
-        } else {
+        } else if (applicantGender.includes('পুরুষ')) {
           detectedGender = 'পুরুষ';
         }
       } else {
-        // Scan selects in card
+        // Scan selects in card (never scan <label> text like "মাতার নাম" or "জাতীয়")
         const selects = Array.from(card.querySelectorAll('.v-select'));
         for (const sel of selects) {
           const parentCol = sel.closest('.col, [class*="col-"]') || sel.parentElement;
-          const lbl = parentCol?.querySelector('label')?.textContent || '';
-          const selVal = sel.querySelector('.v-select__selection')?.textContent.trim() || '';
+          const lbl = normalizeBn(parentCol?.querySelector('label')?.textContent || '');
+          const selVal = normalizeBn(sel.querySelector('.v-select__selection')?.textContent || '');
+          if (!selVal) continue;
 
           if (/লিঙ্গ/i.test(lbl)) {
             if (selVal.includes('পুরুষ')) detectedGender = 'পুরুষ';
@@ -1832,24 +2035,14 @@ Return ONLY a single valid JSON object with these exact keys:
           }
         }
 
-        // Deduce from relationship if not explicitly chosen
         if (!detectedGender && relationship) {
-          if (maleKeywords.some(k => relationship.includes(k))) detectedGender = 'পুরুষ';
-          else if (femaleKeywords.some(k => relationship.includes(k))) detectedGender = 'নারী';
-          else if (transKeywords.some(k => relationship.includes(k))) detectedGender = 'হিজড়া';
+          detectedGender = matchGenderFromTerm(relationship);
         }
 
-        // Card body text fallback
+        // Safe fallback using ONLY card header title (not form field labels!)
         if (!detectedGender) {
-          const cardText = card.innerText || '';
-          for (const kw of femaleKeywords) {
-            if (cardText.includes(kw)) { detectedGender = 'নারী'; break; }
-          }
-          if (!detectedGender) {
-            for (const kw of maleKeywords) {
-              if (cardText.includes(kw)) { detectedGender = 'পুরুষ'; break; }
-            }
-          }
+          const titleText = card.querySelector('.fm-member-title')?.textContent || '';
+          detectedGender = matchGenderFromTerm(titleText);
         }
       }
 
@@ -2055,9 +2248,7 @@ Return ONLY a single valid JSON object with these exact keys:
     const scanBtn = banner.querySelector('#fc-s8-scan-member-btn');
     if (scanBtn) {
       scanBtn.onclick = () => {
-        setScanTarget('member');
-        const modal = document.getElementById('fc-scanner-modal');
-        if (modal) modal.style.display = 'flex';
+        openMemberScanner(null, 'auto');
       };
     }
     const addBtn = banner.querySelector('#fc-s8-add-member-btn');
@@ -2076,8 +2267,8 @@ Return ONLY a single valid JSON object with these exact keys:
 
   async function syncCrossMatchToFirestore(sec5Data, membersData, matchResult) {
     try {
-      const rawId = scrapeFamilyId() || (lastExtractedData && lastExtractedData.family_id) || '8743033825';
-      const cleanId = normalizeDigits(rawId).replace(/[^0-9]/g, '') || '8743033825';
+      const cleanId = getSafeFamilyDocId(lastExtractedData);
+      if (!cleanId) return;
 
       const fields = {
         section5_male_declared: { integerValue: String(sec5Data ? sec5Data.maleCount : 0) },
@@ -2279,93 +2470,125 @@ Return ONLY a single valid JSON object with these exact keys:
 
   let isSelectingBranch = false;
   let isSelectingOwnership = false;
+  let isFillingSection6 = false;
 
   function selectVuetifyAutocomplete(container, targetText, fallbackId) {
-    if (!container || !targetText) return;
+    return new Promise((resolve) => {
+      if (!container || !targetText) return resolve(false);
 
-    const currentSel = container.querySelector('.v-select__selection');
-    const inputEl = container.querySelector('input:not([type="hidden"])');
-    const hiddenEl = container.querySelector('input[type="hidden"]');
+      const normTarget = normalizeBn(targetText);
+      const currentSel = container.querySelector('.v-select__selection');
+      const inputEl = container.querySelector('input:not([type="hidden"])');
+      const hiddenEl = container.querySelector('input[type="hidden"]');
 
-    if (currentSel && (currentSel.textContent.includes('মাছপাড়া') || currentSel.textContent.includes('মাছপাড়া'))) return;
-    if (inputEl && inputEl.value && (inputEl.value.includes('মাছপাড়া') || inputEl.value.includes('মাছপাড়া'))) return;
-    if (hiddenEl && fallbackId && hiddenEl.value === String(fallbackId)) return;
+      if (currentSel && normalizeBn(currentSel.textContent).includes(normTarget)) return resolve(true);
+      if (inputEl && inputEl.value && normalizeBn(inputEl.value).includes(normTarget)) return resolve(true);
+      if (hiddenEl && fallbackId && hiddenEl.value === String(fallbackId)) return resolve(true);
 
-    if (isSelectingBranch) return;
-    isSelectingBranch = true;
+      if (isSelectingBranch) return resolve(false);
+      isSelectingBranch = true;
 
-    try {
-      const clickSlot = container.querySelector('.v-input__slot') || inputEl;
-      if (clickSlot) clickSlot.click();
+      try {
+        const clickSlot = container.querySelector('.v-input__slot') || inputEl;
+        const listId = clickSlot?.getAttribute('aria-owns') || container.querySelector('[aria-owns]')?.getAttribute('aria-owns');
+        if (clickSlot) clickSlot.click();
 
-      if (inputEl) {
-        inputEl.focus();
-        setReactiveValue(inputEl, targetText);
-        inputEl.dispatchEvent(new Event('input', { bubbles: true }));
-        inputEl.dispatchEvent(new Event('change', { bubbles: true }));
-      }
+        if (inputEl) {
+          inputEl.focus();
+          setReactiveValue(inputEl, targetText);
+          inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+          inputEl.dispatchEvent(new Event('change', { bubbles: true }));
+        }
 
-      let attempts = 0;
-      const pollInterval = setInterval(() => {
-        attempts++;
-        const menuItems = Array.from(document.querySelectorAll('.v-menu__content .v-list-item, .v-autocomplete__content .v-list-item'));
-        let found = false;
+        let attempts = 0;
+        const pollInterval = setInterval(() => {
+          attempts++;
+          let menuItems = [];
+          if (listId) {
+            const listEl = document.getElementById(listId);
+            if (listEl) menuItems = Array.from(listEl.querySelectorAll('.v-list-item'));
+          }
+          if (menuItems.length === 0) {
+            menuItems = Array.from(document.querySelectorAll('.v-menu__content.menuable__content__active .v-list-item, .v-autocomplete__content.menuable__content__active .v-list-item'));
+          }
+          if (menuItems.length === 0 && attempts >= 3) {
+            menuItems = Array.from(document.querySelectorAll('.v-menu__content .v-list-item, .v-autocomplete__content .v-list-item')).filter(el => el.offsetParent !== null);
+          }
 
-        for (const item of menuItems) {
-          const text = item.textContent || '';
-          if (text.includes('মাছপাড়া') || text.includes('মাছপাড়া') || text.includes(targetText)) {
-            const clickable = item.closest('.v-list-item') || item;
+          const exact = menuItems.find(item => normalizeBn(item.textContent) === normTarget);
+          const match = exact || menuItems.find(item => normalizeBn(item.textContent).includes(normTarget));
+
+          if (match) {
+            const clickable = match.closest('.v-list-item') || match;
             clickable.click();
-            found = true;
             clearInterval(pollInterval);
-            console.log('[FamilyCard] Selected branch:', text.trim());
-            showToast(`✅ ব্যাংক শাখা "${text.trim()}" নির্বাচিত হয়েছে!`);
-            setTimeout(() => { isSelectingBranch = false; }, 500);
-            break;
+            console.log('[FamilyCard] Selected branch:', normalizeBn(match.textContent));
+            showToast(`✅ ব্যাংক শাখা "${normalizeBn(match.textContent)}" নির্বাচিত হয়েছে!`);
+            setTimeout(() => { isSelectingBranch = false; resolve(true); }, 350);
+            return;
           }
-        }
 
-        if (found || attempts >= 8) {
-          clearInterval(pollInterval);
-          if (!found && fallbackId && hiddenEl) {
-            setReactiveValue(hiddenEl, String(fallbackId));
+          if (attempts >= 8) {
+            clearInterval(pollInterval);
+            if (fallbackId && hiddenEl) {
+              setReactiveValue(hiddenEl, String(fallbackId));
+            }
+            setTimeout(() => { isSelectingBranch = false; resolve(false); }, 350);
           }
-          setTimeout(() => { isSelectingBranch = false; }, 600);
-        }
-      }, 150);
-    } catch (e) {
-      console.warn('[FamilyCard] Error in selectVuetifyAutocomplete:', e);
-      isSelectingBranch = false;
-    }
+        }, 140);
+      } catch (e) {
+        console.warn('[FamilyCard] Error in selectVuetifyAutocomplete:', e);
+        isSelectingBranch = false;
+        resolve(false);
+      }
+    });
   }
 
   function selectVuetifyDropdown(container, targetText, fallbackId) {
-    if (!container || !targetText) return;
+    return new Promise((resolve) => {
+      if (!container || !targetText) return resolve(false);
 
-    const currentSel = container.querySelector('.v-select__selection');
-    if (currentSel && currentSel.textContent.trim().includes(targetText)) return;
+      const normTarget = normalizeBn(targetText);
+      const currentSel = container.querySelector('.v-select__selection');
+      if (currentSel && normalizeBn(currentSel.textContent).includes(normTarget)) return resolve(true);
 
-    if (isSelectingOwnership) return;
-    isSelectingOwnership = true;
+      if (isSelectingOwnership) return resolve(false);
+      isSelectingOwnership = true;
 
-    try {
-      const clickTarget = container.querySelector('.v-input__slot') || container.querySelector('input');
-      if (clickTarget) {
+      try {
+        const clickTarget = container.querySelector('.v-input__slot') || container.querySelector('input');
+        if (!clickTarget) {
+          isSelectingOwnership = false;
+          return resolve(false);
+        }
+
+        const listId = clickTarget.getAttribute('aria-owns') || container.querySelector('[aria-owns]')?.getAttribute('aria-owns');
         clickTarget.click();
         let attempts = 0;
         const interval = setInterval(() => {
           attempts++;
-          const items = Array.from(document.querySelectorAll('.v-menu__content .v-list-item'));
-          for (const it of items) {
-            if (it.textContent.trim().includes(targetText)) {
-              const clickable = it.closest('.v-list-item') || it;
-              clickable.click();
-              clearInterval(interval);
-              console.log('[FamilyCard] Selected ownership:', targetText);
-              showToast(`✅ অ্যাকাউন্টের মালিকানা "${targetText}" নির্বাচিত হয়েছে!`);
-              setTimeout(() => { isSelectingOwnership = false; }, 400);
-              return;
-            }
+          let items = [];
+          if (listId) {
+            const listEl = document.getElementById(listId);
+            if (listEl) items = Array.from(listEl.querySelectorAll('.v-list-item'));
+          }
+          if (items.length === 0) {
+            items = Array.from(document.querySelectorAll('.v-menu__content.menuable__content__active .v-list-item'));
+          }
+          if (items.length === 0 && attempts >= 3) {
+            items = Array.from(document.querySelectorAll('.v-menu__content .v-list-item')).filter(el => el.offsetParent !== null);
+          }
+
+          const exact = items.find(it => normalizeBn(it.textContent) === normTarget);
+          const match = exact || items.find(it => normalizeBn(it.textContent).includes(normTarget));
+          if (match) {
+            const clickable = match.closest('.v-list-item') || match;
+            clickable.click();
+            clearInterval(interval);
+            console.log('[FamilyCard] Selected ownership:', targetText);
+            showToast(`✅ অ্যাকাউন্টের মালিকানা "${targetText}" নির্বাচিত হয়েছে!`);
+            setTimeout(() => { isSelectingOwnership = false; resolve(true); }, 300);
+            return;
           }
           if (attempts >= 8) {
             clearInterval(interval);
@@ -2373,16 +2596,15 @@ Return ONLY a single valid JSON object with these exact keys:
             if (fallbackId && hiddenEl) {
               setReactiveValue(hiddenEl, String(fallbackId));
             }
-            setTimeout(() => { isSelectingOwnership = false; }, 400);
+            setTimeout(() => { isSelectingOwnership = false; resolve(false); }, 300);
           }
-        }, 150);
-      } else {
+        }, 130);
+      } catch (e) {
+        console.warn('[FamilyCard] Error in selectVuetifyDropdown:', e);
         isSelectingOwnership = false;
+        resolve(false);
       }
-    } catch (e) {
-      console.warn('[FamilyCard] Error in selectVuetifyDropdown:', e);
-      isSelectingOwnership = false;
-    }
+    });
   }
 
   function injectSection6Toolbar(panel, currentOwnership, currentBranch) {
@@ -2395,11 +2617,12 @@ Return ONLY a single valid JSON object with these exact keys:
     bar.style.cssText = 'margin-bottom: 14px; padding: 10px 14px; background: #f0f9ff; border: 1.5px solid #0284c7; border-radius: 10px; font-family: -apple-system, sans-serif; box-shadow: 0 2px 6px rgba(0,0,0,0.05); font-size: 12px;';
 
     const ownershipOptions = ['নিজ', 'পিতা', 'মাতা', 'স্বামী', 'স্ত্রী', 'অভিভাবক'];
-    let ownHtml = ownershipOptions.map(o => `<option value="${o}" ${o === currentOwnership ? 'selected' : ''}>${o}</option>`).join('');
+    let ownHtml = ownershipOptions.map(o => `<option value="${escapeHtml(o)}" ${o === currentOwnership ? 'selected' : ''}>${escapeHtml(o)}</option>`).join('');
 
-    const branchList = JSON.parse(localStorage.getItem('fc_branch_list') || '["মাছপাড়া শাখা", "পাংশা শাখা", "রাজবাড়ী শাখা"]');
-    if (!branchList.includes(currentBranch)) branchList.unshift(currentBranch);
-    let branchHtml = branchList.map(b => `<option value="${b}" ${b === currentBranch ? 'selected' : ''}>${b}</option>`).join('');
+    const rawBranchList = safeJsonParse(localStorage.getItem('fc_branch_list'), ['মাছপাড়া শাখা', 'পাংশা শাখা', 'রাজবাড়ী শাখা']);
+    const branchList = Array.isArray(rawBranchList) && rawBranchList.length ? [...rawBranchList] : ['মাছপাড়া শাখা', 'পাংশা শাখা', 'রাজবাড়ী শাখা'];
+    if (currentBranch && !branchList.some(b => normalizeBn(b) === normalizeBn(currentBranch))) branchList.unshift(currentBranch);
+    let branchHtml = branchList.map(b => `<option value="${escapeHtml(b)}" ${normalizeBn(b) === normalizeBn(currentBranch) ? 'selected' : ''}>${escapeHtml(b)}</option>`).join('');
     branchHtml += '<option value="__ADD_NEW_BRANCH__">➕ নতুন শাখা লিখুন...</option>';
 
     bar.innerHTML = `
@@ -2433,27 +2656,34 @@ Return ONLY a single valid JSON object with these exact keys:
     wrap.insertBefore(bar, wrap.firstChild);
 
     const ownSelect = bar.querySelector('#fc-s6-ownership-select');
-    ownSelect.addEventListener('change', () => {
+    ownSelect.addEventListener('change', async () => {
       const val = ownSelect.value;
       localStorage.setItem('fc_default_account_ownership', val);
       const elems = getSection6BankElements();
-      if (elems?.ownershipSelect) selectVuetifyDropdown(elems.ownershipSelect, val, '142');
+      if (elems?.ownershipSelect) {
+        delete elems.ownershipSelect.dataset.fcS6UserEdited;
+        await selectVuetifyDropdown(elems.ownershipSelect, val, normalizeBn(val) === 'নিজ' ? '142' : null);
+      }
     });
 
     const branchSelectEl = bar.querySelector('#fc-s6-branch-select');
-    branchSelectEl.addEventListener('change', () => {
+    branchSelectEl.addEventListener('change', async () => {
       if (branchSelectEl.value === '__ADD_NEW_BRANCH__') {
         const newBranch = prompt('নতুন ব্যাংক শাখার নাম লিখুন (যেমন: মাছপাড়া শাখা):');
         if (newBranch && newBranch.trim()) {
           const trimmed = newBranch.trim();
-          let list = JSON.parse(localStorage.getItem('fc_branch_list') || '["মাছপাড়া শাখা", "পাংশা শাখা", "রাজবাড়ী শাখা"]');
+          const curList = safeJsonParse(localStorage.getItem('fc_branch_list'), ['মাছপাড়া শাখা', 'পাংশা শাখা', 'রাজবাড়ী শাখা']);
+          const list = Array.isArray(curList) ? curList : ['মাছপাড়া শাখা', 'পাংশা শাখা', 'রাজবাড়ী শাখা'];
           if (!list.includes(trimmed)) list.push(trimmed);
           localStorage.setItem('fc_branch_list', JSON.stringify(list));
           localStorage.setItem('fc_default_bank_branch', trimmed);
           bar.remove();
           injectSection6Toolbar(panel, ownSelect.value, trimmed);
           const elems = getSection6BankElements();
-          if (elems?.branchSelect) selectVuetifyAutocomplete(elems.branchSelect, trimmed, '7680');
+          if (elems?.branchSelect) {
+            delete elems.branchSelect.dataset.fcS6UserEdited;
+            await selectVuetifyAutocomplete(elems.branchSelect, trimmed, normalizeBn(trimmed).includes('মাছপাড়া') ? '7680' : null);
+          }
         } else {
           branchSelectEl.value = currentBranch;
         }
@@ -2461,25 +2691,32 @@ Return ONLY a single valid JSON object with these exact keys:
         const val = branchSelectEl.value;
         localStorage.setItem('fc_default_bank_branch', val);
         const elems = getSection6BankElements();
-        if (elems?.branchSelect) selectVuetifyAutocomplete(elems.branchSelect, val, '7680');
+        if (elems?.branchSelect) {
+          delete elems.branchSelect.dataset.fcS6UserEdited;
+          await selectVuetifyAutocomplete(elems.branchSelect, val, normalizeBn(val).includes('মাছপাড়া') ? '7680' : null);
+        }
       }
     });
 
     const btnAuto = bar.querySelector('#fc-s6-auto-fill-btn');
-    btnAuto.addEventListener('click', () => {
+    btnAuto.addEventListener('click', async () => {
       const elems = getSection6BankElements();
       if (!elems) return;
       const own = localStorage.getItem('fc_default_account_ownership') || 'নিজ';
       const br = localStorage.getItem('fc_default_bank_branch') || 'মাছপাড়া শাখা';
-      if (elems.ownershipSelect) selectVuetifyDropdown(elems.ownershipSelect, own, '142');
-      setTimeout(() => {
-        if (elems.branchSelect) selectVuetifyAutocomplete(elems.branchSelect, br, '7680');
-      }, 300);
-      showToast('⚡ ব্যাংক তথ্য অটো-সিলেক্ট চালু করা হয়েছে...');
+      if (elems.ownershipSelect) {
+        delete elems.ownershipSelect.dataset.fcS6UserEdited;
+        await selectVuetifyDropdown(elems.ownershipSelect, own, normalizeBn(own) === 'নিজ' ? '142' : null);
+      }
+      if (elems.branchSelect) {
+        delete elems.branchSelect.dataset.fcS6UserEdited;
+        await selectVuetifyAutocomplete(elems.branchSelect, br, normalizeBn(br).includes('মাছপাড়া') ? '7680' : null);
+      }
+      showToast('⚡ ব্যাংক তথ্য অটো-সিলেক্ট সম্পন্ন হয়েছে!');
     });
   }
 
-  function handleSection6Bank() {
+  async function handleSection6Bank() {
     const elems = getSection6BankElements();
     if (!elems || !elems.panel) return;
 
@@ -2494,23 +2731,38 @@ Return ONLY a single valid JSON object with these exact keys:
 
     injectSection6Toolbar(elems.panel, currentOwnership, currentBranch);
 
-    // Auto-select "অ্যাকাউন্টের মালিকানা" if not yet selected
-    if (elems.ownershipSelect) {
-      const curOwn = elems.ownershipSelect.querySelector('.v-select__selection')?.textContent.trim();
-      if (!curOwn) {
-        selectVuetifyDropdown(elems.ownershipSelect, currentOwnership, '142');
+    [elems.ownershipSelect, elems.branchSelect].forEach(el => {
+      if (el && !el.__fcS6GuardAttached) {
+        el.__fcS6GuardAttached = true;
+        el.addEventListener('mousedown', (e) => {
+          if (e.isTrusted) el.dataset.fcS6UserEdited = 'true';
+        }, true);
       }
-    }
+    });
 
-    // Auto-select "ব্যাংক শাখার নাম" if not yet selected
-    if (elems.branchSelect) {
-      const curBranch = elems.branchSelect.querySelector('.v-select__selection')?.textContent.trim() ||
-                        elems.branchSelect.querySelector('input:not([type="hidden"])')?.value.trim();
-      const hiddenVal = elems.branchSelect.querySelector('input[type="hidden"]')?.value;
-
-      if (!curBranch && !hiddenVal) {
-        selectVuetifyAutocomplete(elems.branchSelect, currentBranch, '7680');
+    if (isFillingSection6) return;
+    isFillingSection6 = true;
+    try {
+      // Auto-select "অ্যাকাউন্টের মালিকানা" sequentially if not yet selected and not manually overridden
+      if (elems.ownershipSelect && elems.ownershipSelect.dataset.fcS6UserEdited !== 'true') {
+        const curOwn = elems.ownershipSelect.querySelector('.v-select__selection')?.textContent.trim();
+        if (!curOwn) {
+          await selectVuetifyDropdown(elems.ownershipSelect, currentOwnership, normalizeBn(currentOwnership) === 'নিজ' ? '142' : null);
+        }
       }
+
+      // Auto-select "ব্যাংক শাখার নাম" sequentially after ownership closes
+      if (elems.branchSelect && elems.branchSelect.dataset.fcS6UserEdited !== 'true') {
+        const curBranch = elems.branchSelect.querySelector('.v-select__selection')?.textContent.trim() ||
+                          elems.branchSelect.querySelector('input:not([type="hidden"])')?.value.trim();
+        const hiddenVal = elems.branchSelect.querySelector('input[type="hidden"]')?.value;
+
+        if (!curBranch && !hiddenVal) {
+          await selectVuetifyAutocomplete(elems.branchSelect, currentBranch, normalizeBn(currentBranch).includes('মাছপাড়া') ? '7680' : null);
+        }
+      }
+    } finally {
+      setTimeout(() => { isFillingSection6 = false; }, 350);
     }
   }
 
@@ -2535,17 +2787,29 @@ Return ONLY a single valid JSON object with these exact keys:
   let isFillingSection7 = false;
 
   function normOptionText(s) {
-    return String(s || '').replace(/[\/\sঁ]+/g, '').trim();
+    return normalizeBn(s).replace(/[\/\s\u0981]+/g, '').trim();
   }
 
   function selectSingleVuetifyOption(col, candidates) {
     return new Promise((resolve) => {
       if (!col || !candidates || candidates.length === 0) return resolve(false);
 
+      const hasVSelect = !!col.querySelector('.v-select');
+      const plainInput = !hasVSelect ? col.querySelector('input:not([type="hidden"]):not([disabled])') : null;
+      if (plainInput) {
+        if (plainInput.value && candidates.some(c => normOptionText(plainInput.value) === normOptionText(c))) {
+          col.dataset.fcS7DefaultApplied = 'true';
+          return resolve(true);
+        }
+        setReactiveValue(plainInput, candidates[0]);
+        col.dataset.fcS7DefaultApplied = 'true';
+        return resolve(true);
+      }
+
       const currentSel = col.querySelector('.v-select__selection');
       const curText = currentSel ? currentSel.textContent.trim() : '';
 
-      if (curText && candidates.some(c => curText === c || normOptionText(curText) === normOptionText(c))) {
+      if (curText && candidates.some(c => normalizeBn(curText) === normalizeBn(c) || normOptionText(curText) === normOptionText(c))) {
         col.dataset.fcS7DefaultApplied = 'true';
         return resolve(true);
       }
@@ -2556,6 +2820,7 @@ Return ONLY a single valid JSON object with these exact keys:
       const listId = slot.getAttribute('aria-owns') || col.querySelector('[aria-owns]')?.getAttribute('aria-owns');
       slot.click();
 
+      const normCands = candidates.map(c => normalizeBn(c));
       let attempts = 0;
       const timer = setInterval(() => {
         attempts++;
@@ -2565,16 +2830,19 @@ Return ONLY a single valid JSON object with these exact keys:
           if (listEl) items = Array.from(listEl.querySelectorAll('.v-list-item'));
         }
         if (items.length === 0) {
-          items = Array.from(document.querySelectorAll('.v-menu__content.menuable__content__active .v-list-item, .v-menu__content .v-list-item'));
+          items = Array.from(document.querySelectorAll('.v-menu__content.menuable__content__active .v-list-item'));
+        }
+        if (items.length === 0 && attempts >= 3) {
+          items = Array.from(document.querySelectorAll('.v-menu__content .v-list-item')).filter(el => el.offsetParent !== null);
         }
 
         if (items.length > 0) {
-          let matchedItem = items.find(it => candidates.some(c => it.textContent.trim() === c));
+          let matchedItem = items.find(it => normCands.some(c => normalizeBn(it.textContent) === c));
           if (!matchedItem) {
             matchedItem = items.find(it => candidates.some(c => normOptionText(it.textContent) === normOptionText(c)));
           }
           if (!matchedItem) {
-            matchedItem = items.find(it => candidates.some(c => c.length > 2 && it.textContent.trim().includes(c)));
+            matchedItem = items.find(it => normCands.some(c => c.length > 2 && normalizeBn(it.textContent).includes(c)));
           }
 
           if (matchedItem) {
@@ -2597,7 +2865,7 @@ Return ONLY a single valid JSON object with these exact keys:
   }
 
   function getSection7Rules(sec5Data) {
-    const customDefaults = JSON.parse(localStorage.getItem('fc_section7_custom_defaults') || '{}');
+    const customDefaults = safeJsonParse(localStorage.getItem('fc_section7_custom_defaults'), {});
     const totalMembers = (sec5Data && sec5Data.totalCount > 0) ? sec5Data.totalCount : 0;
     const abroadTotal = sec5Data
       ? ((sec5Data.abroadMale || 0) + (sec5Data.abroadFemale || 0) + (sec5Data.abroadTrans || 0))
@@ -2762,7 +3030,7 @@ Return ONLY a single valid JSON object with these exact keys:
     saveBtn.onclick = () => {
       const rules = getSection7Rules(sec5Data);
       const cols = Array.from(panel.querySelectorAll('.col, [class*="col-"]'));
-      const custom = JSON.parse(localStorage.getItem('fc_section7_custom_defaults') || '{}');
+      const custom = safeJsonParse(localStorage.getItem('fc_section7_custom_defaults'), {});
       cols.forEach(col => {
         const lbl = col.querySelector('label')?.textContent.replace(/[\*\s]+/g, ' ').trim() || '';
         if (!lbl) return;
@@ -2828,8 +3096,10 @@ Return ONLY a single valid JSON object with these exact keys:
         }, true);
       }
 
-      const curVal = col.querySelector('.v-select__selection')?.textContent.trim() || '';
-      const alreadyMatches = curVal && rule.candidates.some(c => curVal === c || normOptionText(curVal) === normOptionText(c));
+      const curSelVal = col.querySelector('.v-select__selection')?.textContent.trim() || '';
+      const curPlainVal = !col.querySelector('.v-select') ? (col.querySelector('input:not([type="hidden"])')?.value.trim() || '') : '';
+      const curVal = curSelVal || curPlainVal;
+      const alreadyMatches = curVal && rule.candidates.some(c => normalizeBn(curVal) === normalizeBn(c) || normOptionText(curVal) === normOptionText(c));
 
       if (forceAll) {
         if (!alreadyMatches) {
@@ -2931,23 +3201,23 @@ Return ONLY a single valid JSON object with these exact keys:
       other: null
     };
 
-    const rows = Array.from(panel.querySelectorAll('.row.row--dense, .row'));
-    for (const r of rows) {
-      const textDiv = r.querySelector('.text-body-2.font-weight-medium, .font-weight-medium, label');
-      if (!textDiv) continue;
-      const txt = textDiv.textContent || '';
-      const inp = r.querySelector('input[type="number"], input');
+    const labelNodes = Array.from(panel.querySelectorAll('.text-body-2.font-weight-medium, .font-weight-medium, label'));
+    for (const textDiv of labelNodes) {
+      const r = textDiv.closest('.row');
+      if (!r) continue;
+      const txt = normalizeBn(textDiv.textContent || '');
+      const inp = r.querySelector('input[type="number"], input:not([type="hidden"])');
       if (!inp) continue;
 
-      if (txt.includes('খাদ্য') || txt.includes('ভরণপোষণ')) fields.food = inp;
-      else if (txt.includes('চিকিৎসা')) fields.health = inp;
-      else if (txt.includes('শিক্ষা')) fields.education = inp;
-      else if (txt.includes('বাসস্থান') || txt.includes('মেরামত')) fields.housing = inp;
-      else if (txt.includes('পোশাক') || txt.includes('বস্ত্র') || txt.includes('কাপড়') || txt.includes('কাপড়')) fields.clothing = inp;
-      else if (txt.includes('আয়বর্ধক') || txt.includes('আয়বর্ধক')) fields.income = inp;
-      else if (txt.includes('সঞ্চয়') || txt.includes('সঞ্চয়')) fields.savings = inp;
-      else if (txt.includes('ঋণ')) fields.debt = inp;
-      else if (txt.includes('অন্যান্য')) fields.other = inp;
+      if (!fields.food && (txt.includes('খাদ্য') || txt.includes('ভরণপোষণ'))) fields.food = inp;
+      else if (!fields.health && txt.includes('চিকিৎসা')) fields.health = inp;
+      else if (!fields.education && txt.includes('শিক্ষা')) fields.education = inp;
+      else if (!fields.housing && (txt.includes('বাসস্থান') || txt.includes('মেরামত'))) fields.housing = inp;
+      else if (!fields.clothing && (txt.includes('পোশাক') || txt.includes('বস্ত্র') || txt.includes('কাপড়'))) fields.clothing = inp;
+      else if (!fields.income && txt.includes('আয়বর্ধক')) fields.income = inp;
+      else if (!fields.savings && txt.includes('সঞ্চয়')) fields.savings = inp;
+      else if (!fields.debt && txt.includes('ঋণ')) fields.debt = inp;
+      else if (!fields.other && txt.includes('অন্যান্য')) fields.other = inp;
     }
 
     const count = Object.values(fields).filter(Boolean).length;
@@ -2958,6 +3228,7 @@ Return ONLY a single valid JSON object with these exact keys:
   function scrapeFamilyConditionsForAI() {
     let totalMembers = 7;
     let childrenCount = 2;
+    let explicitChildrenCount = false;
     let hasDisabledOrElderly = false;
     let isAgriLabor = true;
     let hasRemittance = false;
@@ -2980,33 +3251,59 @@ Return ONLY a single valid JSON object with these exact keys:
         const selVal = childLbl.closest('.col, [class*="col-"]')?.querySelector('.v-select__selection')?.textContent.trim();
         if (selVal) {
           const num = parseInt(normalizeDigits(selVal).replace(/[^0-9]/g, ''), 10);
-          if (!isNaN(num)) childrenCount = num;
+          if (!isNaN(num)) {
+            childrenCount = num;
+            explicitChildrenCount = true;
+          }
         }
       }
 
       const memLbl = s7Labels.find(l => l.textContent.includes('সদস্য সংখ্যা') && !l.textContent.includes('শিশু'));
       if (memLbl) {
-        const selVal = memLbl.closest('.col, [class*="col-"]')?.querySelector('.v-select__selection')?.textContent.trim();
+        const col = memLbl.closest('.col, [class*="col-"]');
+        const selVal = col?.querySelector('.v-select__selection')?.textContent.trim() || col?.querySelector('input:not([type="hidden"])')?.value.trim();
         if (selVal) {
           const num = parseInt(normalizeDigits(selVal).replace(/[^0-9]/g, ''), 10);
           if (!isNaN(num) && num > 0) totalMembers = num;
         }
       }
 
-      const laborLbl = s7Labels.find(l => l.textContent.includes('শ্রমিক হিসেবে নিয়োজিত'));
+      const laborLbl = s7Labels.find(l => normalizeBn(l.textContent).includes('শ্রমিক হিসেবে নিয়োজিত'));
       if (laborLbl) {
-        const selVal = laborLbl.closest('.col, [class*="col-"]')?.querySelector('.v-select__selection')?.textContent.trim();
+        const selVal = normalizeBn(laborLbl.closest('.col, [class*="col-"]')?.querySelector('.v-select__selection')?.textContent || '');
         if (selVal && !selVal.includes('কৃষি')) isAgriLabor = false;
       }
     }
 
-    // Check Tab 6 member cards for disability or elderly
+    // Check Tab 6 member cards accurately via select values and DOBs (never raw card text vs 'না')
     const memberCards = Array.from(document.querySelectorAll('.fm-members-stack .fm-member-card, [data-family-card-tab="6"] .fm-member-card'));
+    let dobChildrenCount = 0;
+    const nowYear = new Date().getFullYear();
+
     for (const card of memberCards) {
-      const txt = card.textContent || '';
-      if (txt.includes('প্রতিবন্ধী') && !txt.includes('প্রতিবন্ধী নন') && !txt.includes('না')) {
-        hasDisabledOrElderly = true;
+      const selects = Array.from(card.querySelectorAll('.v-select'));
+      for (const sel of selects) {
+        const lbl = normalizeBn(sel.closest('.col, [class*="col-"]')?.querySelector('label')?.textContent || '');
+        const selVal = normalizeBn(sel.querySelector('.v-select__selection')?.textContent || '');
+        if (!selVal) continue;
+        if (/প্রতিবন্ধিতা|প্রতিবন্ধী/.test(lbl)) {
+          if (selVal !== 'না' && !selVal.includes('প্রতিবন্ধী নন') && !selVal.includes('নাই')) {
+            hasDisabledOrElderly = true;
+          }
+        }
       }
+
+      const dobLbl = Array.from(card.querySelectorAll('label')).find(l => normalizeBn(l.textContent).includes('জন্ম তারিখ'));
+      const dobVal = dobLbl?.closest('.col, [class*="col-"]')?.querySelector('input:not([type="hidden"])')?.value || '';
+      const ym = normalizeDigits(dobVal).match(/\b(19\d{2}|20\d{2})\b/);
+      if (ym) {
+        const age = nowYear - parseInt(ym[1], 10);
+        if (age >= 60) hasDisabledOrElderly = true;
+        if (age >= 0 && age < 18) dobChildrenCount++;
+      }
+    }
+    if (!explicitChildrenCount && dobChildrenCount > 0) {
+      childrenCount = dobChildrenCount;
     }
 
     return { totalMembers, childrenCount, hasDisabledOrElderly, isAgriLabor, hasRemittance };
@@ -3122,7 +3419,8 @@ Return ONLY a single valid JSON object with these exact keys:
       }
     }
     updateSection9HUD(fields);
-    syncMoneyDistributionToFirestore(dist);
+    const syncedDist = readCurrentMoneyDistribution(fields);
+    syncMoneyDistributionToFirestore(syncedDist);
     if (isUserAction) {
       showToast('✅ অর্থ বরাদ্দ ২৫০০ টাকা সফলভাবে পূরণ করা হয়েছে!');
     }
@@ -3130,8 +3428,8 @@ Return ONLY a single valid JSON object with these exact keys:
 
   async function syncMoneyDistributionToFirestore(dist) {
     try {
-      const rawId = scrapeFamilyId() || (lastExtractedData && lastExtractedData.family_id) || '8743033825';
-      const cleanId = normalizeDigits(rawId).replace(/[^0-9]/g, '') || '8743033825';
+      const cleanId = getSafeFamilyDocId(lastExtractedData);
+      if (!cleanId) return;
 
       const fields = {
         money_food: { integerValue: String(dist.food || 0) },
@@ -3296,17 +3594,21 @@ Return ONLY a single valid JSON object with these exact keys:
       showToast('💾 এই ২৫০০ টাকা বণ্টনটি ভবিষ্যৎ সকল ফ্যামিলি কার্ডের জন্য ডিফল্ট সেভ করা হয়েছে!');
     });
 
-    // Attach listeners to fields for live typing HUD update
+    // Attach listeners to fields for live typing HUD update (debounced Firestore sync)
+    let moneySyncTimer = null;
     for (const inp of Object.values(fields)) {
       if (!inp || inp.__fcMoneyListenerAttached) continue;
       inp.__fcMoneyListenerAttached = true;
       inp.addEventListener('input', (e) => {
         if (e.isTrusted) inp.dataset.fcMoneyUserEdited = 'true';
         updateSection9HUD(fields);
-        const cur = readCurrentMoneyDistribution(fields);
-        if (cur.total === 2500) {
-          syncMoneyDistributionToFirestore(cur);
-        }
+        clearTimeout(moneySyncTimer);
+        moneySyncTimer = setTimeout(() => {
+          const cur = readCurrentMoneyDistribution(fields);
+          if (cur.total === 2500) {
+            syncMoneyDistributionToFirestore(cur);
+          }
+        }, 700);
       });
       inp.addEventListener('change', () => {
         updateSection9HUD(fields);
@@ -3340,12 +3642,9 @@ Return ONLY a single valid JSON object with these exact keys:
       isFillingSection9 = true;
       try {
         let targetDist = BENCHMARK_MONEY_DISTRIBUTION;
-        const savedCustom = localStorage.getItem('fc_custom_money_dist');
-        if (savedCustom) {
-          try {
-            const parsed = JSON.parse(savedCustom);
-            if (parsed && typeof parsed === 'object') targetDist = parsed;
-          } catch (_) {}
+        const parsed = safeJsonParse(localStorage.getItem('fc_custom_money_dist'), null);
+        if (parsed && typeof parsed === 'object') {
+          targetDist = parsed;
         } else {
           // Dynamic AI analysis based on current family conditions
           const cond = scrapeFamilyConditionsForAI();
@@ -3360,12 +3659,14 @@ Return ONLY a single valid JSON object with these exact keys:
     }
   }
 
-  // MutationObserver to watch Step 1, Section 3, Section 4, Section 5/Tab 6, Section 6, Section 7, and Section 9
-  const observer = new MutationObserver(() => {
+  function runPortalAutomations() {
     if (lastExtractedData) {
-      const tab1 = document.querySelector('[data-family-card-tab="1"]') || document.querySelector('.v-expansion-panel--active');
-      const fatherInp = findInputByLabel(['পিতার নাম (বাংলা)']) || document.getElementById('input-1286');
-      if (fatherInp && !fatherInp.value) {
+      const stepSig = `${scrapeFamilyId() || ''}_${lastExtractedData.nid_number || lastExtractedData.doc_number || ''}`;
+      const tab1 = document.querySelector('[data-family-card-tab="1"]');
+      const isTab1Visible = !tab1 || tab1.style.display !== 'none';
+      const fatherInp = findInputByLabel(['পিতার নাম (বাংলা)'], tab1) || findInputByLabel(['পিতার নাম (বাংলা)']) || document.getElementById('input-1286');
+      if (isTab1Visible && fatherInp && !fatherInp.value && window.__fcStep1FilledKey !== stepSig) {
+        window.__fcStep1FilledKey = stepSig;
         fillPortalFields(lastExtractedData);
         showToast('✅ পিতা-মাতা, বৈবাহিক অবস্থা ও ধর্ম অটো-ফিল সম্পন্ন!');
       }
@@ -3376,18 +3677,23 @@ Return ONLY a single valid JSON object with these exact keys:
     handleSection6Bank();
     handleSection7Eligibility();
     handleSection9MoneyUsage();
+  }
+
+  // Debounced MutationObserver (ignores assistant UI self-mutations to prevent feedback loops)
+  let observerTimer = null;
+  const observer = new MutationObserver((mutations) => {
+    const hasPortalMutation = mutations.some(m => {
+      const t = m.target;
+      return t && t.nodeType === 1 && !t.closest('[id^="fc-"], [class*="fc-bm-"], .fc-card-scan-btn');
+    });
+    if (!hasPortalMutation) return;
+    clearTimeout(observerTimer);
+    observerTimer = setTimeout(runPortalAutomations, 250);
   });
   observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class'] });
 
   // Periodic polling for Section 3, Section 4, Section 5/Tab 6, Section 6, Section 7, and Section 9
-  setInterval(() => {
-    traceSection3Media();
-    handleSection4Address();
-    handleSection5AndCrossMatch();
-    handleSection6Bank();
-    handleSection7Eligibility();
-    handleSection9MoneyUsage();
-  }, 1500);
+  setInterval(runPortalAutomations, 1500);
 
   function showToast(msg) {
     const existing = document.querySelector('.fc-bm-toast');
@@ -3399,5 +3705,5 @@ Return ONLY a single valid JSON object with these exact keys:
     setTimeout(() => { t.remove(); }, 4000);
   }
 
-  showToast('🚀 Family Card সহকারী (v1.3) প্রস্তুত! "📸 NID স্ক্যান" বাটনে চাপুন।');
+  showToast('🚀 Family Card সহকারী (v1.5) প্রস্তুত! "📸 NID স্ক্যান" বাটনে চাপুন।');
 })();

@@ -35,6 +35,50 @@ Return ONLY a single valid JSON object with these exact keys:
 }
 `;
 
+// Normalize Bengali numerals (০-৯) to English (0-9)
+function normalizeDigits(str) {
+  if (!str) return '';
+  const bn = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'];
+  return String(str).replace(/[০-৯]/g, d => {
+    const idx = bn.indexOf(d);
+    return idx !== -1 ? idx : d;
+  });
+}
+
+// Standardize Date of Birth to DD/MM/YYYY
+function standardizeDate(dobStr) {
+  if (!dobStr) return '';
+  let str = normalizeDigits(dobStr).trim();
+
+  // ISO: YYYY-MM-DD or YYYY/MM/DD
+  const isoMatch = str.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/);
+  if (isoMatch) {
+    return `${isoMatch[3].padStart(2, '0')}/${isoMatch[2].padStart(2, '0')}/${isoMatch[1]}`;
+  }
+
+  // Month names: 15 Aug 1985
+  const months = {
+    jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+    jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12'
+  };
+  const monthMatch = str.match(/^(\d{1,2})\s+([a-zA-Z]{3,})\s+(\d{4})/i);
+  if (monthMatch) {
+    const d = monthMatch[1].padStart(2, '0');
+    const m = months[monthMatch[2].toLowerCase().substring(0, 3)] || '01';
+    const y = monthMatch[3];
+    return `${d}/${m}/${y}`;
+  }
+
+  // Standard DD/MM/YYYY
+  str = str.replace(/[-\.]/g, '/');
+  const dmyMatch = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (dmyMatch) {
+    return `${dmyMatch[1].padStart(2, '0')}/${dmyMatch[2].padStart(2, '0')}/${dmyMatch[3]}`;
+  }
+
+  return str;
+}
+
 chrome.runtime.onMessage.addListener((req, sender, sendResponse) => {
   if (req.action === 'ocr_nid_direct') {
     handleDirectOCR(req)
@@ -116,7 +160,7 @@ async function handleDirectOCR(req) {
 
   // 10 or 17 digit NID rule validation & transformation
   if (parsedData.nid_number) {
-    let cleanNid = String(parsedData.nid_number).replace(/[^0-9]/g, '');
+    let cleanNid = normalizeDigits(parsedData.nid_number).replace(/[^0-9]/g, '');
     if (cleanNid.length === 13) {
       const yearMatch = String(parsedData.dob || '').match(/\b(19\d{2}|20\d{2})\b/);
       if (yearMatch) cleanNid = yearMatch[1] + cleanNid;
@@ -124,15 +168,19 @@ async function handleDirectOCR(req) {
     parsedData.nid_number = cleanNid;
   }
 
+  if (parsedData.dob) {
+    parsedData.dob = standardizeDate(parsedData.dob);
+  }
+
   // Ensure uppercase english names
-  if (parsedData.name_en) parsedData.name_en = String(parsedData.name_en).toUpperCase();
-  if (parsedData.father_name_en) parsedData.father_name_en = String(parsedData.father_name_en).toUpperCase();
-  if (parsedData.mother_name_en) parsedData.mother_name_en = String(parsedData.mother_name_en).toUpperCase();
+  if (parsedData.name_en) parsedData.name_en = String(parsedData.name_en).toUpperCase().trim();
+  if (parsedData.father_name_en) parsedData.father_name_en = String(parsedData.father_name_en).toUpperCase().trim();
+  if (parsedData.mother_name_en) parsedData.mother_name_en = String(parsedData.mother_name_en).toUpperCase().trim();
 
   // Attach user options
   parsedData.marital_status = maritalStatus;
   parsedData.religion = religion;
-  parsedData.mobile_number = mobileNumber ? String(mobileNumber).trim() : '';
+  parsedData.mobile_number = mobileNumber ? normalizeDigits(mobileNumber).trim() : '';
 
   return {
     success: true,

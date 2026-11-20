@@ -2,8 +2,13 @@
   "name": "family-card-nid-automation",
   "version": "1.0.0",
   "description": "Cross-device NID OCR and auto-fill bridge for Family Card portal",
+  "type": "module",
   "scripts": {
     "start": "npm --prefix server start",
-    "install:server": "npm --prefix server install"
+    "install:server": "npm --prefix server install",
+    "build:bookmarklet": "node scripts/build_bookmarklet.js"
+  },
+  "devDependencies": {
+    "terser": "^5.51.2"
   }
 }

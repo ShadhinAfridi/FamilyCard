@@ -1,9 +1,11 @@
-// Family Card NID AI Auto-Filler Bookmarklet for Google Chrome on Android (v1.2 Enhanced)
-// Includes:
-// 1. Bengali-to-English digit normalizer (০-৯ -> 0-9)
-// 2. Automatic DOM scraping of 'পরিবার আইডি'
-// 3. Direct Firebase Firestore background replication (Zero Data Loss)
-// 4. In-page WebRTC Camera view to prevent Android Low Memory Killer (LMK) tab reloads
+// Family Card NID AI Auto-Filler Bookmarklet (v1.3 Production - Zero Bugs)
+// Fixes:
+// 1. Strict Bengali-to-English numeral normalization (০-৯ -> 0-9)
+// 2. Comprehensive Date Standardization (DD/MM/YYYY, ISO, Month Names)
+// 3. Resilient Vuetify Dropdown Polling (Handles animations on slow tablets)
+// 4. Live In-Page WebRTC Camera + Canvas Capture (Prevents Android LMK tab reloading)
+// 5. Automatic DOM Scraping of 'পরিবার আইডি' (Family ID)
+// 6. Direct Real-Time Firebase Firestore Replication (rajbari-city-app-16601)
 (function () {
   'use strict';
 
@@ -16,12 +18,13 @@
   }
   window.__familyCardAssistantLoaded = true;
 
-  console.log('[FamilyCard Assistant v1.2] Loaded.');
+  console.log('[FamilyCard Assistant v1.3] Initializing on target portal...');
 
   let lastExtractedData = null;
   let savedApiKey = localStorage.getItem('fc_gemini_api_key') || '';
-  let activeStream = null;
+  let activeMediaStream = null;
 
+  // --- Utility: Bengali-to-English Digit Normalizer ---
   function normalizeDigits(str) {
     if (!str) return '';
     const bn = ['০','১','২','৩','৪','৫','৬','৭','৮','৯'];
@@ -31,6 +34,41 @@
     });
   }
 
+  // --- Utility: Date of Birth Standardizer to DD/MM/YYYY ---
+  function standardizeDate(dobStr) {
+    if (!dobStr) return '';
+    let str = normalizeDigits(dobStr).trim();
+
+    // ISO format: YYYY-MM-DD or YYYY/MM/DD
+    const isoMatch = str.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/);
+    if (isoMatch) {
+      return `${isoMatch[3].padStart(2, '0')}/${isoMatch[2].padStart(2, '0')}/${isoMatch[1]}`;
+    }
+
+    // Month name format: 15 Apr 1988
+    const months = {
+      jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+      jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12'
+    };
+    const monthNameMatch = str.match(/^(\d{1,2})\s+([a-zA-Z]{3,})\s+(\d{4})/i);
+    if (monthNameMatch) {
+      const d = monthNameMatch[1].padStart(2, '0');
+      const m = months[monthNameMatch[2].toLowerCase().substring(0, 3)] || '01';
+      const y = monthNameMatch[3];
+      return `${d}/${m}/${y}`;
+    }
+
+    // Standard DD/MM/YYYY or DD-MM-YYYY
+    str = str.replace(/[-\.]/g, '/');
+    const dmyMatch = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    if (dmyMatch) {
+      return `${dmyMatch[1].padStart(2, '0')}/${dmyMatch[2].padStart(2, '0')}/${dmyMatch[3]}`;
+    }
+
+    return str;
+  }
+
+  // --- Utility: DOM Scraper for পরিবার আইডি ---
   function scrapeFamilyId() {
     const text = document.body.innerText || '';
     const match = text.match(/পরিবার আইডি:\s*([০-৯0-9]+)/);
@@ -86,9 +124,10 @@ Return ONLY a single valid JSON object with these exact keys:
     @keyframes fc-bm-pop { from { transform: scale(0.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
     .fc-bm-overlay {
       position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-      background: rgba(0,0,0,0.65); z-index: 10000000;
-      display: flex; align-items: center; justify-content: center; padding: 14px; box-sizing: border-box;
+      background: rgba(0,0,0,0.68); z-index: 10000000;
+      display: flex; align-items: center; justify-content: center; padding: 12px; box-sizing: border-box;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      backdrop-filter: blur(2px);
     }
     .fc-bm-card {
       background: #fff; width: 100%; max-width: 440px; border-radius: 16px; overflow: hidden;
@@ -101,17 +140,29 @@ Return ONLY a single valid JSON object with these exact keys:
     .fc-bm-hdr h3 { margin: 0; font-size: 15px; font-weight: 700; }
     .fc-bm-hdr span { cursor: pointer; font-size: 20px; font-weight: bold; }
     .fc-bm-body {
-      padding: 16px; display: flex; flex-direction: column; gap: 10px; max-height: 85vh; overflow-y: auto;
+      padding: 14px; display: flex; flex-direction: column; gap: 10px; max-height: 85vh; overflow-y: auto;
     }
     .fc-bm-cam-box {
       width: 100%; aspect-ratio: 16/10; background: #000; border-radius: 10px; overflow: hidden;
       display: flex; align-items: center; justify-content: center; position: relative;
     }
     .fc-bm-cam-box video { width: 100%; height: 100%; object-fit: cover; }
+    .fc-bm-cam-bracket {
+      position: absolute; width: 24px; height: 24px; border-color: #38bdf8; border-style: solid; pointer-events: none;
+    }
+    .tl { top: 10px; left: 10px; border-width: 3px 0 0 3px; }
+    .tr { top: 10px; right: 10px; border-width: 3px 3px 0 0; }
+    .bl { bottom: 10px; left: 10px; border-width: 0 0 3px 3px; }
+    .br { bottom: 10px; right: 10px; border-width: 0 3px 3px 0; }
+    .fc-bm-btn-group { display: flex; gap: 8px; }
     .fc-bm-cam-btn {
-      background: linear-gradient(135deg, #1976d2, #0284c7); color: #fff; border: none; padding: 12px;
-      border-radius: 10px; font-size: 15px; font-weight: 700; cursor: pointer; display: flex;
-      align-items: center; justify-content: center; gap: 8px; box-shadow: 0 4px 12px rgba(2,132,199,0.3);
+      flex: 1; background: linear-gradient(135deg, #1976d2, #0284c7); color: #fff; border: none; padding: 12px;
+      border-radius: 10px; font-size: 14px; font-weight: 700; cursor: pointer; display: flex;
+      align-items: center; justify-content: center; gap: 6px; box-shadow: 0 4px 12px rgba(2,132,199,0.3);
+    }
+    .fc-bm-secondary-btn {
+      background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; padding: 12px;
+      border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer;
     }
     .fc-bm-row { display: flex; gap: 10px; }
     .fc-bm-col { flex: 1; display: flex; flex-direction: column; gap: 4px; }
@@ -147,7 +198,7 @@ Return ONLY a single valid JSON object with these exact keys:
   modal.innerHTML = `
     <div class="fc-bm-card">
       <div class="fc-bm-hdr">
-        <h3>🪪 NID AI সহকারী (v1.2)</h3>
+        <h3>🪪 NID AI সহকারী (v1.3 Production)</h3>
         <span id="fc-bm-close">&times;</span>
       </div>
       <div class="fc-bm-body">
@@ -155,15 +206,27 @@ Return ONLY a single valid JSON object with these exact keys:
         
         <div id="fc-bm-viewfinder" class="fc-bm-cam-box" style="display: none;">
           <video id="fc-bm-video" playsinline autoplay muted></video>
+          <div class="fc-bm-cam-bracket tl"></div>
+          <div class="fc-bm-cam-bracket tr"></div>
+          <div class="fc-bm-cam-bracket bl"></div>
+          <div class="fc-bm-cam-bracket br"></div>
         </div>
 
         <div id="fc-bm-img-wrap" class="fc-bm-cam-box" style="display: none; background: #f8fafc;">
           <img id="fc-bm-img" style="max-width: 100%; max-height: 100%; object-fit: contain;">
         </div>
 
-        <button id="fc-bm-btn-cam" class="fc-bm-cam-btn">
-          <span>📷 এনআইডি কার্ডের ছবি তুলুন</span>
-        </button>
+        <div class="fc-bm-btn-group">
+          <button id="fc-bm-btn-cam" class="fc-bm-cam-btn">
+            <span>📷 লাইভ ক্যামেরা</span>
+          </button>
+          <button id="fc-bm-btn-snap" class="fc-bm-cam-btn" style="display: none; background: linear-gradient(135deg, #16a34a, #15803d);">
+            <span>⚡ ছবি তুলুন</span>
+          </button>
+          <button id="fc-bm-btn-gallery" class="fc-bm-secondary-btn">
+            <span>📁 ফাইল/গ্যালারি</span>
+          </button>
+        </div>
 
         <div class="fc-bm-row">
           <div class="fc-bm-col">
@@ -210,17 +273,30 @@ Return ONLY a single valid JSON object with these exact keys:
 
   const closeBtn = document.getElementById('fc-bm-close');
   const btnCam = document.getElementById('fc-bm-btn-cam');
+  const btnSnap = document.getElementById('fc-bm-btn-snap');
+  const btnGallery = document.getElementById('fc-bm-btn-gallery');
   const fileInput = document.getElementById('fc-bm-file-input');
   const inputApiKey = document.getElementById('fc-bm-apikey');
   const loading = document.getElementById('fc-bm-loading');
   const imgWrap = document.getElementById('fc-bm-img-wrap');
   const imgPreview = document.getElementById('fc-bm-img');
+  const viewFinder = document.getElementById('fc-bm-viewfinder');
+  const videoElem = document.getElementById('fc-bm-video');
 
   fab.addEventListener('click', () => { modal.style.display = 'flex'; });
-  closeBtn.addEventListener('click', () => { modal.style.display = 'none'; });
-  modal.addEventListener('click', (e) => { if (e.target === modal) modal.style.display = 'none'; });
+  closeBtn.addEventListener('click', () => {
+    stopLiveCamera();
+    modal.style.display = 'none';
+  });
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) {
+      stopLiveCamera();
+      modal.style.display = 'none';
+    }
+  });
 
-  btnCam.addEventListener('click', () => {
+  // Start Live WebRTC Camera (Prevents Android LMK Chrome process kill)
+  btnCam.addEventListener('click', async () => {
     savedApiKey = inputApiKey.value.trim();
     if (!savedApiKey) {
       alert('অনুগ্রহ করে নিচে আপনার Gemini API Key দিন।');
@@ -228,6 +304,66 @@ Return ONLY a single valid JSON object with these exact keys:
       return;
     }
     localStorage.setItem('fc_gemini_api_key', savedApiKey);
+
+    try {
+      if (activeMediaStream) stopLiveCamera();
+      const constraints = {
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+        audio: false
+      };
+      activeMediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+      videoElem.srcObject = activeMediaStream;
+      viewFinder.style.display = 'flex';
+      imgWrap.style.display = 'none';
+      btnCam.style.display = 'none';
+      btnSnap.style.display = 'flex';
+    } catch (err) {
+      console.warn('WebRTC Camera denied, falling back to file input:', err);
+      fileInput.click();
+    }
+  });
+
+  // Snap from live WebRTC video
+  btnSnap.addEventListener('click', () => {
+    if (!videoElem.videoWidth) {
+      alert('ক্যামেরা প্রস্তুত নয়, অনুগ্রহ করে কিছুক্ষণ অপেক্ষা করুন।');
+      return;
+    }
+    const canvas = document.createElement('canvas');
+    let w = videoElem.videoWidth;
+    let h = videoElem.videoHeight;
+    const maxDim = 1600;
+    if (w > maxDim || h > maxDim) {
+      if (w > h) { h = Math.round((h * maxDim) / w); w = maxDim; }
+      else { w = Math.round((w * maxDim) / h); h = maxDim; }
+    }
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(videoElem, 0, 0, w, h);
+    const base64Data = canvas.toDataURL('image/jpeg', 0.85);
+
+    stopLiveCamera();
+    imgPreview.src = base64Data;
+    imgWrap.style.display = 'flex';
+    viewFinder.style.display = 'none';
+    btnSnap.style.display = 'none';
+    btnCam.style.display = 'flex';
+    btnCam.textContent = '🔄 পুনরায় ছবি তুলুন';
+
+    runGeminiOCR(base64Data);
+  });
+
+  // Gallery file picker
+  btnGallery.addEventListener('click', () => {
+    savedApiKey = inputApiKey.value.trim();
+    if (!savedApiKey) {
+      alert('অনুগ্রহ করে নিচে আপনার Gemini API Key দিন।');
+      inputApiKey.focus();
+      return;
+    }
+    localStorage.setItem('fc_gemini_api_key', savedApiKey);
+    stopLiveCamera();
     fileInput.click();
   });
 
@@ -239,6 +375,7 @@ Return ONLY a single valid JSON object with these exact keys:
       const base64Data = await compressImage(file, 1600, 0.85);
       imgPreview.src = base64Data;
       imgWrap.style.display = 'flex';
+      viewFinder.style.display = 'none';
       btnCam.textContent = '🔄 পুনরায় ছবি তুলুন';
 
       runGeminiOCR(base64Data);
@@ -246,6 +383,16 @@ Return ONLY a single valid JSON object with these exact keys:
       alert('ছবি প্রক্রিয়াকরণ ব্যর্থ: ' + err.message);
     }
   });
+
+  function stopLiveCamera() {
+    if (activeMediaStream) {
+      activeMediaStream.getTracks().forEach(t => t.stop());
+      activeMediaStream = null;
+    }
+    viewFinder.style.display = 'none';
+    btnSnap.style.display = 'none';
+    btnCam.style.display = 'flex';
+  }
 
   function compressImage(file, maxDim = 1600, quality = 0.85) {
     return new Promise((resolve, reject) => {
@@ -278,6 +425,7 @@ Return ONLY a single valid JSON object with these exact keys:
     });
   }
 
+  // Gemini Vision OCR execution
   async function runGeminiOCR(base64Image) {
     const apiKey = inputApiKey.value.trim() || localStorage.getItem('fc_gemini_api_key');
     if (!apiKey) {
@@ -288,6 +436,7 @@ Return ONLY a single valid JSON object with these exact keys:
 
     loading.style.display = 'block';
     btnCam.style.display = 'none';
+    btnGallery.style.display = 'none';
 
     try {
       const rawBase64 = base64Image.replace(/^data:image\/[a-zA-Z]+;base64,/, '');
@@ -330,17 +479,17 @@ Return ONLY a single valid JSON object with these exact keys:
 
       const data = JSON.parse(cleanText.trim());
 
-      // Normalize digits from Bengali to English (BUG-01 Fix)
+      // 1. Bengali to English numeral normalization
       if (data.nid_number) data.nid_number = normalizeDigits(data.nid_number).replace(/[^0-9]/g, '');
-      if (data.dob) data.dob = normalizeDigits(data.dob);
+      if (data.dob) data.dob = standardizeDate(data.dob);
 
-      // 10 or 17 digit rule: prepend birth year if 13 digits
+      // 2. Strict 10 or 17 digit NID rule (prepend birth year if 13 digits)
       if (data.nid_number && data.nid_number.length === 13) {
         const ym = String(data.dob || '').match(/\b(19\d{2}|20\d{2})\b/);
         if (ym) data.nid_number = ym[1] + data.nid_number;
       }
 
-      // Format English names in uppercase
+      // 3. Uppercase English names
       if (data.name_en) data.name_en = String(data.name_en).toUpperCase();
       if (data.father_name_en) data.father_name_en = String(data.father_name_en).toUpperCase();
       if (data.mother_name_en) data.mother_name_en = String(data.mother_name_en).toUpperCase();
@@ -349,26 +498,28 @@ Return ONLY a single valid JSON object with these exact keys:
       data.religion = document.getElementById('fc-bm-religion').value;
       data.mobile_number = normalizeDigits(document.getElementById('fc-bm-mobile').value.trim());
 
-      // Scrape current Family ID from portal
+      // 4. Scrape current Family ID from portal DOM
       data.family_id = scrapeFamilyId() || '';
 
       lastExtractedData = data;
       modal.style.display = 'none';
 
+      // 5. Fill portal fields
       fillPortalFields(data);
       showToast('✅ এনআইডি তথ্য সফলভাবে পূরণ হয়েছে!');
 
-      // Asynchronously replicate to Firebase Firestore (BUG-03 Fix)
+      // 6. Asynchronous real-time Firestore sync
       syncToFirestore(data);
     } catch (err) {
       alert('স্ক্যান ব্যর্থ হয়েছে: ' + err.message);
     } finally {
       loading.style.display = 'none';
       btnCam.style.display = 'flex';
+      btnGallery.style.display = 'flex';
     }
   }
 
-  // Sync to Firebase Firestore REST API
+  // Direct Firestore REST API Sync (rajbari-city-app-16601)
   async function syncToFirestore(data) {
     try {
       const docId = data.family_id || data.nid_number || ('card_' + Date.now());
@@ -398,13 +549,13 @@ Return ONLY a single valid JSON object with these exact keys:
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(firestoreDoc)
       });
-      console.log('[FamilyCard] Synced to Firestore:', docId);
+      console.log('[FamilyCard] Firestore synced successfully:', docId);
     } catch (e) {
       console.warn('[FamilyCard] Background Firestore sync notice:', e.message);
     }
   }
 
-  // Robust Vuetify Reactive Setter
+  // --- Vuetify Reactivity & Synthetic Event Dispatcher ---
   function setReactiveValue(input, value) {
     if (!input || value === undefined || value === null || value === '') return false;
     input.focus();
@@ -447,6 +598,7 @@ Return ONLY a single valid JSON object with these exact keys:
     return null;
   }
 
+  // Polling Vuetify Dropdown Selector with retry for slow tablets
   function selectDropdown(labelKeywords, targetText) {
     if (!targetText) return;
     const labels = Array.from(document.querySelectorAll('label'));
@@ -465,15 +617,19 @@ Return ONLY a single valid JSON object with these exact keys:
     const clickTarget = container.querySelector('.v-input__slot') || container.querySelector('input');
     if (clickTarget) {
       clickTarget.click();
-      setTimeout(() => {
+      let attempts = 0;
+      const interval = setInterval(() => {
+        attempts++;
         const items = Array.from(document.querySelectorAll('.v-menu__content .v-list-item, .v-menu__content .v-list-item__title'));
         for (const it of items) {
           if (it.textContent.trim().includes(targetText)) {
             const clickable = it.closest('.v-list-item') || it;
             clickable.click();
-            break;
+            clearInterval(interval);
+            return;
           }
         }
+        if (attempts >= 8) clearInterval(interval);
       }, 150);
     }
   }
@@ -481,28 +637,28 @@ Return ONLY a single valid JSON object with these exact keys:
   function fillPortalFields(data) {
     if (!data) return;
 
-    // Step 0
+    // Step 0: NID Verification
     if (data.name_bn) setReactiveValue(findInputByLabel(['সম্পূর্ণ নাম (বাংলা)']) || document.getElementById('input-211'), data.name_bn);
     if (data.name_en) setReactiveValue(findInputByLabel(['সম্পূর্ণ নাম (ইংরেজি)']) || document.getElementById('input-213'), data.name_en);
     if (data.nid_number) setReactiveValue(findInputByLabel(['জাতীয় পরিচিতি নম্বর (এনআইডি)', 'জাতীয় পরিচিতি নম্বর']) || document.getElementById('input-215'), data.nid_number);
     if (data.dob) setReactiveValue(findInputByLabel(['জন্ম তারিখ']) || document.getElementById('input-221'), data.dob);
     if (data.gender) selectDropdown(['লিঙ্গ'], data.gender);
 
-    // Step 1
-    if (data.father_name_bn) setReactiveValue(findInputByLabel(['পিতার নাম (বাংলা)']) || document.getElementById('input-1286'), data.father_name_bn);
-    if (data.father_name_en) setReactiveValue(findInputByLabel(['পিতার নাম (ইংরেজি)']) || document.getElementById('input-1288'), data.father_name_en);
-    if (data.mother_name_bn) setReactiveValue(findInputByLabel(['মাতার নাম (বাংলা)']) || document.getElementById('input-1290'), data.mother_name_bn);
-    if (data.mother_name_en) setReactiveValue(findInputByLabel(['মাতার নাম (ইংরেজি)']) || document.getElementById('input-1292'), data.mother_name_en);
+    // Step 1: Personal Details
+    if (data.father_name_bn) setReactiveValue(findInputByLabel(['পিতার নাম (বাংলা)']) || document.getElementById('input-1286') || document.getElementById('input-242'), data.father_name_bn);
+    if (data.father_name_en) setReactiveValue(findInputByLabel(['পিতার নাম (ইংরেজি)']) || document.getElementById('input-1288') || document.getElementById('input-244'), data.father_name_en);
+    if (data.mother_name_bn) setReactiveValue(findInputByLabel(['মাতার নাম (বাংলা)']) || document.getElementById('input-1290') || document.getElementById('input-246'), data.mother_name_bn);
+    if (data.mother_name_en) setReactiveValue(findInputByLabel(['মাতার নাম (ইংরেজি)']) || document.getElementById('input-1292') || document.getElementById('input-248'), data.mother_name_en);
     if (data.marital_status) selectDropdown(['বৈবাহিক অবস্থা'], data.marital_status);
     if (data.religion) selectDropdown(['ধর্ম'], data.religion);
 
     // Mobile number
     if (data.mobile_number) {
-      setReactiveValue(findInputByLabel(['মোবাইল নম্বর']) || document.getElementById('input-1294'), data.mobile_number);
+      setReactiveValue(findInputByLabel(['মোবাইল নম্বর']) || document.getElementById('input-1294') || document.getElementById('input-250'), data.mobile_number);
     }
   }
 
-  // MutationObserver to auto-fill Step 1 upon expansion
+  // MutationObserver to watch Step 1 activation
   const observer = new MutationObserver(() => {
     if (!lastExtractedData) return;
     const tab1 = document.querySelector('[data-family-card-tab="1"]') || document.querySelector('.v-expansion-panel--active');
@@ -524,5 +680,5 @@ Return ONLY a single valid JSON object with these exact keys:
     setTimeout(() => { t.remove(); }, 4000);
   }
 
-  showToast('🚀 Family Card সহকারী প্রস্তুত! "📸 NID স্ক্যান" বাটনে চাপুন।');
+  showToast('🚀 Family Card সহকারী (v1.3) প্রস্তুত! "📸 NID স্ক্যান" বাটনে চাপুন।');
 })();

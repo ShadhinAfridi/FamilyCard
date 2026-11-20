@@ -44,6 +44,86 @@ function getLocalIpAddresses() {
   return addresses;
 }
 
+// Helper to normalize Bengali numerals (০-৯) to English (0-9)
+function normalizeDigits(str) {
+  if (!str) return '';
+  const bn = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'];
+  return String(str).replace(/[০-৯]/g, d => {
+    const idx = bn.indexOf(d);
+    return idx !== -1 ? idx : d;
+  });
+}
+
+// Helper to standardize Date of Birth to DD/MM/YYYY
+function standardizeDate(dobStr) {
+  if (!dobStr) return '';
+  let str = normalizeDigits(dobStr).trim();
+
+  // ISO: YYYY-MM-DD or YYYY/MM/DD
+  const isoMatch = str.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/);
+  if (isoMatch) {
+    return `${isoMatch[3].padStart(2, '0')}/${isoMatch[2].padStart(2, '0')}/${isoMatch[1]}`;
+  }
+
+  // Month names: 15 Aug 1985
+  const months = {
+    jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+    jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12'
+  };
+  const monthMatch = str.match(/^(\d{1,2})\s+([a-zA-Z]{3,})\s+(\d{4})/i);
+  if (monthMatch) {
+    const d = monthMatch[1].padStart(2, '0');
+    const m = months[monthMatch[2].toLowerCase().substring(0, 3)] || '01';
+    const y = monthMatch[3];
+    return `${d}/${m}/${y}`;
+  }
+
+  // Standard DD/MM/YYYY
+  str = str.replace(/[-\.]/g, '/');
+  const dmyMatch = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (dmyMatch) {
+    return `${dmyMatch[1].padStart(2, '0')}/${dmyMatch[2].padStart(2, '0')}/${dmyMatch[3]}`;
+  }
+
+  return str;
+}
+
+// Direct Firebase Firestore sync (rajbari-city-app-16601)
+async function syncToFirestore(data) {
+  try {
+    const docId = data.family_id || data.nid_number || ('card_' + Date.now());
+    const url = `https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(docId)}`;
+
+    const firestoreDoc = {
+      fields: {
+        family_id: { stringValue: data.family_id || '' },
+        nid_number: { stringValue: data.nid_number || '' },
+        name_bn: { stringValue: data.name_bn || '' },
+        name_en: { stringValue: data.name_en || '' },
+        dob: { stringValue: data.dob || '' },
+        gender: { stringValue: data.gender || '' },
+        father_name_bn: { stringValue: data.father_name_bn || '' },
+        father_name_en: { stringValue: data.father_name_en || '' },
+        mother_name_bn: { stringValue: data.mother_name_bn || '' },
+        mother_name_en: { stringValue: data.mother_name_en || '' },
+        marital_status: { stringValue: data.marital_status || 'বিবাহিত' },
+        religion: { stringValue: data.religion || 'ইসলাম' },
+        mobile_number: { stringValue: data.mobile_number || '' },
+        synced_at: { timestampValue: new Date().toISOString() }
+      }
+    };
+
+    await fetch(url, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(firestoreDoc)
+    });
+    console.log('[Firestore] Synced successfully:', docId);
+  } catch (err) {
+    console.warn('[Firestore] Sync warning:', err.message);
+  }
+}
+
 // Call Gemini API to extract Bangladeshi NID fields
 async function extractNidWithGemini(base64Image, customApiKey) {
   const apiKey = customApiKey || process.env.GEMINI_API_KEY;
@@ -145,9 +225,9 @@ Do not wrap in Markdown code blocks. Return purely the raw JSON object. If any f
 
   const data = JSON.parse(cleaned);
 
-  // Programmatic enforcement of 10 or 17 digit NID rule
+  // Normalize Bengali numerals to English and enforce 10 or 17 digit NID rule
   if (data.nid_number) {
-    let rawDigits = String(data.nid_number).replace(/\D/g, '');
+    let rawDigits = normalizeDigits(data.nid_number).replace(/[^0-9]/g, '');
     
     // If 13 digits, extract 4-digit birth year from dob and prefix it
     if (rawDigits.length === 13) {
@@ -159,6 +239,11 @@ Do not wrap in Markdown code blocks. Return purely the raw JSON object. If any f
     }
     data.nid_number = rawDigits;
   }
+
+  if (data.dob) data.dob = standardizeDate(data.dob);
+  if (data.name_en) data.name_en = String(data.name_en).toUpperCase().trim();
+  if (data.father_name_en) data.father_name_en = String(data.father_name_en).toUpperCase().trim();
+  if (data.mother_name_en) data.mother_name_en = String(data.mother_name_en).toUpperCase().trim();
 
   return data;
 }
@@ -174,7 +259,11 @@ app.post('/api/ocr-nid', async (req, res) => {
     const extracted = await extractNidWithGemini(image, apiKey);
     extracted.marital_status = req.body.maritalStatus || 'বিবাহিত';
     extracted.religion = req.body.religion || 'ইসলাম';
-    extracted.mobile_number = req.body.mobileNumber || '';
+    extracted.mobile_number = normalizeDigits(req.body.mobileNumber || '');
+    extracted.family_id = req.body.familyId || '';
+
+    // Async sync to Firestore
+    syncToFirestore(extracted);
 
     // If a room is specified, broadcast to that room
     if (room) {
@@ -228,8 +317,12 @@ io.on('connection', (socket) => {
       const extracted = await extractNidWithGemini(image, apiKey);
       extracted.marital_status = payload.maritalStatus || 'বিবাহিত';
       extracted.religion = payload.religion || 'ইসলাম';
-      extracted.mobile_number = payload.mobileNumber || '';
+      extracted.mobile_number = normalizeDigits(payload.mobileNumber || '');
+      extracted.family_id = payload.familyId || '';
       console.log(`[OCR Success] Extracted:`, extracted.name_bn || extracted.name_en, extracted.nid_number);
+
+      // Async sync to Firestore
+      syncToFirestore(extracted);
 
       // Broadcast extracted data to all devices in the room (including extension on PC)
       io.to(targetRoom).emit('nid-data-extracted', {

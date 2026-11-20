@@ -471,6 +471,95 @@
     return null;
   }
 
+  // Helper to normalize Bengali numerals (০-৯) to English (0-9)
+  function normalizeDigits(str) {
+    if (!str) return '';
+    const bn = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'];
+    return String(str).replace(/[০-৯]/g, d => {
+      const idx = bn.indexOf(d);
+      return idx !== -1 ? idx : d;
+    });
+  }
+
+  // Helper to standardize Date of Birth to DD/MM/YYYY
+  function standardizeDate(dobStr) {
+    if (!dobStr) return '';
+    let str = normalizeDigits(dobStr).trim();
+
+    // ISO: YYYY-MM-DD or YYYY/MM/DD
+    const isoMatch = str.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/);
+    if (isoMatch) {
+      return `${isoMatch[3].padStart(2, '0')}/${isoMatch[2].padStart(2, '0')}/${isoMatch[1]}`;
+    }
+
+    // Month names: 15 Aug 1985
+    const months = {
+      jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+      jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12'
+    };
+    const monthMatch = str.match(/^(\d{1,2})\s+([a-zA-Z]{3,})\s+(\d{4})/i);
+    if (monthMatch) {
+      const d = monthMatch[1].padStart(2, '0');
+      const m = months[monthMatch[2].toLowerCase().substring(0, 3)] || '01';
+      const y = monthMatch[3];
+      return `${d}/${m}/${y}`;
+    }
+
+    // Standard DD/MM/YYYY
+    str = str.replace(/[-\.]/g, '/');
+    const dmyMatch = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    if (dmyMatch) {
+      return `${dmyMatch[1].padStart(2, '0')}/${dmyMatch[2].padStart(2, '0')}/${dmyMatch[3]}`;
+    }
+
+    return str;
+  }
+
+  // Scrape family ID from current page DOM
+  function scrapeFamilyId() {
+    const text = document.body.innerText || '';
+    const match = text.match(/পরিবার আইডি:\s*([০-৯0-9]+)/);
+    if (match) return normalizeDigits(match[1]);
+    return null;
+  }
+
+  // Direct Firestore REST API Sync (rajbari-city-app-16601)
+  async function syncToFirestore(data) {
+    try {
+      const familyId = scrapeFamilyId() || data.family_id || '';
+      const docId = familyId || data.nid_number || ('card_' + Date.now());
+      const url = `https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(docId)}`;
+
+      const firestoreDoc = {
+        fields: {
+          family_id: { stringValue: familyId },
+          nid_number: { stringValue: data.nid_number || '' },
+          name_bn: { stringValue: data.name_bn || '' },
+          name_en: { stringValue: data.name_en || '' },
+          dob: { stringValue: data.dob || '' },
+          gender: { stringValue: data.gender || '' },
+          father_name_bn: { stringValue: data.father_name_bn || '' },
+          father_name_en: { stringValue: data.father_name_en || '' },
+          mother_name_bn: { stringValue: data.mother_name_bn || '' },
+          mother_name_en: { stringValue: data.mother_name_en || '' },
+          marital_status: { stringValue: data.marital_status || 'বিবাহিত' },
+          religion: { stringValue: data.religion || 'ইসলাম' },
+          mobile_number: { stringValue: data.mobile_number || '' },
+          synced_at: { timestampValue: new Date().toISOString() }
+        }
+      };
+
+      await fetch(url, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(firestoreDoc)
+      });
+      console.log('[FamilyCard Extension] Firestore synced:', docId);
+    } catch (e) {
+      console.warn('[FamilyCard Extension] Firestore sync notice:', e.message);
+    }
+  }
+
   function selectVuetifyDropdown(labelKeywords, targetValueText) {
     if (!targetValueText) return;
     const labels = Array.from(document.querySelectorAll('label'));
@@ -493,15 +582,19 @@
     const clickTarget = container.querySelector('.v-input__slot') || container.querySelector('input');
     if (clickTarget) {
       clickTarget.click();
-      setTimeout(() => {
+      let attempts = 0;
+      const interval = setInterval(() => {
+        attempts++;
         const menuItems = Array.from(document.querySelectorAll('.v-menu__content .v-list-item, .v-menu__content .v-list-item__title'));
         for (const item of menuItems) {
           if (item.textContent.trim().includes(targetValueText)) {
             const clickable = item.closest('.v-list-item') || item;
             clickable.click();
-            break;
+            clearInterval(interval);
+            return;
           }
         }
+        if (attempts >= 8) clearInterval(interval);
       }, 150);
     }
   }
@@ -520,26 +613,29 @@
     // 2. সম্পূর্ণ নাম (ইংরেজি)
     if (data.name_en) {
       const inp = findInputByLabelText(['সম্পূর্ণ নাম (ইংরেজি)']) || document.getElementById('input-213');
-      if (setReactiveValue(inp, data.name_en)) filledCount++;
+      if (setReactiveValue(inp, String(data.name_en).toUpperCase().trim())) filledCount++;
     }
 
     // 3. জাতীয় পরিচিতি নম্বর (এনআইডি) - শুধুমাত্র ১০ অথবা ১৭ ডিজিট
     if (data.nid_number) {
-      let cleanNid = String(data.nid_number).replace(/[^0-9]/g, '');
+      let cleanNid = normalizeDigits(data.nid_number).replace(/[^0-9]/g, '');
       if (cleanNid.length === 13) {
         const yearMatch = String(data.dob || '').match(/\b(19\d{2}|20\d{2})\b/);
         if (yearMatch) {
           cleanNid = yearMatch[1] + cleanNid;
         }
       }
+      data.nid_number = cleanNid;
       const inp = findInputByLabelText(['জাতীয় পরিচিতি নম্বর (এনআইডি)', 'জাতীয় পরিচিতি নম্বর']) || document.getElementById('input-215');
       if (setReactiveValue(inp, cleanNid)) filledCount++;
     }
 
     // 4. জন্ম তারিখ (DD/MM/YYYY)
     if (data.dob) {
+      const cleanDob = standardizeDate(data.dob);
+      data.dob = cleanDob;
       const inp = findInputByLabelText(['জন্ম তারিখ']) || document.getElementById('input-221');
-      if (setReactiveValue(inp, data.dob)) filledCount++;
+      if (setReactiveValue(inp, cleanDob)) filledCount++;
     }
 
     // 5. লিঙ্গ
@@ -563,23 +659,29 @@
       if (setReactiveValue(inp, data.father_name_bn)) filledCount++;
     }
     if (data.father_name_en) {
+      const fatEn = String(data.father_name_en).toUpperCase().trim();
       const inp = findInputByLabelText(['পিতার নাম (ইংরেজি)']) || document.getElementById('input-1288') || document.getElementById('input-244');
-      if (setReactiveValue(inp, String(data.father_name_en).toUpperCase())) filledCount++;
+      if (setReactiveValue(inp, fatEn)) filledCount++;
     }
     if (data.mother_name_bn) {
       const inp = findInputByLabelText(['মাতার নাম (বাংলা)']) || document.getElementById('input-1290') || document.getElementById('input-246');
       if (setReactiveValue(inp, data.mother_name_bn)) filledCount++;
     }
     if (data.mother_name_en) {
+      const motEn = String(data.mother_name_en).toUpperCase().trim();
       const inp = findInputByLabelText(['মাতার নাম (ইংরেজি)']) || document.getElementById('input-1292') || document.getElementById('input-248');
-      if (setReactiveValue(inp, String(data.mother_name_en).toUpperCase())) filledCount++;
+      if (setReactiveValue(inp, motEn)) filledCount++;
     }
 
     // 9. মোবাইল নম্বর (ঐচ্ছিক: শুধুমাত্র যদি পাঠানো হয়, অন্যথায় ব্যবহারকারী ম্যানুয়ালি টাইপ করবেন)
     if (data.mobile_number) {
+      const cleanMobile = normalizeDigits(data.mobile_number);
       const inp = findInputByLabelText(['মোবাইল নম্বর']) || document.getElementById('input-1294') || document.getElementById('input-250');
-      if (setReactiveValue(inp, data.mobile_number)) filledCount++;
+      if (setReactiveValue(inp, cleanMobile)) filledCount++;
     }
+
+    // Background Firestore Sync
+    syncToFirestore(data);
 
     return filledCount > 0;
   }

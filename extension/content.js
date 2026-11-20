@@ -1089,6 +1089,514 @@
     });
   }
 
+  // --- SECTION 5 & TAB 6: DYNAMIC CROSS-MATCHING ENGINE ---
+  // Tracks declared counts in Section 5 (পুরুষ, নারী, হিজড়া, এমএফএস, প্রশিক্ষণ, প্রবাসী)
+  // Real-time cross-matches with family members entered in Tab 6 (সদস্য - ১ নিজ, সদস্য - ২, ইত্যাদি)
+  // Displays live HUD and prevents mismatch rejections
+
+  function toBnDigits(num) {
+    if (num === null || num === undefined) return '০';
+    const bn = ['০','১','২','৩','৪','৫','৬','৭','৮','৯'];
+    return String(num).replace(/[0-9]/g, d => bn[parseInt(d, 10)]);
+  }
+
+  let lastCrossMatchHash = '';
+
+  function trackSection5Data() {
+    const panel = document.querySelector('[data-family-card-tab="3"]') ||
+                  Array.from(document.querySelectorAll('.v-expansion-panel')).find(p => p.textContent.includes('ফ্যামিলি কার্ড অনুযায়ী বিস্তারিত'));
+    
+    const cached = JSON.parse(localStorage.getItem('fc_section5_data') || 'null');
+
+    if (!panel) return cached;
+
+    const data = {
+      maleCount: cached ? cached.maleCount : 0,
+      femaleCount: cached ? cached.femaleCount : 0,
+      transCount: cached ? cached.transCount : 0,
+      totalCount: cached ? cached.totalCount : 0,
+      training: cached ? cached.training : '',
+      mfsAccount: cached ? cached.mfsAccount : '',
+      abroadMale: cached ? cached.abroadMale : 0,
+      abroadFemale: cached ? cached.abroadFemale : 0,
+      abroadTrans: cached ? cached.abroadTrans : 0
+    };
+
+    let hasFoundFields = false;
+    const cols = Array.from(panel.querySelectorAll('.col, [class*="col-"]'));
+
+    cols.forEach(col => {
+      const labelEl = col.querySelector('label');
+      if (!labelEl) return;
+      const label = labelEl.textContent.replace(/[\*\s]+/g, ' ').trim();
+
+      const selEl = col.querySelector('.v-select__selection');
+      const inputEl = col.querySelector('input:not([type="hidden"])');
+      const rawVal = (selEl ? selEl.textContent : (inputEl ? inputEl.value : '')).trim();
+      if (!rawVal) return;
+
+      if (/পরিবারে\s*পুরুষ\s*সদস্য\s*সংখ্যা/i.test(label)) {
+        data.maleCount = parseInt(normalizeDigits(rawVal), 10) || 0;
+        hasFoundFields = true;
+      } else if (/পরিবারে\s*নারী\s*সদস্য\s*সংখ্যা/i.test(label)) {
+        data.femaleCount = parseInt(normalizeDigits(rawVal), 10) || 0;
+        hasFoundFields = true;
+      } else if (/পরিবারে\s*হিজড়া\s*সদস্য\s*সংখ্যা/i.test(label)) {
+        data.transCount = parseInt(normalizeDigits(rawVal), 10) || 0;
+        hasFoundFields = true;
+      } else if (/প্রশিক্ষণ বা আর্থিক সুবিধা/i.test(label)) {
+        data.training = rawVal;
+        hasFoundFields = true;
+      } else if (/মোবাইল ব্যাংকিং/i.test(label)) {
+        data.mfsAccount = rawVal;
+        hasFoundFields = true;
+      } else if (/বিদেশে\s*বসবাসরত.*পুরুষ/i.test(label)) {
+        data.abroadMale = parseInt(normalizeDigits(rawVal), 10) || 0;
+      } else if (/বিদেশে\s*বসবাসরত.*মহিলা/i.test(label)) {
+        data.abroadFemale = parseInt(normalizeDigits(rawVal), 10) || 0;
+      } else if (/বিদেশে\s*বসবাসরত.*হিজড়া/i.test(label)) {
+        data.abroadTrans = parseInt(normalizeDigits(rawVal), 10) || 0;
+      }
+    });
+
+    if (hasFoundFields) {
+      data.totalCount = data.maleCount + data.femaleCount + data.transCount;
+      localStorage.setItem('fc_section5_data', JSON.stringify(data));
+      return data;
+    }
+
+    return cached;
+  }
+
+  function scanFamilyMembers() {
+    const tab6Panel = document.querySelector('[data-family-card-tab="6"]') ||
+                      Array.from(document.querySelectorAll('.v-expansion-panel')).find(p => p.textContent.includes('ফ্যামিলি সদস্য'));
+
+    const memberCards = Array.from(document.querySelectorAll('.fm-members-stack .fm-member-card, [data-family-card-tab="6"] .fm-member-card'));
+    if (memberCards.length === 0) {
+      const allCards = Array.from(document.querySelectorAll('.fm-member-card'));
+      if (allCards.length > 0) memberCards.push(...allCards);
+    }
+
+    let actualMale = 0;
+    let actualFemale = 0;
+    let actualTrans = 0;
+    const membersDetail = [];
+
+    let applicantGender = (lastExtractedData && lastExtractedData.gender) || '';
+    if (!applicantGender) {
+      const gLabels = Array.from(document.querySelectorAll('label')).filter(l => l.textContent.trim().startsWith('লিঙ্গ'));
+      for (const gl of gLabels) {
+        const parent = gl.closest('.col, [class*="col-"]');
+        const sel = parent?.querySelector('.v-select__selection');
+        if (sel && sel.textContent.trim()) {
+          applicantGender = sel.textContent.trim();
+          break;
+        }
+      }
+    }
+
+    const maleKeywords = ['পুরুষ', 'স্বামী', 'পুত্র', 'ছেলে', 'পিতা', 'বাবা', 'ভাই', 'দাদা', 'নানা', 'নাতি', 'শ্বশুর', 'চাচা', 'মামা', 'ফুফা', 'খালু', 'দেবর', 'ভাসুর'];
+    const femaleKeywords = ['নারী', 'মহিলা', 'স্ত্রী', 'কন্যা', 'মেয়ে', 'মাতা', 'মা', 'বোন', 'দাদী', 'নানী', 'নাতনি', 'শাশুড়ি', 'চাচী', 'মামী', 'ফুফু', 'খালা', 'ননদ', 'জা'];
+    const transKeywords = ['হিজড়া', 'অন্যান্য'];
+
+    memberCards.forEach((card, idx) => {
+      const isSelf = card.classList.contains('fm-member-card--self') || (card.textContent.includes('সদস্য - ১') && card.textContent.includes('নিজ'));
+      let detectedGender = '';
+      let relationship = '';
+
+      if (isSelf) {
+        relationship = 'নিজ / আবেদনকারী';
+        if (applicantGender.includes('নারী') || applicantGender.includes('মহিলা')) {
+          detectedGender = 'নারী';
+        } else if (applicantGender.includes('হিজড়া')) {
+          detectedGender = 'হিজড়া';
+        } else {
+          detectedGender = 'পুরুষ';
+        }
+      } else {
+        const selects = Array.from(card.querySelectorAll('.v-select'));
+        for (const sel of selects) {
+          const parentCol = sel.closest('.col, [class*="col-"]') || sel.parentElement;
+          const lbl = parentCol?.querySelector('label')?.textContent || '';
+          const selVal = sel.querySelector('.v-select__selection')?.textContent.trim() || '';
+
+          if (/লিঙ্গ/i.test(lbl)) {
+            if (selVal.includes('পুরুষ')) detectedGender = 'পুরুষ';
+            else if (selVal.includes('নারী') || selVal.includes('মহিলা')) detectedGender = 'নারী';
+            else if (selVal.includes('হিজড়া')) detectedGender = 'হিজড়া';
+          } else if (/সম্পর্ক/i.test(lbl)) {
+            relationship = selVal;
+          }
+        }
+
+        if (!detectedGender && relationship) {
+          if (maleKeywords.some(k => relationship.includes(k))) detectedGender = 'পুরুষ';
+          else if (femaleKeywords.some(k => relationship.includes(k))) detectedGender = 'নারী';
+          else if (transKeywords.some(k => relationship.includes(k))) detectedGender = 'হিজড়া';
+        }
+
+        if (!detectedGender) {
+          const cardText = card.innerText || '';
+          for (const kw of femaleKeywords) {
+            if (cardText.includes(kw)) { detectedGender = 'নারী'; break; }
+          }
+          if (!detectedGender) {
+            for (const kw of maleKeywords) {
+              if (cardText.includes(kw)) { detectedGender = 'পুরুষ'; break; }
+            }
+          }
+        }
+      }
+
+      if (detectedGender === 'পুরুষ') actualMale++;
+      else if (detectedGender === 'নারী') actualFemale++;
+      else if (detectedGender === 'হিজড়া') actualTrans++;
+
+      membersDetail.push({
+        index: idx + 1,
+        isSelf,
+        relationship: relationship || (isSelf ? 'নিজ' : 'অজ্ঞাত'),
+        gender: detectedGender || 'অজ্ঞাত'
+      });
+    });
+
+    return {
+      tab6Panel,
+      totalMembers: memberCards.length,
+      actualMale,
+      actualFemale,
+      actualTrans,
+      membersDetail
+    };
+  }
+
+  function computeCrossMatch(declared, actual) {
+    if (!declared || declared.totalCount === 0) {
+      return {
+        diffMale: 0,
+        diffFemale: 0,
+        diffTrans: 0,
+        diffTotal: 0,
+        isExactMatch: false,
+        statusType: 'empty',
+        statusText: '⏳ সেকশন ৫ এর সদস্য সংখ্যা আগে পূরণ করুন'
+      };
+    }
+
+    const diffMale = declared.maleCount - actual.actualMale;
+    const diffFemale = declared.femaleCount - actual.actualFemale;
+    const diffTrans = declared.transCount - actual.actualTrans;
+    const diffTotal = declared.totalCount - actual.totalMembers;
+
+    const isExactMatch = (diffTotal === 0 && diffMale === 0 && diffFemale === 0 && diffTrans === 0);
+
+    const pendingParts = [];
+    const excessParts = [];
+    if (diffMale > 0) pendingParts.push(`পুরুষ ${toBnDigits(diffMale)} জন`);
+    if (diffFemale > 0) pendingParts.push(`নারী ${toBnDigits(diffFemale)} জন`);
+    if (diffTrans > 0) pendingParts.push(`হিজড়া ${toBnDigits(diffTrans)} জন`);
+
+    if (diffMale < 0) excessParts.push(`পুরুষ ${toBnDigits(Math.abs(diffMale))} জন`);
+    if (diffFemale < 0) excessParts.push(`নারী ${toBnDigits(Math.abs(diffFemale))} জন`);
+    if (diffTrans < 0) excessParts.push(`হিজড়া ${toBnDigits(Math.abs(diffTrans))} জন`);
+
+    let statusText = '';
+    let statusType = 'pending';
+
+    if (isExactMatch) {
+      statusType = 'matched';
+      statusText = `✅ শতভাগ সঠিক: সকল সদস্য (${toBnDigits(declared.totalCount)} জন) মিলেছে!`;
+    } else if (excessParts.length > 0 && pendingParts.length > 0) {
+      statusType = 'mismatch';
+      statusText = `⚠️ অমিল: ${excessParts.join(', ')} অতিরিক্ত ও ${pendingParts.join(', ')} বাকি!`;
+    } else if (excessParts.length > 0) {
+      statusType = 'excess';
+      statusText = `❌ অতিরিক্ত: ${excessParts.join(', ')} অতিরিক্ত সদস্য দেওয়া হয়েছে!`;
+    } else {
+      statusType = 'pending';
+      statusText = `⏳ বাকি: ${pendingParts.join(', ')} (মোট বাকি ${toBnDigits(diffTotal)} জন)`;
+    }
+
+    return {
+      diffMale,
+      diffFemale,
+      diffTrans,
+      diffTotal,
+      isExactMatch,
+      statusType,
+      statusText
+    };
+  }
+
+  function injectCrossMatchHUD() {
+    if (document.getElementById('fc-crossmatch-hud')) return;
+
+    const hud = document.createElement('div');
+    hud.id = 'fc-crossmatch-hud';
+    hud.innerHTML = `
+      <div class="fc-cm-header" id="fc-cm-toggle-btn">
+        <h4>👥 সদস্য ক্রস-ম্যাচ (<span id="fc-cm-ratio">০/০</span>)</h4>
+        <span class="fc-cm-toggle" id="fc-cm-min-icon">▾</span>
+      </div>
+      <div class="fc-cm-body">
+        <div id="fc-cm-verdict-box" class="fc-cm-verdict fc-cm-verdict-pending">
+          ⏳ পর্যবেক্ষণ চলছে...
+        </div>
+        
+        <div class="fc-cm-grid">
+          <div class="fc-cm-stat-card">
+            <div class="fc-cm-stat-title">📋 সেকশন ৫ ঘোষণা</div>
+            <div class="fc-cm-stat-val" id="fc-cm-declared-counts">পু: ০ | না: ০ | হি: ০</div>
+            <div style="font-size: 10px; color: #0d9488; font-weight: 600;">মোট: <span id="fc-cm-declared-total">০</span> জন</div>
+          </div>
+          <div class="fc-cm-stat-card">
+            <div class="fc-cm-stat-title">📝 বর্তমান এন্ট্রি</div>
+            <div class="fc-cm-stat-val" id="fc-cm-actual-counts">পু: ০ | না: ০ | হি: ০</div>
+            <div style="font-size: 10px; color: #0d9488; font-weight: 600;">মোট: <span id="fc-cm-actual-total">০</span> জন</div>
+          </div>
+        </div>
+
+        <div class="fc-cm-detail-list">
+          <div class="fc-cm-row">
+            <span>👨 পুরুষ সদস্য</span>
+            <span id="fc-cm-male-status" class="fc-cm-badge fc-cm-badge-pending">০/০</span>
+          </div>
+          <div class="fc-cm-row">
+            <span>👩 নারী সদস্য</span>
+            <span id="fc-cm-female-status" class="fc-cm-badge fc-cm-badge-pending">০/০</span>
+          </div>
+          <div class="fc-cm-row">
+            <span>⚧️ হিজড়া সদস্য</span>
+            <span id="fc-cm-trans-status" class="fc-cm-badge fc-cm-badge-pending">০/০</span>
+          </div>
+        </div>
+
+        <div id="fc-cm-extra-info" style="font-size: 10.5px; color: #475569; background: #f8fafc; padding: 6px 8px; border-radius: 6px; line-height: 1.35;">
+          📱 এমএফএস: <b id="fc-cm-mfs">প্রযোজ্য নয়</b> | 🎓 প্রশিক্ষণ: <b id="fc-cm-training">-</b><br>
+          ✈️ প্রবাসী সদস্য: <span id="fc-cm-abroad">০ জন</span> | <span id="fc-cm-cloud-stat" style="color: #0f766e; font-weight: 600;">☁️ ক্লাউড অটো-সিঙ্ক প্রস্তুত</span>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(hud);
+
+    const toggleBtn = document.getElementById('fc-cm-toggle-btn');
+    const minIcon = document.getElementById('fc-cm-min-icon');
+    toggleBtn.addEventListener('click', () => {
+      hud.classList.toggle('minimized');
+      minIcon.textContent = hud.classList.contains('minimized') ? '▴' : '▾';
+    });
+  }
+
+  function injectTab6Banner(container, declared, actual, match) {
+    if (!container) return;
+    let banner = document.getElementById('fc-tab6-banner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'fc-tab6-banner';
+      container.insertBefore(banner, container.firstChild);
+    }
+
+    let bg = '#f0fdf4';
+    let border = '#86efac';
+    let textColor = '#166534';
+    let badgeBg = '#dcfce7';
+
+    if (match.statusType === 'pending') {
+      bg = '#fffbeb';
+      border = '#fde68a';
+      textColor = '#92400e';
+      badgeBg = '#fef3c7';
+    } else if (match.statusType === 'mismatch' || match.statusType === 'excess') {
+      bg = '#fef2f2';
+      border = '#fecaca';
+      textColor = '#991b1b';
+      badgeBg = '#fee2e2';
+    }
+
+    banner.style.cssText = `margin-bottom: 14px; padding: 10px 14px; background: ${bg}; border: 1.5px solid ${border}; border-radius: 10px; font-family: -apple-system, sans-serif; box-shadow: 0 2px 6px rgba(0,0,0,0.04);`;
+
+    banner.innerHTML = `
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+        <div style="display: flex; align-items: center; gap: 8px; font-weight: 700; color: ${textColor}; font-size: 13px;">
+          <span>👥 ফ্যামিলি সদস্য ক্রস-ম্যাচ ভ্যালিডেটর</span>
+        </div>
+        <span style="background: ${badgeBg}; color: ${textColor}; font-weight: 800; font-size: 11px; padding: 3px 8px; border-radius: 6px; border: 1px solid ${border};">
+          ${match.statusText}
+        </span>
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 11.5px; background: rgba(255,255,255,0.7); padding: 6px 10px; border-radius: 6px;">
+        <div>
+          <b style="color: #1e3a8a;">📋 সেকশন ৫ ঘোষণা:</b> 
+          পু: <b>${toBnDigits(declared ? declared.maleCount : 0)}</b> | না: <b>${toBnDigits(declared ? declared.femaleCount : 0)}</b> | হি: <b>${toBnDigits(declared ? declared.transCount : 0)}</b> | মোট: <b>${toBnDigits(declared ? declared.totalCount : 0)}</b>
+        </div>
+        <div>
+          <b style="color: #047857;">📝 বর্তমান এন্ট্রি:</b> 
+          পু: <b>${toBnDigits(actual.actualMale)}</b> | না: <b>${toBnDigits(actual.actualFemale)}</b> | হি: <b>${toBnDigits(actual.actualTrans)}</b> | মোট: <b>${toBnDigits(actual.totalMembers)}</b>
+        </div>
+      </div>
+    `;
+  }
+
+  async function syncCrossMatchToFirestore(sec5Data, membersData, matchResult) {
+    try {
+      const rawId = scrapeFamilyId() || (lastExtractedData && lastExtractedData.family_id) || '8743033825';
+      const cleanId = normalizeDigits(rawId).replace(/[^0-9]/g, '') || '8743033825';
+
+      const fields = {
+        section5_male_declared: { integerValue: String(sec5Data ? sec5Data.maleCount : 0) },
+        section5_female_declared: { integerValue: String(sec5Data ? sec5Data.femaleCount : 0) },
+        section5_trans_declared: { integerValue: String(sec5Data ? sec5Data.transCount : 0) },
+        section5_total_declared: { integerValue: String(sec5Data ? sec5Data.totalCount : 0) },
+        section6_actual_male: { integerValue: String(membersData.actualMale || 0) },
+        section6_actual_female: { integerValue: String(membersData.actualFemale || 0) },
+        section6_actual_trans: { integerValue: String(membersData.actualTrans || 0) },
+        section6_actual_total: { integerValue: String(membersData.totalMembers || 0) },
+        family_members_cross_matched: { booleanValue: !!matchResult.isExactMatch },
+        crossmatch_status_text: { stringValue: matchResult.statusText || '' },
+        section5_crossmatch_updated_at: { timestampValue: new Date().toISOString() }
+      };
+
+      const updateMask = [
+        'updateMask.fieldPaths=section5_male_declared',
+        'updateMask.fieldPaths=section5_female_declared',
+        'updateMask.fieldPaths=section5_trans_declared',
+        'updateMask.fieldPaths=section5_total_declared',
+        'updateMask.fieldPaths=section6_actual_male',
+        'updateMask.fieldPaths=section6_actual_female',
+        'updateMask.fieldPaths=section6_actual_trans',
+        'updateMask.fieldPaths=section6_actual_total',
+        'updateMask.fieldPaths=family_members_cross_matched',
+        'updateMask.fieldPaths=crossmatch_status_text',
+        'updateMask.fieldPaths=section5_crossmatch_updated_at'
+      ];
+
+      if (sec5Data && sec5Data.mfsAccount) {
+        fields.section5_mfs_account = { stringValue: sec5Data.mfsAccount };
+        updateMask.push('updateMask.fieldPaths=section5_mfs_account');
+      }
+      if (sec5Data && sec5Data.training) {
+        fields.section5_social_training = { stringValue: sec5Data.training };
+        updateMask.push('updateMask.fieldPaths=section5_social_training');
+      }
+      if (sec5Data && sec5Data.abroadMale !== undefined) {
+        fields.section5_abroad_male = { integerValue: String(sec5Data.abroadMale) };
+        updateMask.push('updateMask.fieldPaths=section5_abroad_male');
+      }
+      if (sec5Data && sec5Data.abroadFemale !== undefined) {
+        fields.section5_abroad_female = { integerValue: String(sec5Data.abroadFemale) };
+        updateMask.push('updateMask.fieldPaths=section5_abroad_female');
+      }
+      if (sec5Data && sec5Data.abroadTrans !== undefined) {
+        fields.section5_abroad_trans = { integerValue: String(sec5Data.abroadTrans) };
+        updateMask.push('updateMask.fieldPaths=section5_abroad_trans');
+      }
+
+      const url = `https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(cleanId)}?${updateMask.join('&')}`;
+
+      await fetch(url, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields })
+      });
+      console.log('[FamilyCard Extension] Section 5 & Cross-Match data synced to Firestore for family ID:', cleanId);
+
+      const cloudEl = document.getElementById('fc-cm-cloud-stat');
+      if (cloudEl) {
+        cloudEl.textContent = `☁️ ক্লাউডে সংরক্ষিত (আইডি: ${cleanId})`;
+      }
+    } catch (e) {
+      console.warn('[FamilyCard Extension] Firestore cross-match sync notice:', e.message);
+    }
+  }
+
+  function handleSection5AndCrossMatch() {
+    const sec5Data = trackSection5Data();
+    const membersData = scanFamilyMembers();
+
+    const s5Panel = document.querySelector('[data-family-card-tab="3"]');
+    const s6Panel = document.querySelector('[data-family-card-tab="6"]');
+    if (!sec5Data && !s5Panel && !s6Panel && membersData.totalMembers === 0) {
+      const hud = document.getElementById('fc-crossmatch-hud');
+      if (hud) hud.style.display = 'none';
+      return;
+    }
+
+    injectCrossMatchHUD();
+    const hudEl = document.getElementById('fc-crossmatch-hud');
+    if (hudEl) hudEl.style.display = 'block';
+
+    const match = computeCrossMatch(sec5Data, membersData);
+
+    const stack = document.querySelector('.fm-members-stack') || s6Panel?.querySelector('.v-expansion-panel-content__wrap');
+    if (stack) {
+      injectTab6Banner(stack, sec5Data, membersData, match);
+    }
+
+    const ratioEl = document.getElementById('fc-cm-ratio');
+    if (ratioEl) {
+      const decTotal = sec5Data ? sec5Data.totalCount : 0;
+      ratioEl.textContent = `${toBnDigits(membersData.totalMembers)}/${toBnDigits(decTotal)} ${match.isExactMatch ? '✅' : ''}`;
+    }
+
+    const verdictBox = document.getElementById('fc-cm-verdict-box');
+    if (verdictBox) {
+      verdictBox.textContent = match.statusText;
+      verdictBox.className = `fc-cm-verdict fc-cm-verdict-${match.statusType}`;
+    }
+
+    const decCountsEl = document.getElementById('fc-cm-declared-counts');
+    const decTotEl = document.getElementById('fc-cm-declared-total');
+    if (decCountsEl && sec5Data) {
+      decCountsEl.textContent = `পু: ${toBnDigits(sec5Data.maleCount)} | না: ${toBnDigits(sec5Data.femaleCount)} | হি: ${toBnDigits(sec5Data.transCount)}`;
+      if (decTotEl) decTotEl.textContent = toBnDigits(sec5Data.totalCount);
+    }
+
+    const actCountsEl = document.getElementById('fc-cm-actual-counts');
+    const actTotEl = document.getElementById('fc-cm-actual-total');
+    if (actCountsEl) {
+      actCountsEl.textContent = `পু: ${toBnDigits(membersData.actualMale)} | না: ${toBnDigits(membersData.actualFemale)} | হি: ${toBnDigits(membersData.actualTrans)}`;
+      if (actTotEl) actTotEl.textContent = toBnDigits(membersData.totalMembers);
+    }
+
+    function updateRowBadge(badgeId, actualCount, declaredCount) {
+      const el = document.getElementById(badgeId);
+      if (!el) return;
+      el.textContent = `${toBnDigits(actualCount)} / ${toBnDigits(declaredCount)}`;
+      if (actualCount === declaredCount && declaredCount > 0) {
+        el.className = 'fc-cm-badge fc-cm-badge-matched';
+      } else if (actualCount < declaredCount) {
+        el.className = 'fc-cm-badge fc-cm-badge-pending';
+      } else if (actualCount > declaredCount) {
+        el.className = 'fc-cm-badge fc-cm-badge-excess';
+      } else {
+        el.className = 'fc-cm-badge fc-cm-badge-pending';
+      }
+    }
+
+    updateRowBadge('fc-cm-male-status', membersData.actualMale, sec5Data ? sec5Data.maleCount : 0);
+    updateRowBadge('fc-cm-female-status', membersData.actualFemale, sec5Data ? sec5Data.femaleCount : 0);
+    updateRowBadge('fc-cm-trans-status', membersData.actualTrans, sec5Data ? sec5Data.transCount : 0);
+
+    if (sec5Data) {
+      const mfsEl = document.getElementById('fc-cm-mfs');
+      if (mfsEl) mfsEl.textContent = sec5Data.mfsAccount || 'প্রযোজ্য নয়';
+      const trainEl = document.getElementById('fc-cm-training');
+      if (trainEl) trainEl.textContent = sec5Data.training || '-';
+      const abroadEl = document.getElementById('fc-cm-abroad');
+      if (abroadEl) {
+        const abroadTot = (sec5Data.abroadMale || 0) + (sec5Data.abroadFemale || 0) + (sec5Data.abroadTrans || 0);
+        abroadEl.textContent = `${toBnDigits(abroadTot)} জন`;
+      }
+    }
+
+    const currentHash = `${sec5Data ? JSON.stringify(sec5Data) : ''}|${membersData.actualMale}|${membersData.actualFemale}|${membersData.actualTrans}|${membersData.totalMembers}|${match.isExactMatch}`;
+    if (currentHash !== lastCrossMatchHash) {
+      lastCrossMatchHash = currentHash;
+      syncCrossMatchToFirestore(sec5Data, membersData, match);
+    }
+  }
+
   // Auto-fill Step 1 (ব্যক্তিগত তথ্য) when the user advances or switches to Tab 1
   function setupStepObserver() {
     let lastFilledTab = -1;
@@ -1107,6 +1615,7 @@
       }
       traceSection3Media();
       handleSection4Address();
+      handleSection5AndCrossMatch();
     });
 
     observer.observe(document.body, {
@@ -1119,6 +1628,7 @@
     setInterval(() => {
       traceSection3Media();
       handleSection4Address();
+      handleSection5AndCrossMatch();
     }, 1500);
 
     document.addEventListener('click', (e) => {

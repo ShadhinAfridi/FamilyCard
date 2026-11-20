@@ -1,29 +1,15 @@
 import fs from 'fs';
-import path from 'path';
 
-const publicHtml = fs.readFileSync('public/index.html', 'utf8');
-const publicCss = fs.readFileSync('public/style.css', 'utf8');
-const publicJs = fs.readFileSync('public/app.js', 'utf8');
-const bookmarkletHtml = fs.readFileSync('public/bookmarklet/index.html', 'utf8');
-const appMin = fs.readFileSync('public/bookmarklet/app.min.js', 'utf8');
-const loaderMin = fs.readFileSync('public/bookmarklet/loader.min.js', 'utf8');
-const userScriptHeader = fs.readFileSync('public/bookmarklet/familycard.user.js', 'utf8').split('// ==/UserScript==')[0] + '// ==/UserScript==\n\n';
+const workerCode = `// Cloudflare Worker for familycard.afridi.app & familycard.fourdevs-pro.workers.dev
+// Edge API (Gemini NID & Birth Certificate OCR) + Zero-Lag Edge CDN Proxy backed by binary-ict.web.app
 
-const workerCode = `// Cloudflare Worker for familycard.afridi.app
-// Edge-deployed Family Card NID & Birth Certificate AI Scanner & Bookmarklet Suite
+const ORIGIN_BASE = 'https://binary-ict.web.app';
 
-const PUBLIC_HTML = ${JSON.stringify(publicHtml)};
-const PUBLIC_CSS = ${JSON.stringify(publicCss)};
-const PUBLIC_JS = ${JSON.stringify(publicJs)};
-const BOOKMARKLET_HTML = ${JSON.stringify(bookmarkletHtml)};
-const APP_MIN = ${JSON.stringify(appMin)};
-const LOADER_MIN = ${JSON.stringify(loaderMin)};
-const USERSCRIPT_HEADER = ${JSON.stringify(userScriptHeader)};
-let _bookmarkletMinCache = null;
-function getBookmarkletMin() {
-  if (!_bookmarkletMinCache) _bookmarkletMinCache = 'javascript:' + encodeURI(APP_MIN).replace(/#/g, '%23');
-  return _bookmarkletMinCache;
-}
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+};
 
 function normalizeDigits(str) {
   if (!str) return '';
@@ -77,66 +63,7 @@ export default {
 
     // CORS preflight
     if (request.method === 'OPTIONS') {
-      return new Response(null, {
-        headers: {
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type, Authorization'
-        }
-      });
-    }
-
-    // Static Assets
-    if (path === '/' || path === '/index.html') {
-      return new Response(PUBLIC_HTML, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
-    }
-    if (path === '/style.css') {
-      return new Response(PUBLIC_CSS, { headers: { 'Content-Type': 'text/css; charset=utf-8' } });
-    }
-    if (path === '/app.js') {
-      return new Response(PUBLIC_JS, { headers: { 'Content-Type': 'application/javascript; charset=utf-8' } });
-    }
-    if (path === '/bookmarklet' || path === '/bookmarklet/' || path === '/bookmarklet/index.html') {
-      return new Response(BOOKMARKLET_HTML, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
-    }
-    if (path === '/bookmarklet.min.js' || path === '/bookmarklet/bookmarklet.min.js') {
-      return new Response(getBookmarkletMin(), {
-        headers: {
-          'Content-Type': 'application/javascript; charset=utf-8',
-          'Access-Control-Allow-Origin': '*',
-          'Cache-Control': 'no-cache, no-store, must-revalidate'
-        }
-      });
-    }
-    if (path === '/bookmarklet/app.min.js') {
-      return new Response(APP_MIN, {
-        headers: {
-          'Content-Type': 'application/javascript; charset=utf-8',
-          'Access-Control-Allow-Origin': '*',
-          'Cache-Control': 'no-cache, no-store, must-revalidate'
-        }
-      });
-    }
-    if (path === '/bookmarklet/loader.min.js') {
-      return new Response(LOADER_MIN, {
-        headers: {
-          'Content-Type': 'application/javascript; charset=utf-8',
-          'Access-Control-Allow-Origin': '*',
-          'Cache-Control': 'no-cache, no-store, must-revalidate'
-        }
-      });
-    }
-    if (path === '/bookmarklet/familycard.user.js') {
-      return new Response(USERSCRIPT_HEADER + APP_MIN, {
-        headers: {
-          'Content-Type': 'application/javascript; charset=utf-8',
-          'Access-Control-Allow-Origin': '*',
-          'Cache-Control': 'no-cache, no-store, must-revalidate'
-        }
-      });
-    }
-    if (path === '/extension.zip' || path === '/bookmarklet/extension.zip') {
-      return Response.redirect('https://binary-ict.web.app/extension.zip', 302);
+      return new Response(null, { status: 204, headers: CORS_HEADERS });
     }
 
     // API: OCR Endpoint (supports both /api/extract-nid and /api/ocr-nid)
@@ -145,12 +72,12 @@ export default {
         const body = await request.json();
         const apiKey = body.apiKey || env.GEMINI_API_KEY;
         if (!apiKey) {
-          return Response.json({ success: false, error: 'Gemini API Key প্রয়োজন।' }, { status: 400, headers: { 'Access-Control-Allow-Origin': '*' } });
+          return Response.json({ success: false, error: 'Gemini API Key প্রয়োজন।' }, { status: 400, headers: CORS_HEADERS });
         }
 
         const rawInput = body.imageBase64 || body.image || '';
         if (!rawInput) {
-          return Response.json({ success: false, error: 'Image is required' }, { status: 400, headers: { 'Access-Control-Allow-Origin': '*' } });
+          return Response.json({ success: false, error: 'Image is required' }, { status: 400, headers: CORS_HEADERS });
         }
 
         let mimeType = body.mimeType || 'image/jpeg';
@@ -182,7 +109,7 @@ export default {
 
         if (!geminiRes.ok) {
           const errTxt = await geminiRes.text();
-          return Response.json({ success: false, error: \`Gemini Error: \${errTxt}\` }, { status: 500, headers: { 'Access-Control-Allow-Origin': '*' } });
+          return Response.json({ success: false, error: \`Gemini Error: \${errTxt}\` }, { status: 500, headers: CORS_HEADERS });
         }
 
         const geminiJson = await geminiRes.json();
@@ -222,18 +149,37 @@ export default {
         parsed.religion = body.religion || 'ইসলাম';
         parsed.mobile_number = body.mobileNumber ? normalizeDigits(body.mobileNumber).trim() : '';
 
-        return Response.json({ success: true, data: parsed }, {
-          headers: { 'Access-Control-Allow-Origin': '*' }
-        });
+        return Response.json({ success: true, data: parsed }, { headers: CORS_HEADERS });
       } catch (err) {
-        return Response.json({ success: false, error: err.message }, {
-          status: 500,
-          headers: { 'Access-Control-Allow-Origin': '*' }
-        });
+        return Response.json({ success: false, error: err.message }, { status: 500, headers: CORS_HEADERS });
       }
     }
 
-    return new Response('Not Found', { status: 404 });
+    // Health check endpoint
+    if (path === '/api/info') {
+      return Response.json({ status: 'online', edge: 'cloudflare-worker', upstream: ORIGIN_BASE }, { headers: CORS_HEADERS });
+    }
+
+    // Static & Bookmarklet Assets via global Firebase CDN upstream with full CORS
+    if (path === '/bookmarklet/extension.zip' || path === '/extension.zip') {
+      return Response.redirect(ORIGIN_BASE + '/extension.zip', 302);
+    }
+
+    let targetPath = path;
+    if (path === '/' || path === '') targetPath = '/index.html';
+    else if (path === '/bookmarklet' || path === '/bookmarklet/') targetPath = '/bookmarklet/index.html';
+    else if (path === '/bookmarklet.min.js') targetPath = '/bookmarklet/bookmarklet.min.js';
+
+    const upstreamRes = await fetch(ORIGIN_BASE + targetPath + url.search);
+    const outHeaders = new Headers(upstreamRes.headers);
+    outHeaders.set('Access-Control-Allow-Origin', '*');
+    if (targetPath.startsWith('/bookmarklet/')) {
+      outHeaders.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    }
+    return new Response(upstreamRes.body, {
+      status: upstreamRes.status,
+      headers: outHeaders
+    });
   }
 };
 `;

@@ -2878,7 +2878,489 @@ Return ONLY a single valid JSON object with these exact keys:
     }
   }
 
-  // MutationObserver to watch Step 1, Section 3, Section 4, Section 5/Tab 6, Section 6, and Section 7 activation
+  // --- SECTION 9: MONEY USAGE & 2500 TK DEMAND DISTRIBUTION (অর্থ ব্যবহার - Tab 10) ---
+  // Rules:
+  // 1. Total allowance ceiling: 2500 Tk strictly.
+  // 2. Default benchmark model (User-specified):
+  //    - খাদ্য ও পরিবারের ভরণপোষণ: 500
+  //    - চিকিৎসা (নিজের বা পরিবারের সদস্যদের): 500
+  //    - সন্তানের শিক্ষা: 300
+  //    - বাসস্থান নির্মান/মেরামত: 0
+  //    - পোশাক/বস্ত্র/কাপড় ক্রয়: 200
+  //    - আয়বর্ধক কর্মসূচি (ক্ষুদ্র ব্যবসা+ হাঁস-মুরগি/গবাদি পশু পালন + সবজি বাগান + কৃষি উপকরণ ক্রয় ইত্যাদি): 1000
+  //    - সঞ্চয়: 0
+  //    - ঋণ পরিশোধ: 0
+  //    - অন্যান্য (উল্লেখ করুন): 0
+  // 3. AI Dynamic Demand Analysis: Automatically reads previous family signals (members count, children count, agriculture labor, elderly/disabled) and adjusts distribution smartly while maintaining sum = 2500.
+  // 4. Live interactive toolbar with presets, real-time balance counter, and localStorage custom memory.
+  // 5. User manual entries protected; syncs to Firebase Firestore.
+
+  let isFillingSection9 = false;
+  let lastMoneySyncHash = '';
+
+  const BENCHMARK_MONEY_DISTRIBUTION = {
+    food: 500,
+    health: 500,
+    education: 300,
+    housing: 0,
+    clothing: 200,
+    income: 1000,
+    savings: 0,
+    debt: 0,
+    other: 0
+  };
+
+  function getSection9MoneyElements() {
+    const panel = document.querySelector('[data-family-card-tab="10"]') ||
+                  Array.from(document.querySelectorAll('.v-expansion-panel')).find(p => {
+                    const h3 = p.querySelector('h3, .v-expansion-panel-header');
+                    return h3 && (h3.textContent.includes('অর্থ ব্যবহার') || h3.textContent.includes('মোট পরিমাণ ২৫০০'));
+                  }) ||
+                  (document.querySelector('.family-card-form-step--active')?.textContent.includes('অর্থ ব্যবহার') ? document.querySelector('.v-expansion-panel--active, form') : null);
+    if (!panel) return null;
+
+    const fields = {
+      food: null,
+      health: null,
+      education: null,
+      housing: null,
+      clothing: null,
+      income: null,
+      savings: null,
+      debt: null,
+      other: null
+    };
+
+    const rows = Array.from(panel.querySelectorAll('.row.row--dense, .row'));
+    for (const r of rows) {
+      const textDiv = r.querySelector('.text-body-2.font-weight-medium, .font-weight-medium, label');
+      if (!textDiv) continue;
+      const txt = textDiv.textContent || '';
+      const inp = r.querySelector('input[type="number"], input');
+      if (!inp) continue;
+
+      if (txt.includes('খাদ্য') || txt.includes('ভরণপোষণ')) fields.food = inp;
+      else if (txt.includes('চিকিৎসা')) fields.health = inp;
+      else if (txt.includes('শিক্ষা')) fields.education = inp;
+      else if (txt.includes('বাসস্থান') || txt.includes('মেরামত')) fields.housing = inp;
+      else if (txt.includes('পোশাক') || txt.includes('বস্ত্র') || txt.includes('কাপড়') || txt.includes('কাপড়')) fields.clothing = inp;
+      else if (txt.includes('আয়বর্ধক') || txt.includes('আয়বর্ধক')) fields.income = inp;
+      else if (txt.includes('সঞ্চয়') || txt.includes('সঞ্চয়')) fields.savings = inp;
+      else if (txt.includes('ঋণ')) fields.debt = inp;
+      else if (txt.includes('অন্যান্য')) fields.other = inp;
+    }
+
+    const count = Object.values(fields).filter(Boolean).length;
+    if (count < 5) return null;
+    return { panel, fields };
+  }
+
+  function scrapeFamilyConditionsForAI() {
+    let totalMembers = 7;
+    let childrenCount = 2;
+    let hasDisabledOrElderly = false;
+    let isAgriLabor = true;
+    let hasRemittance = false;
+
+    // Check Section 5 tracked data
+    const sec5 = trackSection5Data();
+    if (sec5 && sec5.totalCount > 0) {
+      totalMembers = sec5.totalCount;
+      if ((sec5.abroadMale || 0) + (sec5.abroadFemale || 0) + (sec5.abroadTrans || 0) > 0) {
+        hasRemittance = true;
+      }
+    }
+
+    // Check Section 7 fields
+    const s7Panel = document.querySelector('[data-family-card-tab="5"]');
+    if (s7Panel) {
+      const s7Labels = Array.from(s7Panel.querySelectorAll('label'));
+      const childLbl = s7Labels.find(l => l.textContent.includes('শিশু সংখ্যা'));
+      if (childLbl) {
+        const selVal = childLbl.closest('.col, [class*="col-"]')?.querySelector('.v-select__selection')?.textContent.trim();
+        if (selVal) {
+          const num = parseInt(normalizeDigits(selVal).replace(/[^0-9]/g, ''), 10);
+          if (!isNaN(num)) childrenCount = num;
+        }
+      }
+
+      const memLbl = s7Labels.find(l => l.textContent.includes('সদস্য সংখ্যা') && !l.textContent.includes('শিশু'));
+      if (memLbl) {
+        const selVal = memLbl.closest('.col, [class*="col-"]')?.querySelector('.v-select__selection')?.textContent.trim();
+        if (selVal) {
+          const num = parseInt(normalizeDigits(selVal).replace(/[^0-9]/g, ''), 10);
+          if (!isNaN(num) && num > 0) totalMembers = num;
+        }
+      }
+
+      const laborLbl = s7Labels.find(l => l.textContent.includes('শ্রমিক হিসেবে নিয়োজিত'));
+      if (laborLbl) {
+        const selVal = laborLbl.closest('.col, [class*="col-"]')?.querySelector('.v-select__selection')?.textContent.trim();
+        if (selVal && !selVal.includes('কৃষি')) isAgriLabor = false;
+      }
+    }
+
+    // Check Tab 6 member cards for disability or elderly
+    const memberCards = Array.from(document.querySelectorAll('.fm-members-stack .fm-member-card, [data-family-card-tab="6"] .fm-member-card'));
+    for (const card of memberCards) {
+      const txt = card.textContent || '';
+      if (txt.includes('প্রতিবন্ধী') && !txt.includes('প্রতিবন্ধী নন') && !txt.includes('না')) {
+        hasDisabledOrElderly = true;
+      }
+    }
+
+    return { totalMembers, childrenCount, hasDisabledOrElderly, isAgriLabor, hasRemittance };
+  }
+
+  function computeAIDemandDistribution(conditions = {}) {
+    const totalMembers = conditions.totalMembers || 7;
+    const childrenCount = conditions.childrenCount !== undefined ? conditions.childrenCount : 2;
+    const hasDisabledOrElderly = !!conditions.hasDisabledOrElderly;
+
+    // Baseline: খাদ্য 500, চিকিৎসা 500, শিক্ষা 300, বাসস্থান 0, পোশাক 200, আয়বর্ধক 1000, সঞ্চয় 0, ঋণ 0, অন্যান্য 0 = 2500
+    let dist = {
+      food: 500,
+      health: 500,
+      education: 300,
+      housing: 0,
+      clothing: 200,
+      income: 1000,
+      savings: 0,
+      debt: 0,
+      other: 0
+    };
+
+    if (childrenCount === 0) {
+      dist.education = 0;
+      dist.food += 100;
+      dist.income += 200;
+    } else if (childrenCount >= 3) {
+      dist.education = 400;
+      dist.clothing = 250;
+      dist.income = 850;
+    }
+
+    if (hasDisabledOrElderly) {
+      dist.health += 200;
+      dist.income = Math.max(500, dist.income - 200);
+    }
+
+    if (totalMembers >= 8 && dist.food < 700) {
+      dist.food += 100;
+      dist.income = Math.max(500, dist.income - 100);
+    }
+
+    // Exact 2500 constraint guarantee
+    const curSum = Object.values(dist).reduce((a, b) => a + b, 0);
+    const diff = 2500 - curSum;
+    if (diff !== 0) {
+      dist.income += diff;
+    }
+
+    return dist;
+  }
+
+  function readCurrentMoneyDistribution(fields) {
+    const values = {};
+    for (const [key, inp] of Object.entries(fields)) {
+      if (!inp) { values[key] = 0; continue; }
+      const val = parseInt(normalizeDigits(inp.value || '').replace(/[^0-9]/g, ''), 10);
+      values[key] = isNaN(val) ? 0 : val;
+    }
+    values.total = Object.values(values).reduce((a, b) => a + b, 0);
+    return values;
+  }
+
+  function updateSection9HUD(fields) {
+    const toolbar = document.getElementById('fc-s9-money-toolbar');
+    if (!toolbar || !fields) return;
+
+    const current = readCurrentMoneyDistribution(fields);
+    const totalEl = toolbar.querySelector('#fc-money-total-val');
+    const badgeEl = toolbar.querySelector('#fc-money-live-badge');
+    const progressEl = toolbar.querySelector('#fc-money-progress-bar');
+
+    if (totalEl) totalEl.textContent = toBnDigits(current.total);
+
+    const pct = Math.min(100, Math.round((current.total / 2500) * 100));
+    if (progressEl) {
+      progressEl.style.width = `${pct}%`;
+      progressEl.style.background = current.total === 2500 ? '#10b981' : (current.total > 2500 ? '#ef4444' : '#f59e0b');
+    }
+
+    if (badgeEl) {
+      if (current.total === 2500) {
+        badgeEl.textContent = '✅ ১০০% নির্ভুল বরাদ্দ (২৫০০ টাকা)';
+        badgeEl.style.background = '#dcfce7';
+        badgeEl.style.color = '#166534';
+        badgeEl.style.border = '1px solid #86efac';
+      } else if (current.total < 2500) {
+        const rem = 2500 - current.total;
+        badgeEl.textContent = `⏳ বাকি আছে: ${toBnDigits(rem)} টাকা`;
+        badgeEl.style.background = '#fffbeb';
+        badgeEl.style.color = '#92400e';
+        badgeEl.style.border = '1px solid #fde68a';
+      } else {
+        const excess = current.total - 2500;
+        badgeEl.textContent = `❌ অতিরিক্ত: ${toBnDigits(excess)} টাকা (সীমা অতিক্রম)`;
+        badgeEl.style.background = '#fef2f2';
+        badgeEl.style.color = '#991b1b';
+        badgeEl.style.border = '1px solid #fecaca';
+      }
+    }
+  }
+
+  function applyMoneyDistribution(fields, dist, isUserAction = false) {
+    if (!fields || !dist) return;
+    for (const [key, val] of Object.entries(dist)) {
+      if (key === 'total') continue;
+      const inp = fields[key];
+      if (inp) {
+        if (!isUserAction && inp.dataset.fcMoneyUserEdited === 'true') continue;
+        setReactiveValue(inp, String(val));
+        inp.dataset.fcMoneyAutoFilled = 'true';
+      }
+    }
+    updateSection9HUD(fields);
+    syncMoneyDistributionToFirestore(dist);
+    if (isUserAction) {
+      showToast('✅ অর্থ বরাদ্দ ২৫০০ টাকা সফলভাবে পূরণ করা হয়েছে!');
+    }
+  }
+
+  async function syncMoneyDistributionToFirestore(dist) {
+    try {
+      const rawId = scrapeFamilyId() || (lastExtractedData && lastExtractedData.family_id) || '8743033825';
+      const cleanId = normalizeDigits(rawId).replace(/[^0-9]/g, '') || '8743033825';
+
+      const fields = {
+        money_food: { integerValue: String(dist.food || 0) },
+        money_health: { integerValue: String(dist.health || 0) },
+        money_education: { integerValue: String(dist.education || 0) },
+        money_housing: { integerValue: String(dist.housing || 0) },
+        money_clothing: { integerValue: String(dist.clothing || 0) },
+        money_income: { integerValue: String(dist.income || 0) },
+        money_savings: { integerValue: String(dist.savings || 0) },
+        money_debt: { integerValue: String(dist.debt || 0) },
+        money_other: { integerValue: String(dist.other || 0) },
+        money_total: { integerValue: String(dist.total || 2500) },
+        money_distribution_synced_at: { timestampValue: new Date().toISOString() }
+      };
+
+      const updateMask = [
+        'updateMask.fieldPaths=money_food',
+        'updateMask.fieldPaths=money_health',
+        'updateMask.fieldPaths=money_education',
+        'updateMask.fieldPaths=money_housing',
+        'updateMask.fieldPaths=money_clothing',
+        'updateMask.fieldPaths=money_income',
+        'updateMask.fieldPaths=money_savings',
+        'updateMask.fieldPaths=money_debt',
+        'updateMask.fieldPaths=money_other',
+        'updateMask.fieldPaths=money_total',
+        'updateMask.fieldPaths=money_distribution_synced_at'
+      ];
+
+      const hash = JSON.stringify(dist);
+      if (hash === lastMoneySyncHash) return;
+      lastMoneySyncHash = hash;
+
+      const url = `https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(cleanId)}?${updateMask.join('&')}`;
+
+      await fetch(url, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields })
+      });
+      console.log('[FamilyCard] Money distribution synced to Firestore:', cleanId);
+    } catch (err) {
+      console.warn('[FamilyCard] Firestore money sync notice:', err.message);
+    }
+  }
+
+  function injectSection9Toolbar(panel, fields) {
+    if (!panel || document.getElementById('fc-s9-money-toolbar')) return;
+
+    const wrap = panel.querySelector('.v-expansion-panel-content__wrap') || panel;
+    const toolbar = document.createElement('div');
+    toolbar.id = 'fc-s9-money-toolbar';
+    toolbar.style.cssText = `
+      background: linear-gradient(135deg, #f0fdfa, #f8fafc);
+      border: 1.5px solid #0d9488;
+      border-radius: 10px;
+      padding: 12px 14px;
+      margin-bottom: 14px;
+      font-family: -apple-system, sans-serif;
+      box-shadow: 0 2px 8px rgba(13, 148, 136, 0.08);
+    `;
+
+    toolbar.innerHTML = `
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 8px;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 16px;">💰</span>
+          <span style="font-weight: 800; color: #0f766e; font-size: 13.5px;">অর্থ ব্যবহার ও ২৫০০ টাকা এআই চাহিদাভিত্তিক বণ্টন</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span id="fc-money-live-badge" style="font-size: 11.5px; font-weight: 800; padding: 3px 10px; border-radius: 6px; background: #dcfce7; color: #166534; border: 1px solid #86efac;">
+            ✅ ১০০% নির্ভুল বরাদ্দ (২৫০০ টাকা)
+          </span>
+        </div>
+      </div>
+
+      <div style="background: rgba(255,255,255,0.7); border: 1px solid #ccfbf1; border-radius: 8px; padding: 6px 10px; margin-bottom: 10px; font-size: 11.5px; color: #334155;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+          <span>মোট বরাদ্দ: <b id="fc-money-total-val" style="color: #0f766e; font-size: 13px;">২৫০০</b> / ২৫০০ টাকা</span>
+          <span style="color: #64748b; font-size: 10.5px;">(সর্বোচ্চ সীমা: ২৫০০ টাকা)</span>
+        </div>
+        <div style="width: 100%; height: 6px; background: #e2e8f0; border-radius: 3px; overflow: hidden;">
+          <div id="fc-money-progress-bar" style="width: 100%; height: 100%; background: #10b981; transition: width 0.3s ease, background 0.3s ease;"></div>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+        <button type="button" id="fc-s9-btn-ai" style="background: linear-gradient(135deg, #0d9488, #0f766e); color: #fff; border: none; padding: 5px 10px; border-radius: 6px; font-weight: 700; font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+          🤖 এআই চাহিদা বিশ্লেষণ (২৫০০ টাকা)
+        </button>
+        <button type="button" id="fc-s9-btn-benchmark" style="background: #0284c7; color: #fff; border: none; padding: 5px 10px; border-radius: 6px; font-weight: 700; font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 4px;">
+          🌾 আদর্শ কৃষি মডেল (ডিফল্ট)
+        </button>
+        <button type="button" id="fc-s9-btn-edu" style="background: #4f46e5; color: #fff; border: none; padding: 5px 10px; border-radius: 6px; font-weight: 700; font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 4px;">
+          🎓 শিক্ষা ও শিশু অগ্রাধিকার
+        </button>
+        <button type="button" id="fc-s9-btn-health" style="background: #e11d48; color: #fff; border: none; padding: 5px 10px; border-radius: 6px; font-weight: 700; font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 4px;">
+          🏥 স্বাস্থ্য ও চিকিৎসা
+        </button>
+        <button type="button" id="fc-s9-btn-income" style="background: #ca8a04; color: #fff; border: none; padding: 5px 10px; border-radius: 6px; font-weight: 700; font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 4px;">
+          💼 সর্বোচ্চ আয়বর্ধক (১৩০০ টাকা)
+        </button>
+        <button type="button" id="fc-s9-btn-balance" style="background: #475569; color: #fff; border: none; padding: 5px 10px; border-radius: 6px; font-weight: 700; font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 4px;">
+          ⚖️ ২৫০০ টাকায় ব্যালেন্স করুন
+        </button>
+        <button type="button" id="fc-s9-btn-save-def" style="background: #166534; color: #fff; border: none; padding: 5px 10px; border-radius: 6px; font-weight: 700; font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 4px;">
+          💾 বর্তমান বণ্টন ডিফল্ট সেভ করুন
+        </button>
+      </div>
+    `;
+
+    wrap.insertBefore(toolbar, wrap.firstChild);
+
+    // Event handlers
+    toolbar.querySelector('#fc-s9-btn-ai')?.addEventListener('click', () => {
+      const cond = scrapeFamilyConditionsForAI();
+      const dist = computeAIDemandDistribution(cond);
+      applyMoneyDistribution(fields, dist, true);
+    });
+
+    toolbar.querySelector('#fc-s9-btn-benchmark')?.addEventListener('click', () => {
+      applyMoneyDistribution(fields, BENCHMARK_MONEY_DISTRIBUTION, true);
+    });
+
+    toolbar.querySelector('#fc-s9-btn-edu')?.addEventListener('click', () => {
+      applyMoneyDistribution(fields, {
+        food: 600, health: 400, education: 500, housing: 0, clothing: 300, income: 700, savings: 0, debt: 0, other: 0
+      }, true);
+    });
+
+    toolbar.querySelector('#fc-s9-btn-health')?.addEventListener('click', () => {
+      applyMoneyDistribution(fields, {
+        food: 500, health: 800, education: 300, housing: 0, clothing: 200, income: 700, savings: 0, debt: 0, other: 0
+      }, true);
+    });
+
+    toolbar.querySelector('#fc-s9-btn-income')?.addEventListener('click', () => {
+      applyMoneyDistribution(fields, {
+        food: 500, health: 300, education: 200, housing: 0, clothing: 200, income: 1300, savings: 0, debt: 0, other: 0
+      }, true);
+    });
+
+    toolbar.querySelector('#fc-s9-btn-balance')?.addEventListener('click', () => {
+      const current = readCurrentMoneyDistribution(fields);
+      const diff = 2500 - current.total;
+      if (diff === 0) {
+        showToast('✅ মোট বরাদ্দ ইতোমধ্যেই সঠিক ২৫০০ টাকা রয়েছে!');
+        return;
+      }
+      current.income = Math.max(0, current.income + diff);
+      delete current.total;
+      applyMoneyDistribution(fields, current, true);
+      showToast(`⚖️ আয়বর্ধক কর্মসূচিতে সমন্বয় করে মোট ২৫০০ টাকা নিশ্চিত করা হয়েছে!`);
+    });
+
+    toolbar.querySelector('#fc-s9-btn-save-def')?.addEventListener('click', () => {
+      const current = readCurrentMoneyDistribution(fields);
+      if (current.total !== 2500) {
+        alert(`মোট বরাদ্দ অবশ্যই ঠিক ২৫০০ টাকা হতে হবে (বর্তমান: ${current.total} টাকা)। "⚖️ ২৫০০ টাকায় ব্যালেন্স করুন" বাটনে চাপুন।`);
+        return;
+      }
+      localStorage.setItem('fc_custom_money_dist', JSON.stringify(current));
+      showToast('💾 এই ২৫০০ টাকা বণ্টনটি ভবিষ্যৎ সকল ফ্যামিলি কার্ডের জন্য ডিফল্ট সেভ করা হয়েছে!');
+    });
+
+    // Attach listeners to fields for live typing HUD update
+    for (const inp of Object.values(fields)) {
+      if (!inp || inp.__fcMoneyListenerAttached) continue;
+      inp.__fcMoneyListenerAttached = true;
+      inp.addEventListener('input', (e) => {
+        if (e.isTrusted) inp.dataset.fcMoneyUserEdited = 'true';
+        updateSection9HUD(fields);
+        const cur = readCurrentMoneyDistribution(fields);
+        if (cur.total === 2500) {
+          syncMoneyDistributionToFirestore(cur);
+        }
+      });
+      inp.addEventListener('change', () => {
+        updateSection9HUD(fields);
+      });
+    }
+  }
+
+  function handleSection9MoneyUsage(forceAll = false) {
+    const elData = getSection9MoneyElements();
+    if (!elData) return;
+
+    const { panel, fields } = elData;
+    injectSection9Toolbar(panel, fields);
+
+    const isPanelVisible = panel.classList.contains('v-expansion-panel--active') ||
+                           panel.style.display !== 'none' ||
+                           document.querySelector('.family-card-form-step--active')?.textContent.includes('অর্থ ব্যবহার');
+
+    if (!isPanelVisible && !forceAll) return;
+
+    updateSection9HUD(fields);
+
+    if (isFillingSection9) return;
+
+    // Check if any field is empty or all zero
+    const current = readCurrentMoneyDistribution(fields);
+    const hasAnyInput = Object.entries(current).some(([k, v]) => k !== 'total' && v > 0);
+    const isUserEdited = Object.values(fields).some(inp => inp && inp.dataset.fcMoneyUserEdited === 'true');
+
+    if (forceAll || (!hasAnyInput && !isUserEdited)) {
+      isFillingSection9 = true;
+      try {
+        let targetDist = BENCHMARK_MONEY_DISTRIBUTION;
+        const savedCustom = localStorage.getItem('fc_custom_money_dist');
+        if (savedCustom) {
+          try {
+            const parsed = JSON.parse(savedCustom);
+            if (parsed && typeof parsed === 'object') targetDist = parsed;
+          } catch (_) {}
+        } else {
+          // Dynamic AI analysis based on current family conditions
+          const cond = scrapeFamilyConditionsForAI();
+          targetDist = computeAIDemandDistribution(cond);
+        }
+        applyMoneyDistribution(fields, targetDist, forceAll);
+      } catch (err) {
+        console.warn('[FamilyCard] Section 9 auto-fill notice:', err);
+      } finally {
+        setTimeout(() => { isFillingSection9 = false; }, 400);
+      }
+    }
+  }
+
+  // MutationObserver to watch Step 1, Section 3, Section 4, Section 5/Tab 6, Section 6, Section 7, and Section 9
   const observer = new MutationObserver(() => {
     if (lastExtractedData) {
       const tab1 = document.querySelector('[data-family-card-tab="1"]') || document.querySelector('.v-expansion-panel--active');
@@ -2893,16 +3375,18 @@ Return ONLY a single valid JSON object with these exact keys:
     handleSection5AndCrossMatch();
     handleSection6Bank();
     handleSection7Eligibility();
+    handleSection9MoneyUsage();
   });
   observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class'] });
 
-  // Periodic polling for Section 3, Section 4, Section 5/Tab 6, Section 6, and Section 7
+  // Periodic polling for Section 3, Section 4, Section 5/Tab 6, Section 6, Section 7, and Section 9
   setInterval(() => {
     traceSection3Media();
     handleSection4Address();
     handleSection5AndCrossMatch();
     handleSection6Bank();
     handleSection7Eligibility();
+    handleSection9MoneyUsage();
   }, 1500);
 
   function showToast(msg) {

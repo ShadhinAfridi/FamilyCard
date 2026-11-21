@@ -39,6 +39,9 @@
   let geminiApiKey = '';
   let deepseekApiKey = '';
   let aiProvider = localStorage.getItem('fc_ai_provider') || 'economy';
+  let defaultKeySlot = localStorage.getItem('fc_default_key_slot') || 'auto';
+  let geminiModel = localStorage.getItem('fc_gemini_model') || 'gemini-3.1-flash-lite';
+  let deepseekModel = localStorage.getItem('fc_deepseek_model') || 'deepseek-flash';
   let lastExtractedData = null;
   let activeScanTarget = { type: 'applicant', card: null, index: 'self' };
   let activeMediaStream = null;
@@ -48,6 +51,46 @@
     savedVillageList = ['বসাকুষ্টিয়া', 'চর কলিমহর'];
   }
   let savedDefaultVillage = localStorage.getItem('fc_default_village') || savedVillageList[0] || 'বসাকুষ্টিয়া';
+
+  const BDT_PER_USD = 122;
+  const MODAL_MODEL_PRICING = {
+    'gemini-3.1-flash-lite': { label: 'Gemini 3.1 Flash-Lite', inM: 0.25, outM: 1.50, est1k: 0.78, rpm: '4K' },
+    'gemini-3.5-flash-lite': { label: 'Gemini 3.5 Flash-Lite', inM: 0.30, outM: 2.50, est1k: 1.11, rpm: '4K' },
+    'gemini-3.8-flash': { label: 'Gemini 3.8 Flash', inM: 0.75, outM: 3.75, est1k: 2.53, rpm: '1K' },
+    'deepseek-flash': { label: 'DeepSeek Flash', offInM: 0.15, offOutM: 0.60, peakInM: 0.30, peakOutM: 1.20 }
+  };
+
+  function isDeepSeekPeakUtc(nowMs = Date.now()) {
+    const d = new Date(nowMs);
+    const day = d.getUTCDay();
+    if (day < 1 || day > 5) return false;
+    const h = d.getUTCHours();
+    return (h >= 1 && h < 4) || (h >= 6 && h < 10);
+  }
+
+  function getSavedCostStats() {
+    const s = safeJsonParse(localStorage.getItem('fc_ocr_cost_stats'), {});
+    return (s && typeof s === 'object') ? s : {};
+  }
+
+  function recordScanCostUsage(usage) {
+    if (!usage || typeof usage.costUsd !== 'number') return null;
+    const stats = getSavedCostStats();
+    stats.totalScans = Number(stats.totalScans || 0) + 1;
+    stats.totalUsd = Number((Number(stats.totalUsd || 0) + usage.costUsd).toFixed(7));
+    stats.totalTokens = Number(stats.totalTokens || 0) + Number(usage.totalTokens || 0);
+    stats.lastUsage = usage;
+    stats.byModel = stats.byModel && typeof stats.byModel === 'object' ? stats.byModel : {};
+    const m = stats.byModel[usage.model] || { scans: 0, usd: 0 };
+    m.scans += 1;
+    m.usd = Number((m.usd + usage.costUsd).toFixed(7));
+    stats.byModel[usage.model] = m;
+    localStorage.setItem('fc_ocr_cost_stats', JSON.stringify(stats));
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+      chrome.storage.local.set({ fcOcrCostStats: stats });
+    }
+    return stats;
+  }
 
   function getSafeFamilyDocId(data) {
     const rawId = scrapeFamilyId() || (data && data.family_id) || (lastExtractedData && lastExtractedData.family_id) || '';
@@ -60,12 +103,15 @@
 
   // Retrieve saved settings
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
-    chrome.storage.sync.get(['serverUrl', 'roomCode', 'geminiApiKey', 'deepseekApiKey', 'aiProvider'], (res) => {
+    chrome.storage.sync.get(['serverUrl', 'roomCode', 'geminiApiKey', 'deepseekApiKey', 'aiProvider', 'defaultKeySlot', 'geminiModel', 'deepseekModel'], (res) => {
       if (res.serverUrl) serverUrl = res.serverUrl;
       if (res.roomCode) roomCode = res.roomCode.toUpperCase();
       if (res.geminiApiKey) geminiApiKey = res.geminiApiKey;
       if (res.deepseekApiKey) deepseekApiKey = res.deepseekApiKey;
       if (res.aiProvider) aiProvider = res.aiProvider;
+      if (res.defaultKeySlot) defaultKeySlot = res.defaultKeySlot;
+      if (res.geminiModel) geminiModel = res.geminiModel;
+      if (res.deepseekModel) deepseekModel = res.deepseekModel;
       initUI();
       connectSocket();
     });
@@ -366,22 +412,52 @@
             </div>
           </div>
 
-          <div class="fc-modal-field" style="margin-bottom: 6px;">
-            <label for="fc-modal-ai-provider">🧠 AI ইঞ্জিন (প্রোভাইডার):</label>
-            <select id="fc-modal-ai-provider">
-              <option value="economy" ${aiProvider === 'economy' ? 'selected' : ''}>💸 সাশ্রয়ী অটো (3.1 Lite → 3.8 / DeepSeek)</option>
-              <option value="deepseek" ${aiProvider === 'deepseek' ? 'selected' : ''}>🐋 DeepSeek Flash (~$0.33/1K সবচেয়ে সস্তা)</option>
-              <option value="gemini_lite" ${aiProvider === 'gemini_lite' ? 'selected' : ''}>⚡ Gemini 3.1/3.5 Lite (150K RPD)</option>
-              <option value="auto" ${aiProvider === 'auto' ? 'selected' : ''}>⚖️ ব্যালেন্সড (Gemini 3.8 + DeepSeek)</option>
-              <option value="gemini" ${aiProvider === 'gemini' ? 'selected' : ''}>💎 Gemini 3.8 Flash (সর্বোচ্চ নির্ভুলতা)</option>
-            </select>
+          <div style="background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 10px; padding: 9px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 6px;">
+            <div class="fc-modal-fields-row">
+              <div class="fc-modal-field">
+                <label for="fc-modal-ai-provider">🧠 AI কৌশল:</label>
+                <select id="fc-modal-ai-provider">
+                  <option value="economy" ${aiProvider === 'economy' ? 'selected' : ''}>💸 সাশ্রয়ী অটো (Lite → 3.8)</option>
+                  <option value="deepseek" ${aiProvider === 'deepseek' ? 'selected' : ''}>🐋 DeepSeek Flash (~$0.38/1K)</option>
+                  <option value="gemini_lite" ${aiProvider === 'gemini_lite' ? 'selected' : ''}>⚡ Gemini Lite (~$0.78/1K)</option>
+                  <option value="auto" ${aiProvider === 'auto' ? 'selected' : ''}>⚖️ ডুয়াল-AI (ডিফল্ট কী → ব্যাকআপ)</option>
+                  <option value="gemini" ${aiProvider === 'gemini' ? 'selected' : ''}>💎 Gemini শুধুমাত্র (নির্বাচিত মডেল)</option>
+                </select>
+              </div>
+              <div class="fc-modal-field">
+                <label for="fc-modal-default-key">🔑 ডিফল্ট প্রাথমিক কী:</label>
+                <select id="fc-modal-default-key">
+                  <option value="auto" ${defaultKeySlot === 'auto' ? 'selected' : ''}>🤖 স্বয়ংক্রিয়</option>
+                  <option value="gemini" ${defaultKeySlot === 'gemini' ? 'selected' : ''}>✨ Gemini আগে</option>
+                  <option value="deepseek" ${defaultKeySlot === 'deepseek' ? 'selected' : ''}>🐋 DeepSeek আগে</option>
+                </select>
+              </div>
+            </div>
+            <div class="fc-modal-fields-row">
+              <div class="fc-modal-field">
+                <label for="fc-modal-gemini-model">✨ Gemini মডেল:</label>
+                <select id="fc-modal-gemini-model">
+                  <option value="gemini-3.1-flash-lite" ${geminiModel === 'gemini-3.1-flash-lite' ? 'selected' : ''}>3.1 Lite ($0.25/$1.50)</option>
+                  <option value="gemini-3.5-flash-lite" ${geminiModel === 'gemini-3.5-flash-lite' ? 'selected' : ''}>3.5 Lite ($0.30/$2.50)</option>
+                  <option value="gemini-3.8-flash" ${geminiModel === 'gemini-3.8-flash' ? 'selected' : ''}>3.8 Flash ($0.75/$3.75)</option>
+                </select>
+              </div>
+              <div class="fc-modal-field">
+                <label for="fc-modal-deepseek-model">🐋 DeepSeek মডেল:</label>
+                <select id="fc-modal-deepseek-model">
+                  <option value="deepseek-flash" ${deepseekModel === 'deepseek-flash' ? 'selected' : ''}>deepseek-flash ($0.15/$0.60)</option>
+                </select>
+              </div>
+            </div>
+            <div id="fc-modal-cost-card" style="background: #f0fdf4; border: 1px solid #86efac; color: #166534; border-radius: 7px; padding: 6px 8px; font-size: 11px; line-height: 1.4;">হিসাব লোড হচ্ছে...</div>
+            <button id="fc-modal-btn-save-ai" type="button" style="background: #0f766e; color: #fff; border: none; border-radius: 7px; padding: 6px 10px; font-size: 11.5px; font-weight: 700; cursor: pointer;">💾 ডিফল্ট কী ও মডেল সেভ করুন</button>
           </div>
 
           <div id="fc-modal-ocr-warn" style="display: none; background: #fffbeb; border: 1.5px solid #f59e0b; color: #92400e; padding: 8px 10px; border-radius: 8px; font-size: 11.5px; line-height: 1.45;"></div>
 
           <div id="fc-modal-loading" class="fc-loading-spinner-wrap" style="display: none;">
             <div class="fc-spinner"></div>
-            <span style="font-weight: 600; color: #1976d2; font-size: 13px;">Gemini AI দ্বারা ডকুমেন্ট বিশ্লেষণ করা হচ্ছে...</span>
+            <span id="fc-modal-loading-text" style="font-weight: 600; color: #1976d2; font-size: 13px;">AI দ্বারা ডকুমেন্ট বিশ্লেষণ করা হচ্ছে...</span>
           </div>
 
           <button id="fc-modal-btn-submit" class="fc-modal-submit-btn" style="display: none;">
@@ -411,6 +487,59 @@
 
     btnTargetSelf.addEventListener('click', () => setScanTarget('applicant'));
     btnTargetMember.addEventListener('click', () => setScanTarget('member'));
+
+    const modalSelProv = document.getElementById('fc-modal-ai-provider');
+    const modalSelKeySlot = document.getElementById('fc-modal-default-key');
+    const modalSelGem = document.getElementById('fc-modal-gemini-model');
+    const modalSelDs = document.getElementById('fc-modal-deepseek-model');
+    const modalCostCard = document.getElementById('fc-modal-cost-card');
+    const btnSaveModalAi = document.getElementById('fc-modal-btn-save-ai');
+
+    window.__fcRenderModalCostCard = () => {
+      if (!modalCostCard) return;
+      const st = modalSelProv ? modalSelProv.value : aiProvider;
+      const ks = modalSelKeySlot ? modalSelKeySlot.value : defaultKeySlot;
+      const gm = modalSelGem ? modalSelGem.value : geminiModel;
+      const gemSpec = MODAL_MODEL_PRICING[gm] || MODAL_MODEL_PRICING['gemini-3.1-flash-lite'];
+      const peak = isDeepSeekPeakUtc();
+      const ds1k = peak ? 0.76 : 0.38;
+      const dsIn = peak ? 0.30 : 0.15;
+      const dsOut = peak ? 1.20 : 0.60;
+      const stats = getSavedCostStats();
+      const useDs = st === 'deepseek' || (ks === 'deepseek' && (st === 'economy' || st === 'auto'));
+      const activeTxt = useDs
+        ? `<b>সক্রিয়:</b> DeepSeek Flash (${peak ? '🟠 Peak' : '🟢 Off-Peak'}) • ~$${ds1k.toFixed(2)} (~৳${Math.round(ds1k * BDT_PER_USD)}) / ১,০০০ NID`
+        : `<b>সক্রিয়:</b> ${gemSpec.label} • ~$${gemSpec.est1k.toFixed(2)} (~৳${Math.round(gemSpec.est1k * BDT_PER_USD)}) / ১,০০০ NID (${gemSpec.rpm} RPM)`;
+      const rateTxt = `রেট/1M: ${gemSpec.label} <b>$${gemSpec.inM}/$${gemSpec.outM}</b> | DeepSeek <b>$${dsIn}/$${dsOut}</b>`;
+      const lastTxt = stats.lastUsage
+        ? `<br>🧾 শেষ স্ক্যান: <b>$${Number(stats.lastUsage.costUsd || 0).toFixed(5)}</b> (~৳${Number(stats.lastUsage.costBdt || 0).toFixed(3)}) • মোট: <b>$${Number(stats.totalUsd || 0).toFixed(5)}</b> (${stats.totalScans || 0} স্ক্যান)`
+        : '';
+      modalCostCard.innerHTML = `${activeTxt}<br>${rateTxt}${lastTxt}`;
+    };
+
+    function persistModalAiDefaults(showMsg = false) {
+      if (modalSelProv) aiProvider = modalSelProv.value;
+      if (modalSelKeySlot) defaultKeySlot = modalSelKeySlot.value;
+      if (modalSelGem) geminiModel = modalSelGem.value;
+      if (modalSelDs) deepseekModel = modalSelDs.value;
+      localStorage.setItem('fc_ai_provider', aiProvider);
+      localStorage.setItem('fc_default_key_slot', defaultKeySlot);
+      localStorage.setItem('fc_gemini_model', geminiModel);
+      localStorage.setItem('fc_deepseek_model', deepseekModel);
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
+        chrome.storage.sync.set({ aiProvider, defaultKeySlot, geminiModel, deepseekModel });
+      }
+      window.__fcRenderModalCostCard();
+      if (showMsg) showToast('✅ ডিফল্ট কী ও মডেল সেভ হয়েছে!');
+    }
+
+    [modalSelProv, modalSelKeySlot, modalSelGem, modalSelDs].forEach(el => {
+      if (el) el.addEventListener('change', () => persistModalAiDefaults(false));
+    });
+    if (btnSaveModalAi) {
+      btnSaveModalAi.addEventListener('click', () => persistModalAiDefaults(true));
+    }
+    window.__fcRenderModalCostCard();
 
     if (memberSelect) {
       memberSelect.addEventListener('change', (e) => {
@@ -699,49 +828,36 @@
   async function fillMemberCard(card, data) {
     if (!card || !data) return;
 
-    // 1. Verification Type Radio (NID vs Birth Certificate)
+    // 1. Verification Type Radio (NID vs Birth Certificate) — scoped strictly to .v-radio
     const isBirthReg = data.doc_type === 'birth_certificate';
-    const radios = Array.from(card.querySelectorAll('.v-radio, label'));
+    const radios = Array.from(card.querySelectorAll('.v-radio'));
     for (const rl of radios) {
-      const txt = rl.textContent || '';
-      if (isBirthReg && (txt.includes('জন্ম নিবন্ধন') || txt.includes('জন্ম'))) {
-        const r = rl.querySelector('input[type="radio"]') || rl.closest('.v-radio')?.querySelector('input[type="radio"]');
-        if (r) { r.click(); } else rl.click();
+      const txt = normalizeBn(rl.textContent || '');
+      if (isBirthReg && (txt.includes('জন্ম নিবন্ধন') || txt.includes('নিবন্ধন'))) {
+        const r = rl.querySelector('input[type="radio"]');
+        if (r) r.click(); else rl.click();
         break;
-      } else if (!isBirthReg && (txt.includes('জাতীয় পরিচিতি') || txt.includes('এনআইডি') || txt.includes('NID'))) {
-        const r = rl.querySelector('input[type="radio"]') || rl.closest('.v-radio')?.querySelector('input[type="radio"]');
-        if (r) { r.click(); } else rl.click();
+      } else if (!isBirthReg && (txt.includes('জাতীয় পরিচিতি') || txt.includes('এনআইডি') || txt.includes('NID'))) {
+        const r = rl.querySelector('input[type="radio"]');
+        if (r) r.click(); else rl.click();
         break;
       }
     }
 
-    await new Promise(r => setTimeout(r, 120));
+    await new Promise(r => setTimeout(r, 220));
 
     function findCardInput(keywords) {
-      const labels = Array.from(card.querySelectorAll('label'));
-      for (const label of labels) {
-        const text = label.textContent || '';
-        if (keywords.some(k => text.includes(k))) {
-          if (label.htmlFor) {
-            const inp = card.querySelector('#' + label.htmlFor);
-            if (inp && !inp.disabled) return inp;
-          }
-          const parent = label.closest('.col, [class*="col-"], span, div');
-          if (parent) {
-            const inp = parent.querySelector('input:not([type="hidden"]):not([disabled])');
-            if (inp) return inp;
-          }
-        }
-      }
-      return null;
+      return findInputByLabelText(keywords, card);
     }
 
     async function selectCardDropdown(keywords, candidates) {
+      const normKeys = keywords.map(k => normalizeBn(k));
       const labels = Array.from(card.querySelectorAll('label'));
       let container = null;
       for (const label of labels) {
-        const text = label.textContent || '';
-        if (keywords.some(k => text.includes(k))) {
+        if (label.closest('.v-radio')) continue;
+        const text = normalizeBn(label.textContent || '');
+        if (normKeys.some(k => text.includes(k))) {
           container = label.closest('.col, [class*="col-"], span, div');
           break;
         }
@@ -981,9 +1097,26 @@
     const mimeMatch = String(base64Data || '').match(/^data:([^;]+);base64,/);
     if (mimeMatch) detectedMime = mimeMatch[1] || 'image/jpeg';
 
-    const modalProvider = document.getElementById('fc-modal-ai-provider')?.value || aiProvider || 'auto';
+    const modalProvider = document.getElementById('fc-modal-ai-provider')?.value || aiProvider || 'economy';
+    const modalKeySlot = document.getElementById('fc-modal-default-key')?.value || defaultKeySlot || 'auto';
+    const modalGemModel = document.getElementById('fc-modal-gemini-model')?.value || geminiModel || 'gemini-3.1-flash-lite';
+    const modalDsModel = document.getElementById('fc-modal-deepseek-model')?.value || deepseekModel || 'deepseek-flash';
     aiProvider = modalProvider;
+    defaultKeySlot = modalKeySlot;
+    geminiModel = modalGemModel;
+    deepseekModel = modalDsModel;
     localStorage.setItem('fc_ai_provider', modalProvider);
+    localStorage.setItem('fc_default_key_slot', modalKeySlot);
+    localStorage.setItem('fc_gemini_model', modalGemModel);
+    localStorage.setItem('fc_deepseek_model', modalDsModel);
+
+    const loadingTextEl = document.getElementById('fc-modal-loading-text');
+    if (loadingTextEl) {
+      const useDsMsg = modalProvider === 'deepseek' || (modalKeySlot === 'deepseek' && Boolean(deepseekApiKey) && (modalProvider === 'economy' || modalProvider === 'auto'));
+      loadingTextEl.textContent = useDsMsg
+        ? `DeepSeek (${modalDsModel}) দিয়ে ডকুমেন্ট স্ক্যান হচ্ছে...`
+        : `${modalGemModel} দিয়ে ডকুমেন্ট স্ক্যান হচ্ছে...`;
+    }
 
     chrome.runtime.sendMessage({
       action: 'ocr_nid_direct',
@@ -994,6 +1127,9 @@
       mobileNumber,
       docType: docTypeChoice,
       aiProvider: modalProvider,
+      defaultKeySlot: modalKeySlot,
+      geminiModel: modalGemModel,
+      deepseekModel: modalDsModel,
       apiKey: geminiApiKey,
       deepseekApiKey: deepseekApiKey
     }, async (response) => {
@@ -1008,6 +1144,13 @@
       if (response && response.success && response.data) {
         const data = response.data;
         const warnings = Array.isArray(data.ocr_warnings) ? data.ocr_warnings : [];
+        if (data.ocr_usage) {
+          recordScanCostUsage(data.ocr_usage);
+          if (typeof window.__fcRenderModalCostCard === 'function') window.__fcRenderModalCostCard();
+        }
+        const costTag = data.ocr_usage
+          ? `💰 $${Number(data.ocr_usage.costUsd || 0).toFixed(5)} (~৳${Number(data.ocr_usage.costBdt || 0).toFixed(3)})`
+          : '';
 
         window.__fcScanHistory.unshift({
           target: activeScanTarget.type,
@@ -1016,6 +1159,7 @@
           name_bn: data.name_bn || '',
           dob: data.dob || '',
           model: data.ocr_model_used || '',
+          usage: data.ocr_usage || null,
           warnings,
           at: new Date().toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' })
         });
@@ -1067,9 +1211,9 @@
             const cardIdx = realIdx >= 0 ? (realIdx + 1) : ((typeof activeScanTarget.index === 'number') ? activeScanTarget.index : allCards.length || 2);
             syncMemberToFirestore(data, cardIdx);
             if (warnings.length > 0) {
-              showToast(`⚠️ সদস্য (${data.name_bn || data.doc_number}) পূরণ হয়েছে — সতর্কতা: ${warnings[0]}`);
+              showToast(`⚠️ সদস্য (${data.name_bn || data.doc_number}) পূরণ — সতর্কতা: ${warnings[0]}${costTag ? ` • ${costTag}` : ''}`);
             } else {
-              showToast(`✅ সদস্য (${data.name_bn || data.doc_number}) সফলভাবে পূরণ হয়েছে!`);
+              showToast(`✅ সদস্য (${data.name_bn || data.doc_number}) পূরণ হয়েছে!${costTag ? ` ${costTag}` : ''}`);
             }
           } else {
             showToast(`⚠️ সদস্য কার্ড পাওয়া যায়নি। অনুগ্রহ করে প্রথমে '+ নতুন সদস্য' যোগ করুন।`);
@@ -1081,9 +1225,9 @@
           await fillFormFields(data);
           syncToFirestore(data);
           if (warnings.length > 0) {
-            showToast(`⚠️ NID তথ্য পূরণ হয়েছে — সতর্কতা: ${warnings[0]}`);
+            showToast(`⚠️ NID তথ্য পূরণ — সতর্কতা: ${warnings[0]}${costTag ? ` • ${costTag}` : ''}`);
           } else {
-            showToast('✅ এনআইডি তথ্য সফলভাবে পূরণ করা হয়েছে!');
+            showToast(`✅ এনআইডি তথ্য সফলভাবে পূরণ করা হয়েছে!${costTag ? ` ${costTag}` : ''}`);
           }
         }
         updateSummaryBadge();
@@ -1392,6 +1536,7 @@
         }
         if (attempts >= 8) {
           clearInterval(interval);
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
           resolve(false);
         }
       }, 120);
@@ -2938,6 +3083,7 @@
 
         if (attempts >= 8) {
           clearInterval(timer);
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
           col.dataset.fcS7DefaultApplied = 'true';
           setTimeout(() => resolve(false), 80);
         }
@@ -4085,6 +4231,26 @@
       }
     }
 
+    const costStats = getSavedCostStats();
+    const sumGem = MODAL_MODEL_PRICING[geminiModel] || MODAL_MODEL_PRICING['gemini-3.1-flash-lite'];
+    const sumPeak = isDeepSeekPeakUtc();
+    html += `
+      <div class="fc-sum-card" style="background: #f0f9ff; border-color: #7dd3fc;">
+        <div class="fc-sum-row">
+          <div>
+            <div style="font-weight: 800; color: #0369a1; font-size: 12px;">💰 AI স্ক্যান খরচ ও ডিফল্ট মডেল</div>
+            <div style="font-size: 11px; color: #0c4a6e; margin-top: 2px;">
+              ডিফল্ট কী: <b>${escapeHtml(defaultKeySlot)}</b> • Gemini: <b>${escapeHtml(sumGem.label)}</b> • DeepSeek: <b>${sumPeak ? 'Peak $0.30/$1.20' : 'Off-Peak $0.15/$0.60'}</b>
+            </div>
+          </div>
+          <div style="text-align: right; font-size: 11px; font-weight: 700; color: #0f766e;">
+            মোট: $${Number(costStats.totalUsd || 0).toFixed(5)}<br>
+            (~৳${(Number(costStats.totalUsd || 0) * BDT_PER_USD).toFixed(2)} • ${toBnDigits(costStats.totalScans || 0)} স্ক্যান)
+          </div>
+        </div>
+      </div>
+    `;
+
     html += `
       <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px;">
         <button type="button" id="fc-sum-copy-btn" style="flex: 1; background: #1976d2; color: #fff; border: none; border-radius: 8px; padding: 9px; font-weight: 700; font-size: 12px; cursor: pointer;">📋 রিপোর্ট কপি</button>
@@ -4225,8 +4391,18 @@
         geminiApiKey = req.geminiApiKey !== undefined ? req.geminiApiKey : geminiApiKey;
         deepseekApiKey = req.deepseekApiKey !== undefined ? req.deepseekApiKey : deepseekApiKey;
         aiProvider = req.aiProvider || aiProvider;
+        defaultKeySlot = req.defaultKeySlot || defaultKeySlot;
+        geminiModel = req.geminiModel || geminiModel;
+        deepseekModel = req.deepseekModel || deepseekModel;
         const modalProv = document.getElementById('fc-modal-ai-provider');
         if (modalProv) modalProv.value = aiProvider;
+        const modalKey = document.getElementById('fc-modal-default-key');
+        if (modalKey) modalKey.value = defaultKeySlot;
+        const modalGem = document.getElementById('fc-modal-gemini-model');
+        if (modalGem) modalGem.value = geminiModel;
+        const modalDs = document.getElementById('fc-modal-deepseek-model');
+        if (modalDs) modalDs.value = deepseekModel;
+        if (typeof window.__fcRenderModalCostCard === 'function') window.__fcRenderModalCostCard();
         const roomEl = document.getElementById('fc-ui-room');
         if (roomEl) roomEl.textContent = roomCode;
         if (socket) {

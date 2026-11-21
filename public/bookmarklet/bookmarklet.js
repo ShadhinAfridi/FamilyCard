@@ -58,6 +58,9 @@
   let savedApiKey = localStorage.getItem('fc_gemini_api_key') || '';
   let savedDeepSeekKey = localStorage.getItem('fc_deepseek_api_key') || '';
   let savedAiProvider = localStorage.getItem('fc_ai_provider') || 'economy';
+  let savedDefaultKeySlot = localStorage.getItem('fc_default_key_slot') || 'auto';
+  let savedGeminiModel = localStorage.getItem('fc_gemini_model') || 'gemini-3.1-flash-lite';
+  let savedDeepSeekModel = localStorage.getItem('fc_deepseek_model') || 'deepseek-flash';
   let activeMediaStream = null;
   let savedPostcode = localStorage.getItem('fc_default_postcode') || '7721';
   let savedVillageList = safeJsonParse(localStorage.getItem('fc_village_list'), ['বসাকুষ্টিয়া', 'চর কলিমহর']);
@@ -65,6 +68,116 @@
     savedVillageList = ['বসাকুষ্টিয়া', 'চর কলিমহর'];
   }
   let savedDefaultVillage = localStorage.getItem('fc_default_village') || savedVillageList[0] || 'বসাকুষ্টিয়া';
+
+  const BDT_PER_USD = 122;
+  const AI_MODEL_CATALOG = {
+    'gemini-3.1-flash-lite': { id: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash-Lite', provider: 'gemini', inputPer1M: 0.25, outputPer1M: 1.50, cacheReadPer1M: 0.025, rpm: '4K', rpd: '150K', estPer1kUsd: 0.78 },
+    'gemini-3.5-flash-lite': { id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash-Lite', provider: 'gemini', inputPer1M: 0.30, outputPer1M: 2.50, cacheReadPer1M: 0.03, rpm: '4K', rpd: '150K', estPer1kUsd: 1.11 },
+    'gemini-3.8-flash': { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash', provider: 'gemini', inputPer1M: 0.75, outputPer1M: 3.75, cacheReadPer1M: 0.075, stdInputPer1M: 1.50, stdOutputPer1M: 7.50, stdCacheReadPer1M: 0.15, introUntilUtcMs: Date.UTC(2027, 0, 1), rpm: '1K', rpd: '10K', estPer1kUsd: 2.53 },
+    'deepseek-flash': { id: 'deepseek-flash', label: 'DeepSeek Flash', provider: 'deepseek', offPeakInPer1M: 0.15, offPeakOutPer1M: 0.60, offPeakCachePer1M: 0.003, peakInPer1M: 0.30, peakOutPer1M: 1.20, peakCachePer1M: 0.006, rpm: 'Uncapped', rpd: 'Balance', estPer1kUsd: 0.38 }
+  };
+
+  function isDeepSeekPeakUtc(nowMs = Date.now()) {
+    const d = new Date(nowMs);
+    const day = d.getUTCDay();
+    if (day < 1 || day > 5) return false;
+    const h = d.getUTCHours();
+    return (h >= 1 && h < 4) || (h >= 6 && h < 10);
+  }
+
+  function normalizeModelId(modelId) {
+    const raw = String(modelId || '').toLowerCase();
+    if (raw.includes('deepseek')) return 'deepseek-flash';
+    if (raw.includes('3.5-flash-lite') || raw.includes('3.5')) return 'gemini-3.5-flash-lite';
+    if (raw.includes('3.8-flash') || raw.includes('3.8')) return 'gemini-3.8-flash';
+    return 'gemini-3.1-flash-lite';
+  }
+
+  function computeScanUsageAndCost(modelId, rawApiRes = {}, nowMs = Date.now()) {
+    const key = normalizeModelId(modelId);
+    const spec = AI_MODEL_CATALOG[key] || AI_MODEL_CATALOG['gemini-3.1-flash-lite'];
+    let inputTokens = 0, cachedTokens = 0, outputTokens = 0, estimated = false;
+
+    if (spec.provider === 'deepseek') {
+      const u = rawApiRes && rawApiRes.usage;
+      if (u && (u.prompt_tokens != null || u.completion_tokens != null)) {
+        cachedTokens = Number(u.prompt_cache_hit_tokens || 0);
+        inputTokens = Number(u.prompt_tokens || ((u.prompt_cache_miss_tokens || 0) + cachedTokens));
+        outputTokens = Number(u.completion_tokens || 0);
+      } else {
+        estimated = true;
+        inputTokens = 1524;
+        outputTokens = 250;
+      }
+      const peak = isDeepSeekPeakUtc(nowMs);
+      const inRate = peak ? spec.peakInPer1M : spec.offPeakInPer1M;
+      const cacheRate = peak ? spec.peakCachePer1M : spec.offPeakCachePer1M;
+      const outRate = peak ? spec.peakOutPer1M : spec.offPeakOutPer1M;
+      const uncachedIn = Math.max(0, inputTokens - cachedTokens);
+      const costUsd = (uncachedIn * inRate + cachedTokens * cacheRate + outputTokens * outRate) / 1e6;
+      return {
+        model: key, label: spec.label, provider: 'deepseek', tierWindow: peak ? 'peak' : 'off_peak',
+        inputTokens, cachedTokens, uncachedInputTokens: uncachedIn, outputTokens,
+        totalTokens: inputTokens + outputTokens, estimated,
+        inputRatePer1M: inRate, outputRatePer1M: outRate, cacheRatePer1M: cacheRate,
+        estPer1kUsd: peak ? 0.76 : spec.estPer1kUsd,
+        costUsd: Number(costUsd.toFixed(7)), costBdt: Number((costUsd * BDT_PER_USD).toFixed(4))
+      };
+    }
+
+    const um = rawApiRes && rawApiRes.usageMetadata;
+    const iu = rawApiRes && rawApiRes.usage;
+    if (um && (um.promptTokenCount != null || um.candidatesTokenCount != null)) {
+      inputTokens = Number(um.promptTokenCount || 0);
+      cachedTokens = Number(um.cachedContentTokenCount || 0);
+      outputTokens = Number(um.candidatesTokenCount || 0) + Number(um.thoughtsTokenCount || 0);
+    } else if (iu && (iu.total_input_tokens != null || iu.total_output_tokens != null)) {
+      inputTokens = Number(iu.total_input_tokens || 0);
+      cachedTokens = Number(iu.total_cached_tokens || 0);
+      outputTokens = Number(iu.total_output_tokens || 0);
+    } else {
+      estimated = true;
+      inputTokens = 1620;
+      outputTokens = 250;
+    }
+
+    const isIntro38 = key === 'gemini-3.8-flash' && spec.introUntilUtcMs && nowMs < spec.introUntilUtcMs;
+    const inRate = key === 'gemini-3.8-flash' ? (isIntro38 ? spec.inputPer1M : spec.stdInputPer1M) : spec.inputPer1M;
+    const outRate = key === 'gemini-3.8-flash' ? (isIntro38 ? spec.outputPer1M : spec.stdOutputPer1M) : spec.outputPer1M;
+    const cacheRate = key === 'gemini-3.8-flash' ? (isIntro38 ? spec.cacheReadPer1M : spec.stdCacheReadPer1M) : spec.cacheReadPer1M;
+    const uncachedIn = Math.max(0, inputTokens - cachedTokens);
+    const costUsd = (uncachedIn * inRate + cachedTokens * cacheRate + outputTokens * outRate) / 1e6;
+    return {
+      model: key, label: spec.label, provider: 'gemini',
+      tierWindow: key === 'gemini-3.8-flash' ? (isIntro38 ? 'intro_2026' : 'standard') : 'tier1',
+      inputTokens, cachedTokens, uncachedInputTokens: uncachedIn, outputTokens,
+      totalTokens: inputTokens + outputTokens, estimated,
+      inputRatePer1M: inRate, outputRatePer1M: outRate, cacheRatePer1M: cacheRate,
+      estPer1kUsd: spec.estPer1kUsd,
+      costUsd: Number(costUsd.toFixed(7)), costBdt: Number((costUsd * BDT_PER_USD).toFixed(4))
+    };
+  }
+
+  function getSavedCostStats() {
+    const s = safeJsonParse(localStorage.getItem('fc_ocr_cost_stats'), {});
+    return (s && typeof s === 'object') ? s : {};
+  }
+
+  function recordScanCostUsage(usage) {
+    if (!usage || typeof usage.costUsd !== 'number') return null;
+    const stats = getSavedCostStats();
+    stats.totalScans = Number(stats.totalScans || 0) + 1;
+    stats.totalUsd = Number((Number(stats.totalUsd || 0) + usage.costUsd).toFixed(7));
+    stats.totalTokens = Number(stats.totalTokens || 0) + Number(usage.totalTokens || 0);
+    stats.lastUsage = usage;
+    stats.byModel = stats.byModel && typeof stats.byModel === 'object' ? stats.byModel : {};
+    const m = stats.byModel[usage.model] || { scans: 0, usd: 0 };
+    m.scans += 1;
+    m.usd = Number((m.usd + usage.costUsd).toFixed(7));
+    stats.byModel[usage.model] = m;
+    localStorage.setItem('fc_ocr_cost_stats', JSON.stringify(stats));
+    return stats;
+  }
 
   // --- Utility: Bengali-to-English Digit Normalizer ---
   function normalizeDigits(str) {
@@ -607,16 +720,43 @@ Return ONLY a single valid JSON object with those keys.
         <div id="fc-bm-ocr-warn" style="display: none; background: #fffbeb; border: 1.5px solid #f59e0b; color: #92400e; padding: 8px 10px; border-radius: 8px; font-size: 11.5px; line-height: 1.45;"></div>
 
         <div style="background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 10px; padding: 9px; display: flex; flex-direction: column; gap: 6px;">
-          <div class="fc-bm-col">
-            <label for="fc-bm-ai-provider">🧠 AI ইঞ্জিন:</label>
-            <select id="fc-bm-ai-provider">
-              <option value="economy" ${savedAiProvider === 'economy' ? 'selected' : ''}>💸 সাশ্রয়ী অটো (3.1 Lite → প্রয়োজনে 3.8 / DeepSeek)</option>
-              <option value="deepseek" ${savedAiProvider === 'deepseek' ? 'selected' : ''}>🐋 DeepSeek Flash (~$0.33/1K সবচেয়ে সস্তা)</option>
-              <option value="gemini_lite" ${savedAiProvider === 'gemini_lite' ? 'selected' : ''}>⚡ Gemini 3.1/3.5 Lite (150K RPD)</option>
-              <option value="auto" ${savedAiProvider === 'auto' ? 'selected' : ''}>⚖️ ব্যালেন্সড (Gemini 3.8 + DeepSeek)</option>
-              <option value="gemini" ${savedAiProvider === 'gemini' ? 'selected' : ''}>💎 Gemini 3.8 Flash (সর্বোচ্চ নির্ভুলতা)</option>
-            </select>
+          <div class="fc-bm-row">
+            <div class="fc-bm-col">
+              <label for="fc-bm-ai-provider">🧠 AI কৌশল:</label>
+              <select id="fc-bm-ai-provider">
+                <option value="economy" ${savedAiProvider === 'economy' ? 'selected' : ''}>💸 সাশ্রয়ী অটো (Lite → প্রয়োজনে 3.8)</option>
+                <option value="deepseek" ${savedAiProvider === 'deepseek' ? 'selected' : ''}>🐋 DeepSeek Flash (~$0.38/1K Off-Peak)</option>
+                <option value="gemini_lite" ${savedAiProvider === 'gemini_lite' ? 'selected' : ''}>⚡ Gemini Flash-Lite (~$0.78/1K)</option>
+                <option value="auto" ${savedAiProvider === 'auto' ? 'selected' : ''}>⚖️ ডুয়াল-AI (ডিফল্ট কী → ব্যাকআপ)</option>
+                <option value="gemini" ${savedAiProvider === 'gemini' ? 'selected' : ''}>💎 Gemini শুধুমাত্র (ডিফল্ট মডেল)</option>
+              </select>
+            </div>
+            <div class="fc-bm-col">
+              <label for="fc-bm-default-key">🔑 ডিফল্ট প্রাথমিক কী:</label>
+              <select id="fc-bm-default-key">
+                <option value="auto" ${savedDefaultKeySlot === 'auto' ? 'selected' : ''}>🤖 স্বয়ংক্রিয়</option>
+                <option value="gemini" ${savedDefaultKeySlot === 'gemini' ? 'selected' : ''}>✨ Gemini আগে</option>
+                <option value="deepseek" ${savedDefaultKeySlot === 'deepseek' ? 'selected' : ''}>🐋 DeepSeek আগে</option>
+              </select>
+            </div>
           </div>
+          <div class="fc-bm-row">
+            <div class="fc-bm-col">
+              <label for="fc-bm-gemini-model">✨ Gemini মডেল:</label>
+              <select id="fc-bm-gemini-model">
+                <option value="gemini-3.1-flash-lite" ${savedGeminiModel === 'gemini-3.1-flash-lite' ? 'selected' : ''}>3.1 Lite ($0.25/$1.50)</option>
+                <option value="gemini-3.5-flash-lite" ${savedGeminiModel === 'gemini-3.5-flash-lite' ? 'selected' : ''}>3.5 Lite ($0.30/$2.50)</option>
+                <option value="gemini-3.8-flash" ${savedGeminiModel === 'gemini-3.8-flash' ? 'selected' : ''}>3.8 Flash ($0.75/$3.75)</option>
+              </select>
+            </div>
+            <div class="fc-bm-col">
+              <label for="fc-bm-deepseek-model">🐋 DeepSeek মডেল:</label>
+              <select id="fc-bm-deepseek-model">
+                <option value="deepseek-flash" ${savedDeepSeekModel === 'deepseek-flash' ? 'selected' : ''}>deepseek-flash ($0.15/$0.60)</option>
+              </select>
+            </div>
+          </div>
+          <div id="fc-bm-cost-card" style="background: #f0fdf4; border: 1px solid #86efac; color: #166534; border-radius: 7px; padding: 6px 8px; font-size: 11px; line-height: 1.4;">হিসাব লোড হচ্ছে...</div>
           <div class="fc-bm-row">
             <div class="fc-bm-col">
               <label for="fc-bm-apikey">⚙️ Gemini API Key:</label>
@@ -627,6 +767,7 @@ Return ONLY a single valid JSON object with those keys.
               <input type="password" id="fc-bm-deepseek-key" placeholder="sk-..." value="${escapeHtml(savedDeepSeekKey)}">
             </div>
           </div>
+          <button id="fc-bm-btn-save-ai" type="button" style="background: #0f766e; color: #fff; border: none; border-radius: 7px; padding: 6px 10px; font-size: 11.5px; font-weight: 700; cursor: pointer;">💾 ডিফল্ট কী ও মডেল সেভ করুন</button>
         </div>
 
         <div id="fc-bm-loading" style="display: none; text-align: center; padding: 10px;">
@@ -646,6 +787,33 @@ Return ONLY a single valid JSON object with those keys.
   const inputApiKey = document.getElementById('fc-bm-apikey');
   const inputDeepSeekKey = document.getElementById('fc-bm-deepseek-key');
   const selectAiProvider = document.getElementById('fc-bm-ai-provider');
+  const selectDefaultKey = document.getElementById('fc-bm-default-key');
+  const selectGeminiModel = document.getElementById('fc-bm-gemini-model');
+  const selectDeepSeekModel = document.getElementById('fc-bm-deepseek-model');
+  const elBmCostCard = document.getElementById('fc-bm-cost-card');
+  const btnSaveAi = document.getElementById('fc-bm-btn-save-ai');
+
+  function renderBmCostCard() {
+    if (!elBmCostCard) return;
+    const strategy = selectAiProvider ? selectAiProvider.value : savedAiProvider;
+    const keySlot = selectDefaultKey ? selectDefaultKey.value : savedDefaultKeySlot;
+    const gemId = selectGeminiModel ? selectGeminiModel.value : savedGeminiModel;
+    const gemSpec = AI_MODEL_CATALOG[gemId] || AI_MODEL_CATALOG['gemini-3.1-flash-lite'];
+    const peak = isDeepSeekPeakUtc();
+    const ds1k = peak ? 0.76 : 0.38;
+    const dsIn = peak ? 0.30 : 0.15;
+    const dsOut = peak ? 1.20 : 0.60;
+    const stats = getSavedCostStats();
+    const useDs = strategy === 'deepseek' || (keySlot === 'deepseek' && (strategy === 'economy' || strategy === 'auto'));
+    const activeLine = useDs
+      ? `<b>সক্রিয়:</b> DeepSeek Flash (${peak ? '🟠 Peak' : '🟢 Off-Peak'}) • ~$${ds1k.toFixed(2)} (~৳${Math.round(ds1k * BDT_PER_USD)}) / ১,০০০ NID`
+      : `<b>সক্রিয়:</b> ${gemSpec.label} • ~$${gemSpec.estPer1kUsd.toFixed(2)} (~৳${Math.round(gemSpec.estPer1kUsd * BDT_PER_USD)}) / ১,০০০ NID (${gemSpec.rpm} RPM)`;
+    const rateLine = `রেট/1M: ${gemSpec.label} <b>$${gemSpec.inputPer1M}/$${gemSpec.outputPer1M}</b> | DeepSeek <b>$${dsIn}/$${dsOut}</b>`;
+    const lastLine = stats.lastUsage
+      ? `<br>🧾 শেষ স্ক্যান: <b>$${Number(stats.lastUsage.costUsd || 0).toFixed(5)}</b> (~৳${Number(stats.lastUsage.costBdt || 0).toFixed(3)}) • মোট: <b>$${Number(stats.totalUsd || 0).toFixed(5)}</b> (${stats.totalScans || 0} স্ক্যান)`
+      : '';
+    elBmCostCard.innerHTML = `${activeLine}<br>${rateLine}${lastLine}`;
+  }
   const loading = document.getElementById('fc-bm-loading');
   const imgWrap = document.getElementById('fc-bm-img-wrap');
   const imgPreview = document.getElementById('fc-bm-img');
@@ -791,13 +959,35 @@ Return ONLY a single valid JSON object with those keys.
     }
   });
 
-  function saveAndValidateApiKeys() {
-    savedApiKey = inputApiKey.value.trim();
-    savedDeepSeekKey = inputDeepSeekKey ? inputDeepSeekKey.value.trim() : '';
-    savedAiProvider = selectAiProvider ? selectAiProvider.value : 'auto';
+  function persistAiSettingsOnly() {
+    savedApiKey = inputApiKey ? inputApiKey.value.trim() : savedApiKey;
+    savedDeepSeekKey = inputDeepSeekKey ? inputDeepSeekKey.value.trim() : savedDeepSeekKey;
+    savedAiProvider = selectAiProvider ? selectAiProvider.value : savedAiProvider;
+    savedDefaultKeySlot = selectDefaultKey ? selectDefaultKey.value : savedDefaultKeySlot;
+    savedGeminiModel = selectGeminiModel ? selectGeminiModel.value : savedGeminiModel;
+    savedDeepSeekModel = selectDeepSeekModel ? selectDeepSeekModel.value : savedDeepSeekModel;
     localStorage.setItem('fc_gemini_api_key', savedApiKey);
     localStorage.setItem('fc_deepseek_api_key', savedDeepSeekKey);
     localStorage.setItem('fc_ai_provider', savedAiProvider);
+    localStorage.setItem('fc_default_key_slot', savedDefaultKeySlot);
+    localStorage.setItem('fc_gemini_model', savedGeminiModel);
+    localStorage.setItem('fc_deepseek_model', savedDeepSeekModel);
+    renderBmCostCard();
+  }
+
+  [selectAiProvider, selectDefaultKey, selectGeminiModel, selectDeepSeekModel].forEach(el => {
+    if (el) el.addEventListener('change', persistAiSettingsOnly);
+  });
+  if (btnSaveAi) {
+    btnSaveAi.addEventListener('click', () => {
+      persistAiSettingsOnly();
+      showToast('✅ ডিফল্ট API কী ও মডেল সেভ হয়েছে!');
+    });
+  }
+  renderBmCostCard();
+
+  function saveAndValidateApiKeys() {
+    persistAiSettingsOnly();
 
     if (savedAiProvider === 'deepseek' && !savedDeepSeekKey && !/^sk-/i.test(savedApiKey)) {
       alert('অনুগ্রহ করে নিচে DeepSeek API Key (sk-...) দিন।');
@@ -967,66 +1157,60 @@ Return ONLY a single valid JSON object with those keys.
     return digits.length !== 10 && digits.length !== 13 && digits.length !== 17;
   }
 
-  async function callGeminiResilientOCR(apiKey, rawBase64, detectedMime, promptText, profile = 'accurate') {
-    const flash38Attempts = [
-      {
-        label: 'gemini-3.8-flash (interactions)',
-        url: 'https://generativelanguage.googleapis.com/v1beta/interactions',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey, 'Api-Revision': '2026-05-20' },
-        body: {
-          model: 'gemini-3.8-flash',
-          input: [{ type: 'text', text: promptText }, { type: 'image', data: rawBase64, mime_type: detectedMime }],
-          generation_config: { thinking_level: 'low' },
-          response_format: { type: 'text', mime_type: 'application/json', schema: OCR_RESPONSE_SCHEMA },
-          store: false
-        }
-      },
-      {
-        label: 'gemini-3.8-flash (generateContent)',
-        url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-        body: {
-          contents: [{ parts: [{ text: promptText }, { inline_data: { mime_type: detectedMime, data: rawBase64 } }] }],
-          generationConfig: { response_mime_type: 'application/json' }
-        }
-      }
-    ];
-    const liteAttempts = [
-      {
-        label: 'gemini-3.1-flash-lite (generateContent)',
-        url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-        body: {
-          contents: [{ parts: [{ text: promptText }, { inline_data: { mime_type: detectedMime, data: rawBase64 } }] }],
-          generationConfig: { response_mime_type: 'application/json' }
-        }
-      },
-      {
-        label: 'gemini-3.5-flash-lite (interactions)',
-        url: 'https://generativelanguage.googleapis.com/v1beta/interactions',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey, 'Api-Revision': '2026-05-20' },
-        body: {
-          model: 'gemini-3.5-flash-lite',
+  function getOrderedGeminiModels(profile = 'accurate', preferredGeminiModel = 'gemini-3.1-flash-lite') {
+    const pref = normalizeModelId(preferredGeminiModel);
+    const validPref = pref.startsWith('gemini-') ? pref : 'gemini-3.1-flash-lite';
+    let base;
+    if (profile === 'flash38_only') {
+      base = ['gemini-3.8-flash'];
+    } else if (profile === 'lite_only') {
+      base = validPref === 'gemini-3.5-flash-lite'
+        ? ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite']
+        : ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite'];
+    } else if (profile === 'preferred') {
+      base = [validPref, 'gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini-3.8-flash'];
+    } else {
+      base = ['gemini-3.8-flash', validPref, 'gemini-3.1-flash-lite', 'gemini-3.5-flash-lite'];
+    }
+    return Array.from(new Set(base));
+  }
+
+  function buildGeminiAttemptsForModels(models, apiKey, rawBase64, detectedMime, promptText) {
+    const attempts = [];
+    for (const model of models) {
+      if (model === 'gemini-3.8-flash' || model === 'gemini-3.5-flash-lite') {
+        const body = {
+          model,
           input: [{ type: 'text', text: promptText }, { type: 'image', data: rawBase64, mime_type: detectedMime }],
           response_format: { type: 'text', mime_type: 'application/json', schema: OCR_RESPONSE_SCHEMA },
           store: false
-        }
-      },
-      {
-        label: 'gemini-3.5-flash-lite (generateContent)',
-        url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent',
+        };
+        if (model === 'gemini-3.8-flash') body.generation_config = { thinking_level: 'low' };
+        attempts.push({
+          model,
+          label: `${model} (interactions)`,
+          url: 'https://generativelanguage.googleapis.com/v1beta/interactions',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey, 'Api-Revision': '2026-05-20' },
+          body
+        });
+      }
+      attempts.push({
+        model,
+        label: `${model} (generateContent)`,
+        url: `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
         body: {
           contents: [{ parts: [{ text: promptText }, { inline_data: { mime_type: detectedMime, data: rawBase64 } }] }],
           generationConfig: { response_mime_type: 'application/json' }
         }
-      }
-    ];
-    const attempts = profile === 'lite_only'
-      ? liteAttempts
-      : profile === 'flash38_only'
-        ? flash38Attempts
-        : [...flash38Attempts, ...liteAttempts];
+      });
+    }
+    return attempts;
+  }
+
+  async function callGeminiResilientOCR(apiKey, rawBase64, detectedMime, promptText, profile = 'accurate', preferredGeminiModel = 'gemini-3.1-flash-lite') {
+    const modelsOrder = getOrderedGeminiModels(profile, preferredGeminiModel);
+    const attempts = buildGeminiAttemptsForModels(modelsOrder, apiKey, rawBase64, detectedMime, promptText);
 
     let lastErr = 'Gemini থেকে উত্তর পাওয়া যায়নি।';
     for (const attempt of attempts) {
@@ -1060,6 +1244,7 @@ Return ONLY a single valid JSON object with those keys.
         if (objMatch) cleanText = objMatch[0];
         const parsed = JSON.parse(cleanText);
         parsed.ocr_model_used = attempt.label;
+        parsed.ocr_usage = computeScanUsageAndCost(attempt.model, jsonRes);
         return parsed;
       } catch (e) {
         clearTimeout(timer);
@@ -1070,7 +1255,8 @@ Return ONLY a single valid JSON object with those keys.
     throw new Error(`OCR ব্যর্থ: ${lastErr}`);
   }
 
-  async function callDeepSeekVisionOCR(deepseekKey, rawBase64, detectedMime, promptText) {
+  async function callDeepSeekVisionOCR(deepseekKey, rawBase64, detectedMime, promptText, deepseekModel = 'deepseek-flash') {
+    const targetModel = normalizeModelId(deepseekModel) === 'deepseek-flash' ? 'deepseek-flash' : 'deepseek-flash';
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 30000);
     try {
@@ -1081,7 +1267,7 @@ Return ONLY a single valid JSON object with those keys.
           'Authorization': `Bearer ${deepseekKey}`
         },
         body: JSON.stringify({
-          model: 'deepseek-flash',
+          model: targetModel,
           messages: [
             {
               role: 'system',
@@ -1117,11 +1303,11 @@ Return ONLY a single valid JSON object with those keys.
       const objMatch = cleanText.match(/\{[\s\S]*\}/);
       if (objMatch) cleanText = objMatch[0];
       const parsed = JSON.parse(cleanText);
-      parsed.ocr_model_used = 'deepseek-flash (api.deepseek.com)';
+      parsed.ocr_model_used = `${targetModel} (api.deepseek.com)`;
+      parsed.ocr_usage = computeScanUsageAndCost(targetModel, jsonRes);
       return parsed;
     } catch (e) {
       clearTimeout(timer);
-      // Fallback through Cloudflare edge worker proxy if direct browser request hits CORS/network block
       if (e.name === 'TypeError') {
         const edgeRes = await fetch('https://familycard-10n.pages.dev/api/ocr-nid', {
           method: 'POST',
@@ -1130,11 +1316,15 @@ Return ONLY a single valid JSON object with those keys.
             imageBase64: `data:${detectedMime};base64,${rawBase64}`,
             mimeType: detectedMime,
             aiProvider: 'deepseek',
+            deepseekModel: targetModel,
             deepseekApiKey: deepseekKey
           })
         });
         const ej = await edgeRes.json().catch(() => ({}));
-        if (ej && ej.success && ej.data) return ej.data;
+        if (ej && ej.success && ej.data) {
+          if (!ej.data.ocr_usage) ej.data.ocr_usage = computeScanUsageAndCost(targetModel, {});
+          return ej.data;
+        }
         if (ej && ej.error) throw new Error(ej.error);
       }
       if (e.name === 'AbortError') throw new Error('DeepSeek OCR সময় শেষ হয়েছে (Timeout)');
@@ -1142,7 +1332,17 @@ Return ONLY a single valid JSON object with those keys.
     }
   }
 
-  async function runMultiProviderOCR({ aiProvider = 'economy', geminiKey = '', deepseekKey = '', rawBase64, detectedMime, promptText }) {
+  async function runMultiProviderOCR({
+    aiProvider = 'economy',
+    defaultKeySlot = 'auto',
+    geminiModel = 'gemini-3.1-flash-lite',
+    deepseekModel = 'deepseek-flash',
+    geminiKey = '',
+    deepseekKey = '',
+    rawBase64,
+    detectedMime,
+    promptText
+  }) {
     let gKey = String(geminiKey || '').trim();
     let dKey = String(deepseekKey || '').trim();
     if (!dKey && /^sk-/i.test(gKey)) {
@@ -1150,33 +1350,59 @@ Return ONLY a single valid JSON object with those keys.
       gKey = '';
     }
     const mode = ['economy', 'auto', 'gemini', 'gemini_lite', 'deepseek'].includes(aiProvider) ? aiProvider : 'economy';
+    const keySlot = ['auto', 'gemini', 'deepseek'].includes(defaultKeySlot) ? defaultKeySlot : 'auto';
+    const prefGemRaw = normalizeModelId(geminiModel);
+    const prefGemModel = prefGemRaw.startsWith('gemini-') ? prefGemRaw : 'gemini-3.1-flash-lite';
 
     if (mode === 'deepseek') {
       if (!dKey) throw new Error('DeepSeek API Key দেওয়া হয়নি!');
-      return await callDeepSeekVisionOCR(dKey, rawBase64, detectedMime, promptText);
+      return await callDeepSeekVisionOCR(dKey, rawBase64, detectedMime, promptText, deepseekModel);
     }
     if (mode === 'gemini_lite') {
       if (!gKey) throw new Error('Gemini API Key দেওয়া হয়নি!');
-      return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'lite_only');
+      return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'lite_only', prefGemModel);
     }
     if (mode === 'gemini') {
       if (!gKey) throw new Error('Gemini API Key দেওয়া হয়নি!');
-      return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'accurate');
+      return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'preferred', prefGemModel);
     }
 
     const errors = [];
+    if (keySlot === 'deepseek' && dKey) {
+      try {
+        const dsRes = await callDeepSeekVisionOCR(dKey, rawBase64, detectedMime, promptText, deepseekModel);
+        if (mode === 'auto' || !needsAccurateEscalation(dsRes) || !gKey) return dsRes;
+        try {
+          return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'preferred', prefGemModel);
+        } catch (_) {
+          return dsRes;
+        }
+      } catch (err) {
+        errors.push(`DeepSeek: ${err.message}`);
+      }
+      if (gKey) {
+        try {
+          return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'preferred', prefGemModel);
+        } catch (err) {
+          errors.push(`Gemini: ${err.message}`);
+        }
+      }
+      throw new Error(errors.length ? errors.join(' | ') : 'Gemini বা DeepSeek API Key দেওয়া হয়নি!');
+    }
+
     if (mode === 'economy') {
       if (gKey) {
         try {
-          const liteRes = await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'lite_only');
-          if (!needsAccurateEscalation(liteRes)) return liteRes;
+          const firstProfile = prefGemModel === 'gemini-3.8-flash' ? 'accurate' : 'lite_only';
+          const primaryRes = await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, firstProfile, prefGemModel);
+          if (!needsAccurateEscalation(primaryRes) || prefGemModel === 'gemini-3.8-flash') return primaryRes;
           try {
-            return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'flash38_only');
+            return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'flash38_only', prefGemModel);
           } catch (_) {
             if (dKey) {
-              try { return await callDeepSeekVisionOCR(dKey, rawBase64, detectedMime, promptText); } catch (__) {}
+              try { return await callDeepSeekVisionOCR(dKey, rawBase64, detectedMime, promptText, deepseekModel); } catch (__) {}
             }
-            return liteRes;
+            return primaryRes;
           }
         } catch (err) {
           errors.push(`Gemini: ${err.message}`);
@@ -1184,7 +1410,7 @@ Return ONLY a single valid JSON object with those keys.
       }
       if (dKey) {
         try {
-          return await callDeepSeekVisionOCR(dKey, rawBase64, detectedMime, promptText);
+          return await callDeepSeekVisionOCR(dKey, rawBase64, detectedMime, promptText, deepseekModel);
         } catch (err) {
           errors.push(`DeepSeek: ${err.message}`);
         }
@@ -1194,14 +1420,14 @@ Return ONLY a single valid JSON object with those keys.
 
     if (gKey) {
       try {
-        return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'accurate');
+        return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'accurate', prefGemModel);
       } catch (err) {
         errors.push(`Gemini: ${err.message}`);
       }
     }
     if (dKey) {
       try {
-        return await callDeepSeekVisionOCR(dKey, rawBase64, detectedMime, promptText);
+        return await callDeepSeekVisionOCR(dKey, rawBase64, detectedMime, promptText, deepseekModel);
       } catch (err) {
         errors.push(`DeepSeek: ${err.message}`);
       }
@@ -1304,9 +1530,10 @@ Return ONLY a single valid JSON object with those keys.
 
     const loadTxt = document.getElementById('fc-bm-loading-text');
     if (loadTxt) {
-      loadTxt.textContent = savedAiProvider === 'deepseek'
-        ? 'DeepSeek AI (deepseek-flash) দিয়ে ডকুমেন্ট স্ক্যান হচ্ছে...'
-        : 'AI দিয়ে ডকুমেন্ট স্ক্যান হচ্ছে (Gemini / DeepSeek)...';
+      const useDsMsg = savedAiProvider === 'deepseek' || (savedDefaultKeySlot === 'deepseek' && Boolean(savedDeepSeekKey) && (savedAiProvider === 'economy' || savedAiProvider === 'auto'));
+      loadTxt.textContent = useDsMsg
+        ? `DeepSeek (${savedDeepSeekModel}) দিয়ে ডকুমেন্ট স্ক্যান হচ্ছে...`
+        : `${savedGeminiModel} দিয়ে ডকুমেন্ট স্ক্যান হচ্ছে...`;
     }
 
     loading.style.display = 'block';
@@ -1328,6 +1555,9 @@ Return ONLY a single valid JSON object with those keys.
 
       const data = await runMultiProviderOCR({
         aiProvider: savedAiProvider,
+        defaultKeySlot: savedDefaultKeySlot,
+        geminiModel: savedGeminiModel,
+        deepseekModel: savedDeepSeekModel,
         geminiKey: savedApiKey,
         deepseekKey: savedDeepSeekKey,
         rawBase64,
@@ -1337,6 +1567,14 @@ Return ONLY a single valid JSON object with those keys.
       validateAndNormalizeOcrData(data, docTypeChoice);
 
       data.family_id = scrapeFamilyId() || '';
+      if (data.ocr_usage) {
+        recordScanCostUsage(data.ocr_usage);
+        renderBmCostCard();
+      }
+
+      const costTag = data.ocr_usage
+        ? `💰 $${Number(data.ocr_usage.costUsd || 0).toFixed(5)} (~৳${Number(data.ocr_usage.costBdt || 0).toFixed(3)})`
+        : '';
 
       window.__fcScanHistory.unshift({
         target: activeScanTarget.type,
@@ -1345,6 +1583,7 @@ Return ONLY a single valid JSON object with those keys.
         name_bn: data.name_bn || '',
         dob: data.dob || '',
         model: data.ocr_model_used || '',
+        usage: data.ocr_usage || null,
         warnings: data.ocr_warnings || [],
         at: new Date().toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' })
       });
@@ -1396,9 +1635,9 @@ Return ONLY a single valid JSON object with those keys.
           const cardIdx = realIdx >= 0 ? (realIdx + 1) : ((typeof activeScanTarget.index === 'number') ? activeScanTarget.index : allCards.length || 2);
           syncMemberToFirestore(data, cardIdx);
           if (data.ocr_warnings.length > 0) {
-            showToast(`⚠️ ${data.name_bn || data.doc_number} পূরণ হয়েছে — সতর্কতা: ${data.ocr_warnings[0]}`);
+            showToast(`⚠️ ${data.name_bn || data.doc_number} পূরণ — সতর্কতা: ${data.ocr_warnings[0]}${costTag ? ` • ${costTag}` : ''}`);
           } else {
-            showToast(`✅ সদস্য (${data.name_bn || data.doc_number}) সফলভাবে পূরণ হয়েছে!`);
+            showToast(`✅ সদস্য (${data.name_bn || data.doc_number}) পূরণ হয়েছে!${costTag ? ` ${costTag}` : ''}`);
           }
         } else {
           showToast(`⚠️ সদস্য কার্ড পাওয়া যায়নি। অনুগ্রহ করে প্রথমে '+ নতুন সদস্য' যোগ করুন।`);
@@ -1419,9 +1658,9 @@ Return ONLY a single valid JSON object with those keys.
 
         await fillPortalFields(data);
         if (data.ocr_warnings.length > 0) {
-          showToast(`⚠️ NID তথ্য পূরণ হয়েছে — সতর্কতা: ${data.ocr_warnings[0]}`);
+          showToast(`⚠️ NID তথ্য পূরণ — সতর্কতা: ${data.ocr_warnings[0]}${costTag ? ` • ${costTag}` : ''}`);
         } else {
-          showToast('✅ এনআইডি তথ্য সফলভাবে পূরণ হয়েছে!');
+          showToast(`✅ এনআইডি তথ্য সফলভাবে পূরণ হয়েছে!${costTag ? ` ${costTag}` : ''}`);
         }
         syncToFirestore(data);
       }
@@ -1510,49 +1749,36 @@ Return ONLY a single valid JSON object with those keys.
   async function fillMemberCard(card, data) {
     if (!card || !data) return;
 
-    // 1. Verification Type Radio (NID vs Birth Certificate)
+    // 1. Verification Type Radio (NID vs Birth Certificate) — scoped strictly to .v-radio
     const isBirthReg = data.doc_type === 'birth_certificate';
-    const radios = Array.from(card.querySelectorAll('.v-radio, label'));
+    const radios = Array.from(card.querySelectorAll('.v-radio'));
     for (const rl of radios) {
-      const txt = rl.textContent || '';
-      if (isBirthReg && (txt.includes('জন্ম নিবন্ধন') || txt.includes('জন্ম'))) {
-        const r = rl.querySelector('input[type="radio"]') || rl.closest('.v-radio')?.querySelector('input[type="radio"]');
-        if (r) { r.click(); } else rl.click();
+      const txt = normalizeBn(rl.textContent || '');
+      if (isBirthReg && (txt.includes('জন্ম নিবন্ধন') || txt.includes('নিবন্ধন'))) {
+        const r = rl.querySelector('input[type="radio"]');
+        if (r) r.click(); else rl.click();
         break;
-      } else if (!isBirthReg && (txt.includes('জাতীয় পরিচিতি') || txt.includes('এনআইডি') || txt.includes('NID'))) {
-        const r = rl.querySelector('input[type="radio"]') || rl.closest('.v-radio')?.querySelector('input[type="radio"]');
-        if (r) { r.click(); } else rl.click();
+      } else if (!isBirthReg && (txt.includes('জাতীয় পরিচিতি') || txt.includes('এনআইডি') || txt.includes('NID'))) {
+        const r = rl.querySelector('input[type="radio"]');
+        if (r) r.click(); else rl.click();
         break;
       }
     }
 
-    await new Promise(r => setTimeout(r, 120));
+    await new Promise(r => setTimeout(r, 220));
 
     function findCardInput(keywords) {
-      const labels = Array.from(card.querySelectorAll('label'));
-      for (const label of labels) {
-        const text = label.textContent || '';
-        if (keywords.some(k => text.includes(k))) {
-          if (label.htmlFor) {
-            const inp = card.querySelector('#' + label.htmlFor);
-            if (inp && !inp.disabled) return inp;
-          }
-          const parent = label.closest('.col, [class*="col-"], span, div');
-          if (parent) {
-            const inp = parent.querySelector('input:not([type="hidden"]):not([disabled])');
-            if (inp) return inp;
-          }
-        }
-      }
-      return null;
+      return findInputByLabel(keywords, card);
     }
 
     async function selectCardDropdown(keywords, candidates) {
+      const normKeys = keywords.map(k => normalizeBn(k));
       const labels = Array.from(card.querySelectorAll('label'));
       let container = null;
       for (const label of labels) {
-        const text = label.textContent || '';
-        if (keywords.some(k => text.includes(k))) {
+        if (label.closest('.v-radio')) continue;
+        const text = normalizeBn(label.textContent || '');
+        if (normKeys.some(k => text.includes(k))) {
           container = label.closest('.col, [class*="col-"], span, div');
           break;
         }
@@ -1819,6 +2045,7 @@ Return ONLY a single valid JSON object with those keys.
         }
         if (attempts >= 8) {
           clearInterval(interval);
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
           resolve(false);
         }
       }, 120);
@@ -3322,6 +3549,7 @@ Return ONLY a single valid JSON object with those keys.
 
         if (attempts >= 8) {
           clearInterval(timer);
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
           col.dataset.fcS7DefaultApplied = 'true';
           setTimeout(() => resolve(false), 80);
         }
@@ -4474,6 +4702,26 @@ Return ONLY a single valid JSON object with those keys.
         html += `</div>`;
       }
     }
+
+    const costStats = getSavedCostStats();
+    const sumGem = AI_MODEL_CATALOG[savedGeminiModel] || AI_MODEL_CATALOG['gemini-3.1-flash-lite'];
+    const sumPeak = isDeepSeekPeakUtc();
+    html += `
+      <div class="fc-sum-card" style="background: #f0f9ff; border-color: #7dd3fc;">
+        <div class="fc-sum-row">
+          <div>
+            <div style="font-weight: 800; color: #0369a1; font-size: 12px;">💰 AI স্ক্যান খরচ ও ডিফল্ট মডেল</div>
+            <div style="font-size: 11px; color: #0c4a6e; margin-top: 2px;">
+              ডিফল্ট কী: <b>${escapeHtml(savedDefaultKeySlot)}</b> • Gemini: <b>${escapeHtml(sumGem.label)}</b> • DeepSeek: <b>${sumPeak ? 'Peak $0.30/$1.20' : 'Off-Peak $0.15/$0.60'}</b>
+            </div>
+          </div>
+          <div style="text-align: right; font-size: 11px; font-weight: 700; color: #0f766e;">
+            মোট: $${Number(costStats.totalUsd || 0).toFixed(5)}<br>
+            (~৳${(Number(costStats.totalUsd || 0) * BDT_PER_USD).toFixed(2)} • ${toBnDigits(costStats.totalScans || 0)} স্ক্যান)
+          </div>
+        </div>
+      </div>
+    `;
 
     html += `
       <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px;">

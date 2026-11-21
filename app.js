@@ -17,9 +17,90 @@ let selectedFileBase64 = null;
 const elStatus = document.getElementById('connectionStatus');
 const elRoomCode = document.getElementById('roomCode');
 const elProvider = document.getElementById('aiProvider');
+const elDefaultKeySlot = document.getElementById('defaultKeySlot');
+const elGeminiModel = document.getElementById('geminiModel');
+const elDeepSeekModel = document.getElementById('deepseekModel');
+const elCostPreview = document.getElementById('aiCostPreview');
 const elApiKey = document.getElementById('apiKey');
 const elDeepSeekKey = document.getElementById('deepseekApiKey');
+const elBtnSaveDefaults = document.getElementById('btnSaveDefaults');
+const elSaveDefaultsMsg = document.getElementById('saveDefaultsMsg');
 const btnConnect = document.getElementById('btnConnect');
+
+const BDT_PER_USD = 122;
+const MODEL_PRICING = {
+  'gemini-3.1-flash-lite': { label: 'Gemini 3.1 Flash-Lite', inM: 0.25, outM: 1.50, est1k: 0.78, quota: '4K RPM / 150K RPD' },
+  'gemini-3.5-flash-lite': { label: 'Gemini 3.5 Flash-Lite', inM: 0.30, outM: 2.50, est1k: 1.11, quota: '4K RPM / 150K RPD' },
+  'gemini-3.8-flash': { label: 'Gemini 3.8 Flash', inM: 0.75, outM: 3.75, est1k: 2.53, quota: '1K RPM / 10K RPD' },
+  'deepseek-flash': { label: 'DeepSeek Flash', offInM: 0.15, offOutM: 0.60, peakInM: 0.30, peakOutM: 1.20 }
+};
+
+function isDeepSeekPeakNow() {
+  const d = new Date();
+  const day = d.getUTCDay();
+  if (day < 1 || day > 5) return false;
+  const h = d.getUTCHours();
+  return (h >= 1 && h < 4) || (h >= 6 && h < 10);
+}
+
+function getSavedCostStats() {
+  try {
+    return JSON.parse(localStorage.getItem('fc_ocr_cost_stats') || '{}');
+  } catch (_) {
+    return {};
+  }
+}
+
+function recordScanCostUsage(usage) {
+  if (!usage || typeof usage.costUsd !== 'number') return null;
+  const stats = getSavedCostStats();
+  stats.totalScans = Number(stats.totalScans || 0) + 1;
+  stats.totalUsd = Number((Number(stats.totalUsd || 0) + usage.costUsd).toFixed(7));
+  stats.totalTokens = Number(stats.totalTokens || 0) + Number(usage.totalTokens || 0);
+  stats.lastUsage = usage;
+  try { localStorage.setItem('fc_ocr_cost_stats', JSON.stringify(stats)); } catch (_) {}
+  renderCostPreview();
+  return stats;
+}
+
+function renderCostPreview() {
+  if (!elCostPreview) return;
+  const strategy = elProvider ? elProvider.value : 'economy';
+  const keySlot = elDefaultKeySlot ? elDefaultKeySlot.value : 'auto';
+  const gemModel = elGeminiModel ? elGeminiModel.value : 'gemini-3.1-flash-lite';
+  const gemSpec = MODEL_PRICING[gemModel] || MODEL_PRICING['gemini-3.1-flash-lite'];
+  const peak = isDeepSeekPeakNow();
+  const ds1k = peak ? 0.76 : 0.38;
+  const dsIn = peak ? 0.30 : 0.15;
+  const dsOut = peak ? 1.20 : 0.60;
+  const stats = getSavedCostStats();
+
+  const useDsPrimary = strategy === 'deepseek' || (keySlot === 'deepseek' && (strategy === 'economy' || strategy === 'auto'));
+  const activeTxt = useDsPrimary
+    ? `<b>প্রাথমিক:</b> DeepSeek Flash (${peak ? '🟠 Peak' : '🟢 Off-Peak'}) • ~$${ds1k.toFixed(2)} (~৳${Math.round(ds1k * BDT_PER_USD)}) / ১,০০০ NID`
+    : `<b>প্রাথমিক:</b> ${gemSpec.label} • ~$${gemSpec.est1k.toFixed(2)} (~৳${Math.round(gemSpec.est1k * BDT_PER_USD)}) / ১,০০০ NID (${gemSpec.quota})`;
+
+  const rateTxt = `💵 রেট/1M: ${gemSpec.label} <b>$${gemSpec.inM}/$${gemSpec.outM}</b> • DeepSeek <b>$${dsIn}/$${dsOut}</b>`;
+  const spentTxt = stats.totalScans > 0
+    ? `<br>📊 সেশন মোট: <b>$${Number(stats.totalUsd || 0).toFixed(5)}</b> (~৳${(Number(stats.totalUsd || 0) * BDT_PER_USD).toFixed(2)}) | ${stats.totalScans} স্ক্যান`
+    : '';
+  elCostPreview.innerHTML = `${activeTxt}<br>${rateTxt}${spentTxt}`;
+}
+
+function saveAiPreferences(showNotice = false) {
+  if (elProvider) localStorage.setItem('fc_ai_provider', elProvider.value);
+  if (elDefaultKeySlot) localStorage.setItem('fc_default_key_slot', elDefaultKeySlot.value);
+  if (elGeminiModel) localStorage.setItem('fc_gemini_model', elGeminiModel.value);
+  if (elDeepSeekModel) localStorage.setItem('fc_deepseek_model', elDeepSeekModel.value);
+  localStorage.setItem('fc_gemini_api_key', elApiKey.value.trim());
+  if (elDeepSeekKey) localStorage.setItem('fc_deepseek_api_key', elDeepSeekKey.value.trim());
+  renderCostPreview();
+  if (showNotice && elSaveDefaultsMsg) {
+    elSaveDefaultsMsg.textContent = '✅ ডিফল্ট API কী ও মডেল সেভ হয়েছে!';
+    elSaveDefaultsMsg.style.display = 'block';
+    setTimeout(() => { elSaveDefaultsMsg.style.display = 'none'; }, 2200);
+  }
+}
 
 const tabCamera = document.getElementById('tabCamera');
 const tabGallery = document.getElementById('tabGallery');
@@ -40,12 +121,21 @@ const loadingMsg = document.getElementById('loadingMsg');
 const resultCard = document.getElementById('resultCard');
 const btnDismissResult = document.getElementById('btnDismissResult');
 
-// Load saved room code & API key from localStorage
+// Load saved room code, model defaults & API keys from localStorage
 if (localStorage.getItem('fc_room_code')) {
   elRoomCode.value = localStorage.getItem('fc_room_code');
 }
 if (localStorage.getItem('fc_ai_provider') && elProvider) {
   elProvider.value = localStorage.getItem('fc_ai_provider');
+}
+if (localStorage.getItem('fc_default_key_slot') && elDefaultKeySlot) {
+  elDefaultKeySlot.value = localStorage.getItem('fc_default_key_slot');
+}
+if (localStorage.getItem('fc_gemini_model') && elGeminiModel) {
+  elGeminiModel.value = localStorage.getItem('fc_gemini_model');
+}
+if (localStorage.getItem('fc_deepseek_model') && elDeepSeekModel) {
+  elDeepSeekModel.value = localStorage.getItem('fc_deepseek_model');
 }
 if (localStorage.getItem('fc_gemini_api_key')) {
   elApiKey.value = localStorage.getItem('fc_gemini_api_key');
@@ -53,6 +143,13 @@ if (localStorage.getItem('fc_gemini_api_key')) {
 if (localStorage.getItem('fc_deepseek_api_key') && elDeepSeekKey) {
   elDeepSeekKey.value = localStorage.getItem('fc_deepseek_api_key');
 }
+[elProvider, elDefaultKeySlot, elGeminiModel, elDeepSeekModel].forEach((el) => {
+  if (el) el.addEventListener('change', () => saveAiPreferences(false));
+});
+if (elBtnSaveDefaults) {
+  elBtnSaveDefaults.addEventListener('click', () => saveAiPreferences(true));
+}
+renderCostPreview();
 
 // Initialize Socket.io connection
 function initSocket() {
@@ -241,14 +338,15 @@ btnCapture.addEventListener('click', async () => {
   const apiKey = elApiKey.value.trim();
   const deepseekApiKey = elDeepSeekKey ? elDeepSeekKey.value.trim() : '';
   const aiProvider = elProvider ? elProvider.value : 'economy';
+  const defaultKeySlot = elDefaultKeySlot ? elDefaultKeySlot.value : 'auto';
+  const geminiModel = elGeminiModel ? elGeminiModel.value : 'gemini-3.1-flash-lite';
+  const deepseekModel = elDeepSeekModel ? elDeepSeekModel.value : 'deepseek-flash';
   const docType = document.getElementById('docType')?.value || 'auto';
   const maritalStatus = document.getElementById('maritalStatus')?.value || 'বিবাহিত';
   const religion = document.getElementById('religion')?.value || 'ইসলাম';
   const mobileNumber = normalizeDigits(document.getElementById('mobileNumber')?.value?.trim() || '');
 
-  localStorage.setItem('fc_gemini_api_key', apiKey);
-  if (elDeepSeekKey) localStorage.setItem('fc_deepseek_api_key', deepseekApiKey);
-  localStorage.setItem('fc_ai_provider', aiProvider);
+  saveAiPreferences(false);
 
   // Send over Socket.io
   if (socket && socket.connected) {
@@ -258,6 +356,9 @@ btnCapture.addEventListener('click', async () => {
       apiKey: apiKey,
       deepseekApiKey: deepseekApiKey,
       aiProvider: aiProvider,
+      defaultKeySlot: defaultKeySlot,
+      geminiModel: geminiModel,
+      deepseekModel: deepseekModel,
       docType: docType,
       maritalStatus: maritalStatus,
       religion: religion,
@@ -266,7 +367,20 @@ btnCapture.addEventListener('click', async () => {
   } else {
     // Direct HTTP POST (local Express / Cloudflare Pages Edge OCR fallback)
     try {
-      const payload = JSON.stringify({ image: base64Data, room, apiKey, deepseekApiKey, aiProvider, docType, maritalStatus, religion, mobileNumber });
+      const payload = JSON.stringify({
+        image: base64Data,
+        room,
+        apiKey,
+        deepseekApiKey,
+        aiProvider,
+        defaultKeySlot,
+        geminiModel,
+        deepseekModel,
+        docType,
+        maritalStatus,
+        religion,
+        mobileNumber
+      });
       let resp = await fetch('/api/ocr-nid', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -337,6 +451,18 @@ function displayResults(data) {
     } else {
       spouseRow.style.display = 'none';
     }
+  }
+
+  const resCost = document.getElementById('resCost');
+  if (data.ocr_usage) {
+    const stats = recordScanCostUsage(data.ocr_usage);
+    if (resCost) {
+      const u = data.ocr_usage;
+      const tot = stats ? ` | সেশন: $${Number(stats.totalUsd || 0).toFixed(5)}` : '';
+      resCost.textContent = `$${Number(u.costUsd || 0).toFixed(5)} (~৳${Number(u.costBdt || 0).toFixed(3)}) • ${u.totalTokens || 0} tok${u.estimated ? ' (est)' : ''}${tot}`;
+    }
+  } else if (resCost) {
+    resCost.textContent = data.ocr_model_used || 'Standard';
   }
 
   const resWarnings = document.getElementById('resWarnings');

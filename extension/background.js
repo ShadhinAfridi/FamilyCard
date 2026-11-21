@@ -1,5 +1,169 @@
 // Background Service Worker for Family Card NID Auto-Filler
-// Handles direct Gemini 3.8 Flash / 3.5 Flash-Lite AI OCR calls with Interactions API & generateContent fallback.
+// Handles direct Gemini (3.1/3.5 Flash-Lite, 3.8 Flash) & DeepSeek Flash Vision OCR calls with cost tracking.
+
+const BDT_PER_USD = 122;
+
+const AI_MODEL_CATALOG = {
+  'gemini-3.1-flash-lite': {
+    id: 'gemini-3.1-flash-lite',
+    label: 'Gemini 3.1 Flash-Lite',
+    provider: 'gemini',
+    inputPer1M: 0.25,
+    outputPer1M: 1.50,
+    cacheReadPer1M: 0.025,
+    rpm: '4K',
+    tpm: '4M',
+    rpd: '150K',
+    estPer1kUsd: 0.78
+  },
+  'gemini-3.5-flash-lite': {
+    id: 'gemini-3.5-flash-lite',
+    label: 'Gemini 3.5 Flash-Lite',
+    provider: 'gemini',
+    inputPer1M: 0.30,
+    outputPer1M: 2.50,
+    cacheReadPer1M: 0.03,
+    rpm: '4K',
+    tpm: '4M',
+    rpd: '150K',
+    estPer1kUsd: 1.11
+  },
+  'gemini-3.8-flash': {
+    id: 'gemini-3.8-flash',
+    label: 'Gemini 3.8 Flash',
+    provider: 'gemini',
+    inputPer1M: 0.75,
+    outputPer1M: 3.75,
+    cacheReadPer1M: 0.075,
+    stdInputPer1M: 1.50,
+    stdOutputPer1M: 7.50,
+    stdCacheReadPer1M: 0.15,
+    introUntilUtcMs: Date.UTC(2027, 0, 1),
+    rpm: '1K',
+    tpm: '2M',
+    rpd: '10K',
+    estPer1kUsd: 2.53
+  },
+  'deepseek-flash': {
+    id: 'deepseek-flash',
+    label: 'DeepSeek Flash',
+    provider: 'deepseek',
+    offPeakInPer1M: 0.15,
+    offPeakOutPer1M: 0.60,
+    offPeakCachePer1M: 0.003,
+    peakInPer1M: 0.30,
+    peakOutPer1M: 1.20,
+    peakCachePer1M: 0.006,
+    rpm: 'Pay-as-you-go',
+    tpm: 'Uncapped Tier',
+    rpd: 'Balance-based',
+    estPer1kUsd: 0.38
+  }
+};
+
+function isDeepSeekPeakUtc(nowMs = Date.now()) {
+  const d = new Date(nowMs);
+  const day = d.getUTCDay();
+  if (day < 1 || day > 5) return false;
+  const hour = d.getUTCHours();
+  return (hour >= 1 && hour < 4) || (hour >= 6 && hour < 10);
+}
+
+function normalizeModelId(modelId) {
+  const raw = String(modelId || '').toLowerCase();
+  if (raw.includes('deepseek')) return 'deepseek-flash';
+  if (raw.includes('3.5-flash-lite') || raw.includes('3.5')) return 'gemini-3.5-flash-lite';
+  if (raw.includes('3.8-flash') || raw.includes('3.8')) return 'gemini-3.8-flash';
+  return 'gemini-3.1-flash-lite';
+}
+
+function computeScanUsageAndCost(modelId, rawApiRes = {}, nowMs = Date.now()) {
+  const key = normalizeModelId(modelId);
+  const spec = AI_MODEL_CATALOG[key] || AI_MODEL_CATALOG['gemini-3.1-flash-lite'];
+  let inputTokens = 0;
+  let cachedTokens = 0;
+  let outputTokens = 0;
+  let estimated = false;
+
+  if (spec.provider === 'deepseek') {
+    const u = rawApiRes && rawApiRes.usage;
+    if (u && (u.prompt_tokens != null || u.completion_tokens != null)) {
+      cachedTokens = Number(u.prompt_cache_hit_tokens || 0);
+      inputTokens = Number(u.prompt_tokens || ((u.prompt_cache_miss_tokens || 0) + cachedTokens));
+      outputTokens = Number(u.completion_tokens || 0);
+    } else {
+      estimated = true;
+      inputTokens = 1524;
+      outputTokens = 250;
+    }
+    const peak = isDeepSeekPeakUtc(nowMs);
+    const inRate = peak ? spec.peakInPer1M : spec.offPeakInPer1M;
+    const cacheRate = peak ? spec.peakCachePer1M : spec.offPeakCachePer1M;
+    const outRate = peak ? spec.peakOutPer1M : spec.offPeakOutPer1M;
+    const uncachedIn = Math.max(0, inputTokens - cachedTokens);
+    const costUsd = (uncachedIn * inRate + cachedTokens * cacheRate + outputTokens * outRate) / 1e6;
+    return {
+      model: key,
+      label: spec.label,
+      provider: 'deepseek',
+      tierWindow: peak ? 'peak' : 'off_peak',
+      inputTokens,
+      cachedTokens,
+      uncachedInputTokens: uncachedIn,
+      outputTokens,
+      totalTokens: inputTokens + outputTokens,
+      estimated,
+      inputRatePer1M: inRate,
+      outputRatePer1M: outRate,
+      cacheRatePer1M: cacheRate,
+      estPer1kUsd: peak ? 0.76 : spec.estPer1kUsd,
+      costUsd: Number(costUsd.toFixed(7)),
+      costBdt: Number((costUsd * BDT_PER_USD).toFixed(4))
+    };
+  }
+
+  const um = rawApiRes && rawApiRes.usageMetadata;
+  const iu = rawApiRes && rawApiRes.usage;
+  if (um && (um.promptTokenCount != null || um.candidatesTokenCount != null)) {
+    inputTokens = Number(um.promptTokenCount || 0);
+    cachedTokens = Number(um.cachedContentTokenCount || 0);
+    outputTokens = Number(um.candidatesTokenCount || 0) + Number(um.thoughtsTokenCount || 0);
+  } else if (iu && (iu.total_input_tokens != null || iu.total_output_tokens != null)) {
+    inputTokens = Number(iu.total_input_tokens || 0);
+    cachedTokens = Number(iu.total_cached_tokens || 0);
+    outputTokens = Number(iu.total_output_tokens || 0);
+  } else {
+    estimated = true;
+    inputTokens = 1620;
+    outputTokens = 250;
+  }
+
+  const isIntro38 = key === 'gemini-3.8-flash' && spec.introUntilUtcMs && nowMs < spec.introUntilUtcMs;
+  const inRate = key === 'gemini-3.8-flash' ? (isIntro38 ? spec.inputPer1M : spec.stdInputPer1M) : spec.inputPer1M;
+  const outRate = key === 'gemini-3.8-flash' ? (isIntro38 ? spec.outputPer1M : spec.stdOutputPer1M) : spec.outputPer1M;
+  const cacheRate = key === 'gemini-3.8-flash' ? (isIntro38 ? spec.cacheReadPer1M : spec.stdCacheReadPer1M) : spec.cacheReadPer1M;
+  const uncachedIn = Math.max(0, inputTokens - cachedTokens);
+  const costUsd = (uncachedIn * inRate + cachedTokens * cacheRate + outputTokens * outRate) / 1e6;
+
+  return {
+    model: key,
+    label: spec.label,
+    provider: 'gemini',
+    tierWindow: key === 'gemini-3.8-flash' ? (isIntro38 ? 'intro_2026' : 'standard') : 'tier1',
+    inputTokens,
+    cachedTokens,
+    uncachedInputTokens: uncachedIn,
+    outputTokens,
+    totalTokens: inputTokens + outputTokens,
+    estimated,
+    inputRatePer1M: inRate,
+    outputRatePer1M: outRate,
+    cacheRatePer1M: cacheRate,
+    estPer1kUsd: spec.estPer1kUsd,
+    costUsd: Number(costUsd.toFixed(7)),
+    costBdt: Number((costUsd * BDT_PER_USD).toFixed(4))
+  };
+}
 
 const OCR_RESPONSE_SCHEMA = {
   type: 'object',
@@ -276,82 +440,30 @@ function needsAccurateEscalation(parsed) {
   return digits.length !== 10 && digits.length !== 13 && digits.length !== 17;
 }
 
-async function callGeminiResilientOCR(apiKey, rawBase64, detectedMime, promptText, profile = 'accurate') {
-  const flash38Attempts = [
-    {
-      label: 'gemini-3.8-flash (interactions)',
-      url: 'https://generativelanguage.googleapis.com/v1beta/interactions',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': apiKey,
-        'Api-Revision': '2026-05-20'
-      },
-      body: {
-        model: 'gemini-3.8-flash',
-        input: [
-          { type: 'text', text: promptText },
-          { type: 'image', data: rawBase64, mime_type: detectedMime }
-        ],
-        generation_config: { thinking_level: 'low' },
-        response_format: {
-          type: 'text',
-          mime_type: 'application/json',
-          schema: OCR_RESPONSE_SCHEMA
-        },
-        store: false
-      }
-    },
-    {
-      label: 'gemini-3.8-flash (generateContent)',
-      url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': apiKey
-      },
-      body: {
-        contents: [
-          {
-            parts: [
-              { text: promptText },
-              { inline_data: { mime_type: detectedMime, data: rawBase64 } }
-            ]
-          }
-        ],
-        generationConfig: { response_mime_type: 'application/json' }
-      }
-    }
-  ];
+function getOrderedGeminiModels(profile = 'accurate', preferredGeminiModel = 'gemini-3.1-flash-lite') {
+  const pref = normalizeModelId(preferredGeminiModel);
+  const validPref = pref.startsWith('gemini-') ? pref : 'gemini-3.1-flash-lite';
+  let base;
+  if (profile === 'flash38_only') {
+    base = ['gemini-3.8-flash'];
+  } else if (profile === 'lite_only') {
+    base = validPref === 'gemini-3.5-flash-lite'
+      ? ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite']
+      : ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite'];
+  } else if (profile === 'preferred') {
+    base = [validPref, 'gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini-3.8-flash'];
+  } else {
+    base = ['gemini-3.8-flash', validPref, 'gemini-3.1-flash-lite', 'gemini-3.5-flash-lite'];
+  }
+  return Array.from(new Set(base));
+}
 
-  const liteAttempts = [
-    {
-      label: 'gemini-3.1-flash-lite (generateContent)',
-      url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': apiKey
-      },
-      body: {
-        contents: [
-          {
-            parts: [
-              { text: promptText },
-              { inline_data: { mime_type: detectedMime, data: rawBase64 } }
-            ]
-          }
-        ],
-        generationConfig: { response_mime_type: 'application/json' }
-      }
-    },
-    {
-      label: 'gemini-3.5-flash-lite (interactions)',
-      url: 'https://generativelanguage.googleapis.com/v1beta/interactions',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': apiKey,
-        'Api-Revision': '2026-05-20'
-      },
-      body: {
-        model: 'gemini-3.5-flash-lite',
+function buildGeminiAttemptsForModels(models, apiKey, rawBase64, detectedMime, promptText) {
+  const attempts = [];
+  for (const model of models) {
+    if (model === 'gemini-3.8-flash' || model === 'gemini-3.5-flash-lite') {
+      const body = {
+        model,
         input: [
           { type: 'text', text: promptText },
           { type: 'image', data: rawBase64, mime_type: detectedMime }
@@ -362,11 +474,24 @@ async function callGeminiResilientOCR(apiKey, rawBase64, detectedMime, promptTex
           schema: OCR_RESPONSE_SCHEMA
         },
         store: false
-      }
-    },
-    {
-      label: 'gemini-3.5-flash-lite (generateContent)',
-      url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent',
+      };
+      if (model === 'gemini-3.8-flash') body.generation_config = { thinking_level: 'low' };
+      attempts.push({
+        model,
+        label: `${model} (interactions)`,
+        url: 'https://generativelanguage.googleapis.com/v1beta/interactions',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
+          'Api-Revision': '2026-05-20'
+        },
+        body
+      });
+    }
+    attempts.push({
+      model,
+      label: `${model} (generateContent)`,
+      url: `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
       headers: {
         'Content-Type': 'application/json',
         'x-goog-api-key': apiKey
@@ -382,14 +507,14 @@ async function callGeminiResilientOCR(apiKey, rawBase64, detectedMime, promptTex
         ],
         generationConfig: { response_mime_type: 'application/json' }
       }
-    }
-  ];
+    });
+  }
+  return attempts;
+}
 
-  const attempts = profile === 'lite_only'
-    ? liteAttempts
-    : profile === 'flash38_only'
-      ? flash38Attempts
-      : [...flash38Attempts, ...liteAttempts];
+async function callGeminiResilientOCR(apiKey, rawBase64, detectedMime, promptText, profile = 'accurate', preferredGeminiModel = 'gemini-3.1-flash-lite') {
+  const modelsOrder = getOrderedGeminiModels(profile, preferredGeminiModel);
+  const attempts = buildGeminiAttemptsForModels(modelsOrder, apiKey, rawBase64, detectedMime, promptText);
 
   let lastErrorMsg = 'Gemini API থেকে কোনো ফলাফল পাওয়া যায়নি।';
 
@@ -426,6 +551,7 @@ async function callGeminiResilientOCR(apiKey, rawBase64, detectedMime, promptTex
 
       const parsed = parseOcrJsonText(textOutput);
       parsed.ocr_model_used = attempt.label;
+      parsed.ocr_usage = computeScanUsageAndCost(attempt.model, resData);
       return parsed;
     } catch (err) {
       clearTimeout(timer);
@@ -439,7 +565,8 @@ async function callGeminiResilientOCR(apiKey, rawBase64, detectedMime, promptTex
   throw new Error(`OCR ব্যর্থ: ${lastErrorMsg}`);
 }
 
-async function callDeepSeekVisionOCR(deepseekKey, rawBase64, detectedMime, promptText) {
+async function callDeepSeekVisionOCR(deepseekKey, rawBase64, detectedMime, promptText, deepseekModel = 'deepseek-flash') {
+  const targetModel = normalizeModelId(deepseekModel) === 'deepseek-flash' ? 'deepseek-flash' : 'deepseek-flash';
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 30000);
   try {
@@ -450,7 +577,7 @@ async function callDeepSeekVisionOCR(deepseekKey, rawBase64, detectedMime, promp
         'Authorization': `Bearer ${deepseekKey}`
       },
       body: JSON.stringify({
-        model: 'deepseek-flash',
+        model: targetModel,
         messages: [
           {
             role: 'system',
@@ -492,7 +619,8 @@ async function callDeepSeekVisionOCR(deepseekKey, rawBase64, detectedMime, promp
     }
 
     const parsed = parseOcrJsonText(content);
-    parsed.ocr_model_used = 'deepseek-flash (api.deepseek.com)';
+    parsed.ocr_model_used = `${targetModel} (api.deepseek.com)`;
+    parsed.ocr_usage = computeScanUsageAndCost(targetModel, resData);
     return parsed;
   } catch (err) {
     clearTimeout(timer);
@@ -503,7 +631,17 @@ async function callDeepSeekVisionOCR(deepseekKey, rawBase64, detectedMime, promp
   }
 }
 
-async function runMultiProviderOCR({ aiProvider = 'economy', geminiKey = '', deepseekKey = '', rawBase64, detectedMime, promptText }) {
+async function runMultiProviderOCR({
+  aiProvider = 'economy',
+  defaultKeySlot = 'auto',
+  geminiModel = 'gemini-3.1-flash-lite',
+  deepseekModel = 'deepseek-flash',
+  geminiKey = '',
+  deepseekKey = '',
+  rawBase64,
+  detectedMime,
+  promptText
+}) {
   let gKey = String(geminiKey || '').trim();
   let dKey = String(deepseekKey || '').trim();
   if (!dKey && /^sk-/i.test(gKey)) {
@@ -512,37 +650,64 @@ async function runMultiProviderOCR({ aiProvider = 'economy', geminiKey = '', dee
   }
 
   const mode = ['economy', 'auto', 'gemini', 'gemini_lite', 'deepseek'].includes(aiProvider) ? aiProvider : 'economy';
+  const keySlot = ['auto', 'gemini', 'deepseek'].includes(defaultKeySlot) ? defaultKeySlot : 'auto';
+  const prefGemModel = normalizeModelId(geminiModel).startsWith('gemini-') ? normalizeModelId(geminiModel) : 'gemini-3.1-flash-lite';
 
   if (mode === 'deepseek') {
     if (!dKey) throw new Error('DeepSeek API Key সেট করা নেই। সেটিংসে গিয়ে sk-... Key দিন।');
-    return await callDeepSeekVisionOCR(dKey, rawBase64, detectedMime, promptText);
+    return await callDeepSeekVisionOCR(dKey, rawBase64, detectedMime, promptText, deepseekModel);
   }
 
   if (mode === 'gemini_lite') {
     if (!gKey) throw new Error('Gemini API Key সেট করা নেই।');
-    return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'lite_only');
+    return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'lite_only', prefGemModel);
   }
 
   if (mode === 'gemini') {
     if (!gKey) throw new Error('Gemini API Key সেট করা নেই।');
-    return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'accurate');
+    return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'preferred', prefGemModel);
   }
 
   const errors = [];
+  const preferDeepSeekFirst = keySlot === 'deepseek' && Boolean(dKey);
 
-  // Economy mode: cheap & fast 3.1/3.5 Flash-Lite first (~$0.78/1K scans), auto-escalates only if blurry/incomplete
+  if (preferDeepSeekFirst) {
+    try {
+      const dsRes = await callDeepSeekVisionOCR(dKey, rawBase64, detectedMime, promptText, deepseekModel);
+      if (mode === 'auto' || !needsAccurateEscalation(dsRes) || !gKey) return dsRes;
+      try {
+        return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'preferred', prefGemModel);
+      } catch (_) {
+        return dsRes;
+      }
+    } catch (err) {
+      errors.push(`DeepSeek: ${err.message}`);
+    }
+    if (gKey) {
+      try {
+        const gProfile = mode === 'economy' ? 'preferred' : 'accurate';
+        return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, gProfile, prefGemModel);
+      } catch (err) {
+        errors.push(`Gemini: ${err.message}`);
+      }
+    }
+    throw new Error(errors.length ? errors.join(' | ') : 'Gemini বা DeepSeek API Key সেট করা নেই।');
+  }
+
+  // Economy mode: selected default Gemini model (or Flash-Lite) first, auto-escalates only if blurry/incomplete
   if (mode === 'economy') {
     if (gKey) {
       try {
-        const liteRes = await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'lite_only');
-        if (!needsAccurateEscalation(liteRes)) return liteRes;
+        const firstProfile = prefGemModel === 'gemini-3.8-flash' ? 'accurate' : 'lite_only';
+        const primaryRes = await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, firstProfile, prefGemModel);
+        if (!needsAccurateEscalation(primaryRes) || prefGemModel === 'gemini-3.8-flash') return primaryRes;
         try {
-          return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'flash38_only');
+          return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'flash38_only', prefGemModel);
         } catch (escErr) {
           if (dKey) {
-            try { return await callDeepSeekVisionOCR(dKey, rawBase64, detectedMime, promptText); } catch (_) {}
+            try { return await callDeepSeekVisionOCR(dKey, rawBase64, detectedMime, promptText, deepseekModel); } catch (_) {}
           }
-          return liteRes;
+          return primaryRes;
         }
       } catch (err) {
         errors.push(`Gemini: ${err.message}`);
@@ -550,7 +715,7 @@ async function runMultiProviderOCR({ aiProvider = 'economy', geminiKey = '', dee
     }
     if (dKey) {
       try {
-        return await callDeepSeekVisionOCR(dKey, rawBase64, detectedMime, promptText);
+        return await callDeepSeekVisionOCR(dKey, rawBase64, detectedMime, promptText, deepseekModel);
       } catch (err) {
         errors.push(`DeepSeek: ${err.message}`);
       }
@@ -558,17 +723,17 @@ async function runMultiProviderOCR({ aiProvider = 'economy', geminiKey = '', dee
     throw new Error(errors.length ? errors.join(' | ') : 'Gemini বা DeepSeek API Key সেট করা নেই।');
   }
 
-  // Balanced auto mode: Gemini 3.8 Flash primary -> Lite fallback -> DeepSeek failover
+  // Balanced auto mode: Gemini 3.8 Flash primary -> selected model/Lite fallback -> DeepSeek failover
   if (gKey) {
     try {
-      return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'accurate');
+      return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'accurate', prefGemModel);
     } catch (err) {
       errors.push(`Gemini: ${err.message}`);
     }
   }
   if (dKey) {
     try {
-      return await callDeepSeekVisionOCR(dKey, rawBase64, detectedMime, promptText);
+      return await callDeepSeekVisionOCR(dKey, rawBase64, detectedMime, promptText, deepseekModel);
     } catch (err) {
       errors.push(`DeepSeek: ${err.message}`);
     }
@@ -589,13 +754,16 @@ chrome.runtime.onMessage.addListener((req, sender, sendResponse) => {
 async function handleDirectOCR(req) {
   const { imageBase64, mimeType = 'image/jpeg', maritalStatus = 'বিবাহিত', religion = 'ইসলাম', mobileNumber = '', docType = 'auto' } = req;
 
-  const stored = await chrome.storage.sync.get(['aiProvider', 'geminiApiKey', 'deepseekApiKey', 'serverUrl']);
+  const stored = await chrome.storage.sync.get(['aiProvider', 'geminiModel', 'deepseekModel', 'defaultKeySlot', 'geminiApiKey', 'deepseekApiKey', 'serverUrl']);
   const aiProvider = req.aiProvider || stored.aiProvider || 'economy';
+  const geminiModel = req.geminiModel || stored.geminiModel || 'gemini-3.1-flash-lite';
+  const deepseekModel = req.deepseekModel || stored.deepseekModel || 'deepseek-flash';
+  const defaultKeySlot = req.defaultKeySlot || stored.defaultKeySlot || 'auto';
   const apiKey = req.apiKey || stored.geminiApiKey || '';
   const deepseekApiKey = req.deepseekApiKey || stored.deepseekApiKey || '';
 
   if (!apiKey && !deepseekApiKey && stored.serverUrl) {
-    return await forwardToServer(stored.serverUrl, imageBase64, mimeType, maritalStatus, religion, mobileNumber, docType, aiProvider, deepseekApiKey);
+    return await forwardToServer(stored.serverUrl, imageBase64, mimeType, maritalStatus, religion, mobileNumber, docType, aiProvider, deepseekApiKey, geminiModel, deepseekModel, defaultKeySlot);
   }
 
   if (!apiKey && !deepseekApiKey) {
@@ -613,6 +781,9 @@ async function handleDirectOCR(req) {
   const promptText = buildGeminiPrompt(docType);
   const parsedData = await runMultiProviderOCR({
     aiProvider,
+    defaultKeySlot,
+    geminiModel,
+    deepseekModel,
     geminiKey: apiKey,
     deepseekKey: deepseekApiKey,
     rawBase64,
@@ -628,7 +799,7 @@ async function handleDirectOCR(req) {
 }
 
 // Forward to backend server if user has a server configured
-async function forwardToServer(serverUrl, imageBase64, mimeType, maritalStatus, religion, mobileNumber, docType = 'auto', aiProvider = 'auto', deepseekApiKey = '') {
+async function forwardToServer(serverUrl, imageBase64, mimeType, maritalStatus, religion, mobileNumber, docType = 'auto', aiProvider = 'economy', deepseekApiKey = '', geminiModel = 'gemini-3.1-flash-lite', deepseekModel = 'deepseek-flash', defaultKeySlot = 'auto') {
   const url = `${serverUrl.replace(/\/+$/, '')}/api/extract-nid`;
   const response = await fetch(url, {
     method: 'POST',
@@ -641,6 +812,9 @@ async function forwardToServer(serverUrl, imageBase64, mimeType, maritalStatus, 
       mobileNumber,
       docType,
       aiProvider,
+      defaultKeySlot,
+      geminiModel,
+      deepseekModel,
       deepseekApiKey
     })
   });

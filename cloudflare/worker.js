@@ -9,6 +9,170 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization'
 };
 
+const BDT_PER_USD = 122;
+
+const AI_MODEL_CATALOG = {
+  'gemini-3.1-flash-lite': {
+    id: 'gemini-3.1-flash-lite',
+    label: 'Gemini 3.1 Flash-Lite',
+    provider: 'gemini',
+    inputPer1M: 0.25,
+    outputPer1M: 1.50,
+    cacheReadPer1M: 0.025,
+    rpm: '4K',
+    tpm: '4M',
+    rpd: '150K',
+    estPer1kUsd: 0.78
+  },
+  'gemini-3.5-flash-lite': {
+    id: 'gemini-3.5-flash-lite',
+    label: 'Gemini 3.5 Flash-Lite',
+    provider: 'gemini',
+    inputPer1M: 0.30,
+    outputPer1M: 2.50,
+    cacheReadPer1M: 0.03,
+    rpm: '4K',
+    tpm: '4M',
+    rpd: '150K',
+    estPer1kUsd: 1.11
+  },
+  'gemini-3.8-flash': {
+    id: 'gemini-3.8-flash',
+    label: 'Gemini 3.8 Flash',
+    provider: 'gemini',
+    inputPer1M: 0.75,
+    outputPer1M: 3.75,
+    cacheReadPer1M: 0.075,
+    stdInputPer1M: 1.50,
+    stdOutputPer1M: 7.50,
+    stdCacheReadPer1M: 0.15,
+    introUntilUtcMs: Date.UTC(2027, 0, 1),
+    rpm: '1K',
+    tpm: '2M',
+    rpd: '10K',
+    estPer1kUsd: 2.53
+  },
+  'deepseek-flash': {
+    id: 'deepseek-flash',
+    label: 'DeepSeek Flash',
+    provider: 'deepseek',
+    offPeakInPer1M: 0.15,
+    offPeakOutPer1M: 0.60,
+    offPeakCachePer1M: 0.003,
+    peakInPer1M: 0.30,
+    peakOutPer1M: 1.20,
+    peakCachePer1M: 0.006,
+    rpm: 'Pay-as-you-go',
+    tpm: 'Uncapped Tier',
+    rpd: 'Balance-based',
+    estPer1kUsd: 0.38
+  }
+};
+
+function isDeepSeekPeakUtc(nowMs = Date.now()) {
+  const d = new Date(nowMs);
+  const day = d.getUTCDay();
+  if (day < 1 || day > 5) return false;
+  const hour = d.getUTCHours();
+  return (hour >= 1 && hour < 4) || (hour >= 6 && hour < 10);
+}
+
+function normalizeModelId(modelId) {
+  const raw = String(modelId || '').toLowerCase();
+  if (raw.includes('deepseek')) return 'deepseek-flash';
+  if (raw.includes('3.5-flash-lite') || raw.includes('3.5')) return 'gemini-3.5-flash-lite';
+  if (raw.includes('3.8-flash') || raw.includes('3.8')) return 'gemini-3.8-flash';
+  return 'gemini-3.1-flash-lite';
+}
+
+function computeScanUsageAndCost(modelId, rawApiRes = {}, nowMs = Date.now()) {
+  const key = normalizeModelId(modelId);
+  const spec = AI_MODEL_CATALOG[key] || AI_MODEL_CATALOG['gemini-3.1-flash-lite'];
+  let inputTokens = 0;
+  let cachedTokens = 0;
+  let outputTokens = 0;
+  let estimated = false;
+
+  if (spec.provider === 'deepseek') {
+    const u = rawApiRes && rawApiRes.usage;
+    if (u && (u.prompt_tokens != null || u.completion_tokens != null)) {
+      cachedTokens = Number(u.prompt_cache_hit_tokens || 0);
+      inputTokens = Number(u.prompt_tokens || ((u.prompt_cache_miss_tokens || 0) + cachedTokens));
+      outputTokens = Number(u.completion_tokens || 0);
+    } else {
+      estimated = true;
+      inputTokens = 1524;
+      outputTokens = 250;
+    }
+    const peak = isDeepSeekPeakUtc(nowMs);
+    const inRate = peak ? spec.peakInPer1M : spec.offPeakInPer1M;
+    const cacheRate = peak ? spec.peakCachePer1M : spec.offPeakCachePer1M;
+    const outRate = peak ? spec.peakOutPer1M : spec.offPeakOutPer1M;
+    const uncachedIn = Math.max(0, inputTokens - cachedTokens);
+    const costUsd = (uncachedIn * inRate + cachedTokens * cacheRate + outputTokens * outRate) / 1e6;
+    return {
+      model: key,
+      label: spec.label,
+      provider: 'deepseek',
+      tierWindow: peak ? 'peak' : 'off_peak',
+      inputTokens,
+      cachedTokens,
+      uncachedInputTokens: uncachedIn,
+      outputTokens,
+      totalTokens: inputTokens + outputTokens,
+      estimated,
+      inputRatePer1M: inRate,
+      outputRatePer1M: outRate,
+      cacheRatePer1M: cacheRate,
+      estPer1kUsd: peak ? 0.76 : spec.estPer1kUsd,
+      costUsd: Number(costUsd.toFixed(7)),
+      costBdt: Number((costUsd * BDT_PER_USD).toFixed(4))
+    };
+  }
+
+  const um = rawApiRes && rawApiRes.usageMetadata;
+  const iu = rawApiRes && rawApiRes.usage;
+  if (um && (um.promptTokenCount != null || um.candidatesTokenCount != null)) {
+    inputTokens = Number(um.promptTokenCount || 0);
+    cachedTokens = Number(um.cachedContentTokenCount || 0);
+    outputTokens = Number(um.candidatesTokenCount || 0) + Number(um.thoughtsTokenCount || 0);
+  } else if (iu && (iu.total_input_tokens != null || iu.total_output_tokens != null)) {
+    inputTokens = Number(iu.total_input_tokens || 0);
+    cachedTokens = Number(iu.total_cached_tokens || 0);
+    outputTokens = Number(iu.total_output_tokens || 0);
+  } else {
+    estimated = true;
+    inputTokens = 1620;
+    outputTokens = 250;
+  }
+
+  const isIntro38 = key === 'gemini-3.8-flash' && spec.introUntilUtcMs && nowMs < spec.introUntilUtcMs;
+  const inRate = key === 'gemini-3.8-flash' ? (isIntro38 ? spec.inputPer1M : spec.stdInputPer1M) : spec.inputPer1M;
+  const outRate = key === 'gemini-3.8-flash' ? (isIntro38 ? spec.outputPer1M : spec.stdOutputPer1M) : spec.outputPer1M;
+  const cacheRate = key === 'gemini-3.8-flash' ? (isIntro38 ? spec.cacheReadPer1M : spec.stdCacheReadPer1M) : spec.cacheReadPer1M;
+  const uncachedIn = Math.max(0, inputTokens - cachedTokens);
+  const costUsd = (uncachedIn * inRate + cachedTokens * cacheRate + outputTokens * outRate) / 1e6;
+
+  return {
+    model: key,
+    label: spec.label,
+    provider: 'gemini',
+    tierWindow: key === 'gemini-3.8-flash' ? (isIntro38 ? 'intro_2026' : 'standard') : 'tier1',
+    inputTokens,
+    cachedTokens,
+    uncachedInputTokens: uncachedIn,
+    outputTokens,
+    totalTokens: inputTokens + outputTokens,
+    estimated,
+    inputRatePer1M: inRate,
+    outputRatePer1M: outRate,
+    cacheRatePer1M: cacheRate,
+    estPer1kUsd: spec.estPer1kUsd,
+    costUsd: Number(costUsd.toFixed(7)),
+    costBdt: Number((costUsd * BDT_PER_USD).toFixed(4))
+  };
+}
+
 function normalizeDigits(str) {
   if (!str) return '';
   const bn = ['০','১','২','৩','৪','৫','৬','৭','৮','৯'];
@@ -187,6 +351,10 @@ export default {
           gKey = '';
         }
         const aiProvider = ['economy', 'gemini', 'gemini_lite', 'deepseek', 'auto'].includes(body.aiProvider) ? body.aiProvider : 'economy';
+        const keySlot = ['auto', 'gemini', 'deepseek'].includes(body.defaultKeySlot) ? body.defaultKeySlot : 'auto';
+        const prefGemRaw = normalizeModelId(body.geminiModel || 'gemini-3.1-flash-lite');
+        const prefGemModel = prefGemRaw.startsWith('gemini-') ? prefGemRaw : 'gemini-3.1-flash-lite';
+        const prefDsModel = normalizeModelId(body.deepseekModel || 'deepseek-flash') === 'deepseek-flash' ? 'deepseek-flash' : 'deepseek-flash';
 
         if (aiProvider === 'deepseek' && !dKey) {
           return Response.json({ success: false, error: 'DeepSeek API Key প্রয়োজন।' }, { status: 400, headers: CORS_HEADERS });
@@ -224,62 +392,54 @@ export default {
           return d.length !== 10 && d.length !== 13 && d.length !== 17;
         }
 
+        function getWorkerGeminiOrder(profile = 'accurate') {
+          let base;
+          if (profile === 'flash38_only') {
+            base = ['gemini-3.8-flash'];
+          } else if (profile === 'lite_only') {
+            base = prefGemModel === 'gemini-3.5-flash-lite'
+              ? ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite']
+              : ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite'];
+          } else if (profile === 'preferred') {
+            base = [prefGemModel, 'gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini-3.8-flash'];
+          } else {
+            base = ['gemini-3.8-flash', prefGemModel, 'gemini-3.1-flash-lite', 'gemini-3.5-flash-lite'];
+          }
+          return Array.from(new Set(base));
+        }
+
         async function runWorkerGemini(profile = 'accurate') {
-          const flash38 = [
-            {
-              label: 'gemini-3.8-flash (interactions)',
-              url: 'https://generativelanguage.googleapis.com/v1beta/interactions',
-              headers: { 'Content-Type': 'application/json', 'x-goog-api-key': gKey, 'Api-Revision': '2026-05-20' },
-              body: {
-                model: 'gemini-3.8-flash',
-                input: [{ type: 'text', text: promptText }, { type: 'image', data: rawBase64, mime_type: mimeType }],
-                generation_config: { thinking_level: 'low' },
-                response_format: { type: 'text', mime_type: 'application/json', schema: OCR_RESPONSE_SCHEMA },
-                store: false
-              }
-            },
-            {
-              label: 'gemini-3.8-flash (generateContent)',
-              url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent',
-              headers: { 'Content-Type': 'application/json', 'x-goog-api-key': gKey },
-              body: {
-                contents: [{ parts: [{ text: promptText }, { inline_data: { mime_type: mimeType, data: rawBase64 } }] }],
-                generationConfig: { response_mime_type: 'application/json' }
-              }
-            }
-          ];
-          const lite = [
-            {
-              label: 'gemini-3.1-flash-lite (generateContent)',
-              url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent',
-              headers: { 'Content-Type': 'application/json', 'x-goog-api-key': gKey },
-              body: {
-                contents: [{ parts: [{ text: promptText }, { inline_data: { mime_type: mimeType, data: rawBase64 } }] }],
-                generationConfig: { response_mime_type: 'application/json' }
-              }
-            },
-            {
-              label: 'gemini-3.5-flash-lite (interactions)',
-              url: 'https://generativelanguage.googleapis.com/v1beta/interactions',
-              headers: { 'Content-Type': 'application/json', 'x-goog-api-key': gKey, 'Api-Revision': '2026-05-20' },
-              body: {
-                model: 'gemini-3.5-flash-lite',
+          const modelsOrder = getWorkerGeminiOrder(profile);
+          const attempts = [];
+          for (const model of modelsOrder) {
+            if (model === 'gemini-3.8-flash' || model === 'gemini-3.5-flash-lite') {
+              const ibody = {
+                model,
                 input: [{ type: 'text', text: promptText }, { type: 'image', data: rawBase64, mime_type: mimeType }],
                 response_format: { type: 'text', mime_type: 'application/json', schema: OCR_RESPONSE_SCHEMA },
                 store: false
-              }
-            },
-            {
-              label: 'gemini-3.5-flash-lite (generateContent)',
-              url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent',
+              };
+              if (model === 'gemini-3.8-flash') ibody.generation_config = { thinking_level: 'low' };
+              attempts.push({
+                model,
+                label: `${model} (interactions)`,
+                url: 'https://generativelanguage.googleapis.com/v1beta/interactions',
+                headers: { 'Content-Type': 'application/json', 'x-goog-api-key': gKey, 'Api-Revision': '2026-05-20' },
+                body: ibody
+              });
+            }
+            attempts.push({
+              model,
+              label: `${model} (generateContent)`,
+              url: `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
               headers: { 'Content-Type': 'application/json', 'x-goog-api-key': gKey },
               body: {
                 contents: [{ parts: [{ text: promptText }, { inline_data: { mime_type: mimeType, data: rawBase64 } }] }],
                 generationConfig: { response_mime_type: 'application/json' }
               }
-            }
-          ];
-          const attempts = profile === 'lite_only' ? lite : (profile === 'flash38_only' ? flash38 : [...flash38, ...lite]);
+            });
+          }
+
           let lastErr = 'Gemini OCR থেকে উত্তর পাওয়া যায়নি।';
           for (const attempt of attempts) {
             const controller = new AbortController();
@@ -311,6 +471,7 @@ export default {
               if (objMatch) cleaned = objMatch[0];
               const p = JSON.parse(cleaned);
               p.ocr_model_used = attempt.label;
+              p.ocr_usage = computeScanUsageAndCost(attempt.model, gJson);
               return p;
             } catch (e) {
               clearTimeout(timer);
@@ -332,7 +493,7 @@ export default {
                 'Authorization': `Bearer ${dKey}`
               },
               body: JSON.stringify({
-                model: 'deepseek-flash',
+                model: prefDsModel,
                 messages: [
                   {
                     role: 'system',
@@ -366,7 +527,8 @@ export default {
             const objMatch = cleaned.match(/\{[\s\S]*\}/);
             if (objMatch) cleaned = objMatch[0];
             const p = JSON.parse(cleaned);
-            p.ocr_model_used = 'deepseek-flash (api.deepseek.com)';
+            p.ocr_model_used = `${prefDsModel} (api.deepseek.com)`;
+            p.ocr_usage = computeScanUsageAndCost(prefDsModel, dsJson);
             return p;
           } catch (e) {
             clearTimeout(timer);
@@ -381,14 +543,34 @@ export default {
         } else if (aiProvider === 'gemini_lite') {
           parsed = await runWorkerGemini('lite_only');
         } else if (aiProvider === 'gemini') {
-          parsed = await runWorkerGemini('accurate');
+          parsed = await runWorkerGemini('preferred');
+        } else if (keySlot === 'deepseek' && dKey) {
+          const errs = [];
+          try {
+            const dsRes = await runWorkerDeepSeek();
+            if (aiProvider === 'auto' || !needsWorkerEscalation(dsRes) || !gKey) {
+              parsed = dsRes;
+            } else {
+              try { parsed = await runWorkerGemini('preferred'); }
+              catch (_) { parsed = dsRes; }
+            }
+          } catch (e) {
+            if (e.statusCode === 400 && !gKey) throw e;
+            errs.push(e.message);
+          }
+          if (!parsed && gKey) {
+            try { parsed = await runWorkerGemini('preferred'); }
+            catch (e) { errs.push(e.message); }
+          }
+          if (!parsed) throw new Error(errs.join(' | '));
         } else if (aiProvider === 'economy') {
           const errs = [];
           if (gKey) {
             try {
-              const liteRes = await runWorkerGemini('lite_only');
-              if (!needsWorkerEscalation(liteRes)) {
-                parsed = liteRes;
+              const firstProfile = prefGemModel === 'gemini-3.8-flash' ? 'accurate' : 'lite_only';
+              const primaryRes = await runWorkerGemini(firstProfile);
+              if (!needsWorkerEscalation(primaryRes) || prefGemModel === 'gemini-3.8-flash') {
+                parsed = primaryRes;
               } else {
                 try {
                   parsed = await runWorkerGemini('flash38_only');
@@ -396,7 +578,7 @@ export default {
                   if (dKey) {
                     try { parsed = await runWorkerDeepSeek(); } catch (__) {}
                   }
-                  if (!parsed) parsed = liteRes;
+                  if (!parsed) parsed = primaryRes;
                 }
               }
             } catch (e) {
@@ -412,7 +594,9 @@ export default {
         } else {
           const errs = [];
           if (gKey) {
-            try { parsed = await runWorkerGemini('accurate'); }
+            try {
+              parsed = await runWorkerGemini('accurate');
+            }
             catch (e) { if (e.statusCode === 400 && !dKey) throw e; errs.push(e.message); }
           }
           if (!parsed && dKey) {
@@ -431,7 +615,15 @@ export default {
 
     // Health check endpoint
     if (path === '/api/info') {
-      return Response.json({ status: 'online', edge: 'cloudflare-worker', providers: ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini-3.8-flash', 'deepseek-flash'], upstream: ORIGIN_BASE }, { headers: CORS_HEADERS });
+      return Response.json({
+        status: 'online',
+        edge: 'cloudflare-worker',
+        providers: ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini-3.8-flash', 'deepseek-flash'],
+        bdtPerUsd: BDT_PER_USD,
+        deepSeekPeakNow: isDeepSeekPeakUtc(),
+        pricing: AI_MODEL_CATALOG,
+        upstream: ORIGIN_BASE
+      }, { headers: CORS_HEADERS });
     }
 
     // Static & Bookmarklet Assets via global Firebase CDN upstream with full CORS

@@ -150,15 +150,23 @@
     <input type="password" id="deepseekApiKey" placeholder="sk-...">
   </div>
 
-  <div class="section-title">🔄 Cross-Device (অন্য ফোন দিয়ে স্ক্যান)</div>
+  <div class="section-title">🔄 Cross-Device ও রুম মেসেজিং</div>
   <div class="field">
-    <label for="serverUrl">রিলে সার্ভার URL (যদি সার্ভার চালান):</label>
+    <label for="serverUrl">রিলে সার্ভার URL (ঐচ্ছিক, ছাড়াও ক্লাউডে চলে):</label>
     <input type="text" id="serverUrl" value="http://localhost:3000">
   </div>
-
-  <div class="field">
-    <label for="roomCode">পেয়ারিং কোড (Pair Code):</label>
-    <input type="text" id="roomCode" value="FC-101">
+  <div class="row-2">
+    <div class="field">
+      <label for="roomCode">রুম / পেয়ার কোড:</label>
+      <input type="text" id="roomCode" value="FC-101">
+    </div>
+    <div class="field">
+      <label for="deviceName">আমার ডিভাইস নাম:</label>
+      <input type="text" id="deviceName" value="পিসি-এক্সটেনশন" placeholder="পিসি / ট্যাব">
+    </div>
+  </div>
+  <div style="display:flex; gap:6px; margin-bottom:10px;">
+    <button id="btnCopyRoomLink" type="button" class="btn" style="background:#0f766e; font-size:11.5px; padding:7px;">🔗 রুম লিংক কপি (ফোনে খুলুন)</button>
   </div>
 
   <button id="btnSave" class="btn">সেটিংস সংরক্ষণ করুন</button>

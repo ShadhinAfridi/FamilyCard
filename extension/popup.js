@@ -23,6 +23,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const elDeepSeekKey = document.getElementById('deepseekApiKey');
   const elServerUrl = document.getElementById('serverUrl');
   const elRoomCode = document.getElementById('roomCode');
+  const elDeviceName = document.getElementById('deviceName');
+  const btnCopyRoomLink = document.getElementById('btnCopyRoomLink');
   const btnSave = document.getElementById('btnSave');
 
   function updateCostPreview(stats = null) {
@@ -48,7 +50,7 @@ document.addEventListener('DOMContentLoaded', () => {
     elCostCard.innerHTML = `${primaryLine}${spendLine}`;
   }
 
-  chrome.storage.sync.get(['aiProvider', 'defaultKeySlot', 'geminiModel', 'deepseekModel', 'geminiApiKey', 'deepseekApiKey', 'serverUrl', 'roomCode'], (res) => {
+  chrome.storage.sync.get(['aiProvider', 'defaultKeySlot', 'geminiModel', 'deepseekModel', 'geminiApiKey', 'deepseekApiKey', 'serverUrl', 'roomCode', 'deviceName'], (res) => {
     if (res.aiProvider && elProvider) elProvider.value = res.aiProvider;
     if (res.defaultKeySlot && elDefaultKeySlot) elDefaultKeySlot.value = res.defaultKeySlot;
     if (res.geminiModel && elGeminiModel) elGeminiModel.value = res.geminiModel;
@@ -57,6 +59,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (res.deepseekApiKey && elDeepSeekKey) elDeepSeekKey.value = res.deepseekApiKey;
     if (res.serverUrl) elServerUrl.value = res.serverUrl;
     if (res.roomCode) elRoomCode.value = res.roomCode;
+    if (res.deviceName && elDeviceName) elDeviceName.value = res.deviceName;
     chrome.storage.local.get(['fcOcrCostStats'], (loc) => {
       updateCostPreview(loc?.fcOcrCostStats || null);
     });
@@ -66,6 +69,20 @@ document.addEventListener('DOMContentLoaded', () => {
     if (el) el.addEventListener('change', () => updateCostPreview());
   });
 
+  if (btnCopyRoomLink) {
+    btnCopyRoomLink.addEventListener('click', async () => {
+      const r = (elRoomCode.value.trim() || 'FC-101').toUpperCase().replace(/[^A-Z0-9_-]/g, '') || 'FC-101';
+      const link = `https://familycard.afridi.app/?room=${encodeURIComponent(r)}`;
+      try {
+        await navigator.clipboard.writeText(link);
+        btnCopyRoomLink.textContent = '✅ রুম লিংক কপি হয়েছে!';
+      } catch (_) {
+        btnCopyRoomLink.textContent = link;
+      }
+      setTimeout(() => { btnCopyRoomLink.textContent = '🔗 রুম লিংক কপি (ফোনে খুলুন)'; }, 1800);
+    });
+  }
+
   btnSave.addEventListener('click', () => {
     const aiProvider = elProvider ? elProvider.value : 'economy';
     const defaultKeySlot = elDefaultKeySlot ? elDefaultKeySlot.value : 'auto';
@@ -74,9 +91,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const geminiApiKey = elApiKey.value.trim();
     const deepseekApiKey = elDeepSeekKey ? elDeepSeekKey.value.trim() : '';
     const serverUrl = elServerUrl.value.trim() || 'http://localhost:3000';
-    const roomCode = (elRoomCode.value.trim() || 'FC-101').toUpperCase();
+    const roomCode = ((elRoomCode.value.trim() || 'FC-101').toUpperCase().replace(/[^A-Z0-9_-]/g, '') || 'FC-101');
+    const deviceName = (elDeviceName ? elDeviceName.value.trim() : '') || 'পিসি-এক্সটেনশন';
 
-    chrome.storage.sync.set({ aiProvider, defaultKeySlot, geminiModel, deepseekModel, geminiApiKey, deepseekApiKey, serverUrl, roomCode }, () => {
+    chrome.storage.sync.set({ aiProvider, defaultKeySlot, geminiModel, deepseekModel, geminiApiKey, deepseekApiKey, serverUrl, roomCode, deviceName }, () => {
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         if (tabs[0]) {
           chrome.tabs.sendMessage(tabs[0].id, {
@@ -88,7 +106,8 @@ document.addEventListener('DOMContentLoaded', () => {
             geminiApiKey,
             deepseekApiKey,
             serverUrl,
-            roomCode
+            roomCode,
+            deviceName
           }, () => {
             if (chrome.runtime.lastError) {}
           });

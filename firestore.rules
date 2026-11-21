@@ -10,6 +10,16 @@ service cloud.firestore {
         allow read, write: if true;
       }
     }
+
+    // Cross-device room messaging & live NID/summary data sharing channels
+    match /room_channels/{roomCode} {
+      allow read, write: if true;
+
+      match /messages/{messageId} {
+        allow read, write: if true;
+      }
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

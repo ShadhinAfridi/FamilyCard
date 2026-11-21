@@ -16,6 +16,8 @@ let selectedFileBase64 = null;
 
 const elStatus = document.getElementById('connectionStatus');
 const elRoomCode = document.getElementById('roomCode');
+const elDeviceName = document.getElementById('deviceName');
+const elBtnCopyRoomLink = document.getElementById('btnCopyRoomLink');
 const elProvider = document.getElementById('aiProvider');
 const elDefaultKeySlot = document.getElementById('defaultKeySlot');
 const elGeminiModel = document.getElementById('geminiModel');
@@ -26,6 +28,52 @@ const elDeepSeekKey = document.getElementById('deepseekApiKey');
 const elBtnSaveDefaults = document.getElementById('btnSaveDefaults');
 const elSaveDefaultsMsg = document.getElementById('saveDefaultsMsg');
 const btnConnect = document.getElementById('btnConnect');
+
+const elChatRoomLabel = document.getElementById('chatRoomLabel');
+const elChatUnreadBadge = document.getElementById('chatUnreadBadge');
+const elRoomChatFeed = document.getElementById('roomChatFeed');
+const elChatMsgInput = document.getElementById('chatMsgInput');
+const elBtnChatSend = document.getElementById('btnChatSend');
+const elBtnChatRefresh = document.getElementById('btnChatRefresh');
+const elBtnChatClear = document.getElementById('btnChatClear');
+const elBtnChatShareLastNid = document.getElementById('btnChatShareLastNid');
+const elBtnShareResultRoom = document.getElementById('btnShareResultRoom');
+const elChatReplyBar = document.getElementById('chatReplyBar');
+const elChatReplyText = document.getElementById('chatReplyText');
+const elBtnChatCancelReply = document.getElementById('btnChatCancelReply');
+
+const FIRESTORE_ROOMS_BASE = 'https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/room_channels';
+const EDGE_ROOM_API = 'https://familycard-10n.pages.dev/api/room-messages';
+const MY_CLIENT_ID = localStorage.getItem('fc_client_id') || (() => {
+  const id = 'web_' + Math.random().toString(36).slice(2, 10);
+  localStorage.setItem('fc_client_id', id);
+  return id;
+})();
+
+let lastExtractedNid = null;
+const roomMsgMap = new Map();
+let lastRoomMetaSig = '';
+let lastClearedAtMs = 0;
+let pendingReplyMsg = null;
+let roomPollTimer = null;
+
+function normalizeRoomCode(room) {
+  const clean = String(room || 'FC-101').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 32);
+  return clean || 'FC-101';
+}
+
+function escapeHtml(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function getDeviceName() {
+  return (elDeviceName && elDeviceName.value.trim()) || localStorage.getItem('fc_device_name') || 'মোবাইল-স্ক্যানার';
+}
 
 const BDT_PER_USD = 122;
 const MODEL_PRICING = {
@@ -121,10 +169,26 @@ const loadingMsg = document.getElementById('loadingMsg');
 const resultCard = document.getElementById('resultCard');
 const btnDismissResult = document.getElementById('btnDismissResult');
 
-// Load saved room code, model defaults & API keys from localStorage
-if (localStorage.getItem('fc_room_code')) {
-  elRoomCode.value = localStorage.getItem('fc_room_code');
+// Load saved room code (with ?room= URL override), device name, model defaults & API keys
+try {
+  const urlRoom = new URLSearchParams(window.location.search).get('room');
+  if (urlRoom) {
+    const cleanUrlRoom = normalizeRoomCode(urlRoom);
+    elRoomCode.value = cleanUrlRoom;
+    localStorage.setItem('fc_room_code', cleanUrlRoom);
+  } else if (localStorage.getItem('fc_room_code')) {
+    elRoomCode.value = normalizeRoomCode(localStorage.getItem('fc_room_code'));
+  }
+} catch (_) {
+  if (localStorage.getItem('fc_room_code')) elRoomCode.value = localStorage.getItem('fc_room_code');
 }
+if (elDeviceName) {
+  elDeviceName.value = localStorage.getItem('fc_device_name') || 'মোবাইল-স্ক্যানার';
+  elDeviceName.addEventListener('change', () => {
+    localStorage.setItem('fc_device_name', elDeviceName.value.trim() || 'মোবাইল-স্ক্যানার');
+  });
+}
+if (elChatRoomLabel) elChatRoomLabel.textContent = normalizeRoomCode(elRoomCode.value);
 if (localStorage.getItem('fc_ai_provider') && elProvider) {
   elProvider.value = localStorage.getItem('fc_ai_provider');
 }
@@ -151,58 +215,394 @@ if (elBtnSaveDefaults) {
 }
 renderCostPreview();
 
-// Initialize Socket.io connection
-function initSocket() {
-  socket = io();
-
-  socket.on('connect', () => {
-    updateStatus(true);
-    joinCurrentRoom();
-  });
-
-  socket.on('disconnect', () => {
-    updateStatus(false);
-  });
-
-  socket.on('room-joined', (data) => {
-    console.log('Joined room:', data.room);
-  });
-
-  socket.on('ocr-status', (payload) => {
-    if (payload.status === 'processing') {
-      showLoading(true, payload.message || 'Gemini AI দ্বারা NID বিশ্লেষণ করা হচ্ছে...');
-    } else if (payload.status === 'completed') {
-      showLoading(false);
-      displayResults(payload.data);
-    } else if (payload.status === 'error') {
-      showLoading(false);
-      alert('OCR ত্রুটি: ' + (payload.error || 'অজানা সমস্যা'));
+function renderRoomChat() {
+  if (!elRoomChatFeed) return;
+  const msgs = Array.from(roomMsgMap.values()).filter(m => m.ts > lastClearedAtMs).sort((a, b) => a.ts - b.ts);
+  if (msgs.length === 0) {
+    elRoomChatFeed.innerHTML = '<div style="text-align:center; color:#64748b; font-size:0.8rem; padding:18px 8px;">এখনো কোনো মেসেজ নেই। নিচে লিখে বা NID স্ক্যান শেয়ার করুন!</div>';
+    return;
+  }
+  elRoomChatFeed.innerHTML = msgs.map((m) => {
+    const isMine = m.senderId === MY_CLIENT_ID;
+    const cls = m.type === 'nid_data' ? 'nid' : (m.type === 'summary' ? 'summary' : (isMine ? 'mine' : ''));
+    const timeStr = new Date(m.ts).toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' });
+    let bodyHtml = '';
+    if (m.replyTo && m.replyTo.preview) {
+      bodyHtml += `<div style="font-size:0.73rem; color:#4338ca; background:#eef2ff; padding:3px 6px; border-left:2px solid #4f46e5; border-radius:4px; margin-bottom:4px;">↩️ <b>${escapeHtml(m.replyTo.senderName || '')}:</b> ${escapeHtml(m.replyTo.preview)}</div>`;
     }
-  });
+    if (m.type === 'nid_data' && m.payload) {
+      const p = m.payload;
+      bodyHtml += `
+        <div style="font-weight:700; color:#0f766e;">🪪 ${escapeHtml(p.name_bn || p.name_en || 'NID/BRC কার্ড')}</div>
+        <div style="font-size:0.78rem; color:#334155;">নম্বর: <b>${escapeHtml(p.doc_number || p.nid_number || p.birth_reg_no || '-')}</b> • জন্ম: ${escapeHtml(p.dob || '-')}${p.mobile_number ? ` • 📱 ${escapeHtml(p.mobile_number)}` : ''}</div>
+      `;
+    } else if (m.type === 'summary' && m.payload) {
+      const s = m.payload;
+      bodyHtml += `<div style="font-weight:700; color:#1e40af;">📊 সারসংক্ষেপ (${escapeHtml(s.familyId || '-')}) • প্রস্তুতি ${escapeHtml(String(s.readinessPct ?? '-'))}%</div><div style="font-size:0.78rem; white-space:pre-wrap; margin-top:2px;">${escapeHtml(m.text)}</div>`;
+    } else {
+      bodyHtml += `<div style="white-space:pre-wrap;">${escapeHtml(m.text)}</div>`;
+    }
+    const actionBtns = [];
+    if (m.type === 'nid_data' && m.payload) {
+      actionBtns.push(`<button type="button" class="chat-chip-btn primary" data-act="preview" data-mid="${escapeHtml(m.id)}">👁️ দেখুন</button>`);
+    }
+    actionBtns.push(`<button type="button" class="chat-chip-btn" data-act="copy" data-mid="${escapeHtml(m.id)}">📋 কপি</button>`);
+    actionBtns.push(`<button type="button" class="chat-chip-btn" data-act="reply" data-mid="${escapeHtml(m.id)}">↩️</button>`);
+    return `
+      <div class="chat-bubble ${cls}">
+        <div class="chat-meta">
+          <b>${isMine ? 'আমি' : escapeHtml(m.senderName || 'ডিভাইস')} (${escapeHtml(m.senderClient || '')})</b>
+          <span>${escapeHtml(timeStr)}</span>
+        </div>
+        ${bodyHtml}
+        <div class="chat-actions">${actionBtns.join('')}</div>
+      </div>
+    `;
+  }).join('');
+  elRoomChatFeed.scrollTop = elRoomChatFeed.scrollHeight;
 }
 
-function updateStatus(connected) {
+function handleIncomingRoomMessage(rawMsg) {
+  if (!rawMsg || !rawMsg.id) return;
+  const ts = Number(rawMsg.ts || 0);
+  if (ts <= lastClearedAtMs) return;
+  const existed = roomMsgMap.has(rawMsg.id);
+  roomMsgMap.set(rawMsg.id, rawMsg);
+  if (!existed) {
+    renderRoomChat();
+    if (rawMsg.senderId !== MY_CLIENT_ID && elChatUnreadBadge) {
+      const cur = Number(elChatUnreadBadge.dataset.count || 0) + 1;
+      elChatUnreadBadge.dataset.count = String(cur);
+      elChatUnreadBadge.textContent = String(cur);
+      elChatUnreadBadge.style.display = 'inline-block';
+      setTimeout(() => {
+        elChatUnreadBadge.dataset.count = '0';
+        elChatUnreadBadge.style.display = 'none';
+      }, 6000);
+    }
+  }
+}
+
+async function fetchCloudRoomMessages(forceFull = false) {
+  if (document.hidden) return;
+  const room = normalizeRoomCode(elRoomCode.value);
+  try {
+    const metaRes = await fetch(`${FIRESTORE_ROOMS_BASE}/${encodeURIComponent(room)}?t=${Date.now()}`);
+    if (metaRes.ok) {
+      const metaJson = await metaRes.json().catch(() => ({}));
+      const mf = metaJson?.fields || {};
+      const clearedAt = Number(mf.cleared_at_ms?.integerValue || 0);
+      const lastId = mf.last_msg_id?.stringValue || '';
+      const sig = `${room}|${lastId}|${clearedAt}`;
+      if (clearedAt > lastClearedAtMs) {
+        lastClearedAtMs = clearedAt;
+        for (const [k, v] of roomMsgMap.entries()) {
+          if (v.ts <= lastClearedAtMs) roomMsgMap.delete(k);
+        }
+        renderRoomChat();
+      }
+      if (!forceFull && sig === lastRoomMetaSig) return;
+      lastRoomMetaSig = sig;
+      const listRes = await fetch(`${FIRESTORE_ROOMS_BASE}/${encodeURIComponent(room)}/messages?pageSize=60`);
+      if (listRes.ok) {
+        const lj = await listRes.json().catch(() => ({}));
+        const docs = Array.isArray(lj.documents) ? lj.documents : [];
+        let changed = false;
+        docs.forEach((d) => {
+          const f = d.fields || {};
+          const msgTs = Number(f.ts?.integerValue || f.ts?.doubleValue || 0);
+          if (msgTs <= lastClearedAtMs) return;
+          const id = f.id?.stringValue || d.name?.split('/').pop();
+          if (!id || roomMsgMap.has(id)) return;
+          let payload = null;
+          try { if (f.payloadJson?.stringValue) payload = JSON.parse(f.payloadJson.stringValue); } catch (_) {}
+          let replyTo = null;
+          try { if (f.replyToJson?.stringValue) replyTo = JSON.parse(f.replyToJson.stringValue); } catch (_) {}
+          roomMsgMap.set(id, {
+            id,
+            room,
+            type: f.type?.stringValue || 'text',
+            text: f.text?.stringValue || '',
+            payload,
+            replyTo,
+            senderName: f.senderName?.stringValue || 'ডিভাইস',
+            senderClient: f.senderClient?.stringValue || '',
+            senderId: f.senderId?.stringValue || '',
+            ts: msgTs
+          });
+          changed = true;
+        });
+        if (changed) renderRoomChat();
+        updateStatus(true, socket && socket.connected ? 'সার্ভার + ক্লাউড' : 'ক্লাউড রুম সক্রিয়');
+        return;
+      }
+    }
+  } catch (_) {}
+  try {
+    const er = await fetch(`${EDGE_ROOM_API}?room=${encodeURIComponent(room)}&t=${Date.now()}`);
+    if (er.ok) {
+      const ej = await er.json();
+      if (ej && Array.isArray(ej.messages)) {
+        ej.messages.forEach(handleIncomingRoomMessage);
+        updateStatus(true, 'এজ রুম সক্রিয়');
+      }
+    }
+  } catch (_) {}
+}
+
+async function sendRoomMessage({ type = 'text', text = '', payload = null } = {}) {
+  const room = normalizeRoomCode(elRoomCode.value);
+  const ts = Date.now();
+  const id = `m_${String(ts).padStart(14, '0')}_${Math.random().toString(36).slice(2, 7)}`;
+  const msg = {
+    id,
+    room,
+    type,
+    text: String(text || '').trim(),
+    payload,
+    senderName: getDeviceName(),
+    senderClient: 'companion',
+    senderId: MY_CLIENT_ID,
+    replyTo: pendingReplyMsg,
+    ts,
+    createdAt: new Date(ts).toISOString()
+  };
+  pendingReplyMsg = null;
+  if (elChatReplyBar) elChatReplyBar.style.display = 'none';
+  handleIncomingRoomMessage(msg);
+
+  if (socket && socket.connected) {
+    socket.emit('room-message', msg);
+  }
+  try {
+    const fields = {
+      id: { stringValue: msg.id },
+      room: { stringValue: msg.room },
+      type: { stringValue: msg.type },
+      text: { stringValue: msg.text || '' },
+      payloadJson: { stringValue: msg.payload ? JSON.stringify(msg.payload) : '' },
+      senderName: { stringValue: msg.senderName },
+      senderClient: { stringValue: msg.senderClient },
+      senderId: { stringValue: msg.senderId },
+      replyToJson: { stringValue: msg.replyTo ? JSON.stringify(msg.replyTo) : '' },
+      ts: { integerValue: String(msg.ts) },
+      createdAt: { stringValue: msg.createdAt }
+    };
+    const r1 = await fetch(`${FIRESTORE_ROOMS_BASE}/${encodeURIComponent(msg.room)}/messages/${encodeURIComponent(msg.id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields })
+    });
+    const preview = (msg.text || (msg.payload?.name_bn || msg.payload?.doc_number || 'ডেটা')).slice(0, 120);
+    const metaFields = {
+      room: { stringValue: msg.room },
+      last_msg_id: { stringValue: msg.id },
+      last_sender: { stringValue: msg.senderName },
+      last_preview: { stringValue: preview },
+      updated_at: { timestampValue: new Date().toISOString() }
+    };
+    const mask = Object.keys(metaFields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
+    await fetch(`${FIRESTORE_ROOMS_BASE}/${encodeURIComponent(msg.room)}?${mask}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields: metaFields })
+    });
+    if (r1.ok) return true;
+  } catch (_) {}
+
+  await fetch(EDGE_ROOM_API, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(msg)
+  }).catch(() => {});
+  return true;
+}
+
+// Initialize Socket.io connection when running under local Express relay (graceful no-op on HTTPS static CDNs)
+function initSocket() {
+  if (typeof io === 'undefined') {
+    updateStatus(true, 'ক্লাউড রুম সক্রিয়');
+    return;
+  }
+  try {
+    socket = io();
+
+    socket.on('connect', () => {
+      updateStatus(true, 'সার্ভার + ক্লাউড');
+      joinCurrentRoom();
+    });
+
+    socket.on('disconnect', () => {
+      updateStatus(true, 'ক্লাউড রুম সক্রিয়');
+    });
+
+    socket.on('room-joined', (data) => {
+      if (data && Array.isArray(data.history)) {
+        data.history.forEach(handleIncomingRoomMessage);
+      }
+    });
+
+    socket.on('room-message', (msg) => {
+      handleIncomingRoomMessage(msg);
+    });
+
+    socket.on('room-cleared', (info) => {
+      lastClearedAtMs = Number(info?.ts || Date.now());
+      roomMsgMap.clear();
+      renderRoomChat();
+    });
+
+    socket.on('ocr-status', (payload) => {
+      if (payload.status === 'processing') {
+        showLoading(true, payload.message || 'AI ডকুমেন্ট বিশ্লেষণ করা হচ্ছে...');
+      } else if (payload.status === 'completed') {
+        showLoading(false);
+        displayResults(payload.data);
+      } else if (payload.status === 'error') {
+        showLoading(false);
+        alert('OCR ত্রুটি: ' + (payload.error || 'অজানা সমস্যা'));
+      }
+    });
+  } catch (_) {
+    updateStatus(true, 'ক্লাউড রুম সক্রিয়');
+  }
+}
+
+function updateStatus(connected, labelText) {
   if (connected) {
     elStatus.className = 'status-pill status-connected';
-    elStatus.querySelector('.label').textContent = 'সংযুক্ত';
+    elStatus.querySelector('.label').textContent = labelText || 'সংযুক্ত';
   } else {
     elStatus.className = 'status-pill status-disconnected';
-    elStatus.querySelector('.label').textContent = 'বিচ্ছিন্ন';
+    elStatus.querySelector('.label').textContent = labelText || 'বিচ্ছিন্ন';
   }
 }
 
 function joinCurrentRoom() {
-  const room = (elRoomCode.value || 'FC-101').trim().toUpperCase();
+  const room = normalizeRoomCode(elRoomCode.value);
+  elRoomCode.value = room;
   localStorage.setItem('fc_room_code', room);
+  if (elChatRoomLabel) elChatRoomLabel.textContent = room;
+  roomMsgMap.clear();
+  lastRoomMetaSig = '';
+  lastClearedAtMs = 0;
+  renderRoomChat();
   if (socket && socket.connected) {
-    socket.emit('join-room', room);
+    socket.emit('join-room', { room, clientName: getDeviceName(), clientType: 'companion' });
   }
+  fetchCloudRoomMessages(true);
 }
 
 btnConnect.addEventListener('click', () => {
   joinCurrentRoom();
-  alert(`পিসির সাথে রুম [${elRoomCode.value.trim().toUpperCase()}] পেয়ার করা হয়েছে!`);
 });
+
+if (elBtnCopyRoomLink) {
+  elBtnCopyRoomLink.addEventListener('click', async () => {
+    const room = normalizeRoomCode(elRoomCode.value);
+    const url = `${window.location.origin}/?room=${encodeURIComponent(room)}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      elBtnCopyRoomLink.textContent = '✅ লিংক কপি হয়েছে!';
+    } catch (_) {
+      prompt('এই রুম লিংকটি কপি করুন:', url);
+    }
+    setTimeout(() => { elBtnCopyRoomLink.textContent = '📋 রুম লিংক কপি'; }, 1800);
+  });
+}
+
+if (elBtnChatSend && elChatMsgInput) {
+  const submitMsg = () => {
+    const val = elChatMsgInput.value.trim();
+    if (!val) return;
+    elChatMsgInput.value = '';
+    sendRoomMessage({ type: 'text', text: val });
+  };
+  elBtnChatSend.addEventListener('click', submitMsg);
+  elChatMsgInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitMsg(); }
+  });
+}
+if (elBtnChatRefresh) elBtnChatRefresh.addEventListener('click', () => fetchCloudRoomMessages(true));
+if (elBtnChatClear) {
+  elBtnChatClear.addEventListener('click', async () => {
+    const room = normalizeRoomCode(elRoomCode.value);
+    if (!confirm(`রুম "${room}"-এর সব মেসেজ মুছে ফেলবেন?`)) return;
+    lastClearedAtMs = Date.now();
+    roomMsgMap.clear();
+    renderRoomChat();
+    if (socket && socket.connected) socket.emit('clear-room-messages', { room });
+    await fetch(`${EDGE_ROOM_API}?room=${encodeURIComponent(room)}`, { method: 'DELETE' }).catch(() => {});
+  });
+}
+if (elBtnChatCancelReply) {
+  elBtnChatCancelReply.addEventListener('click', () => {
+    pendingReplyMsg = null;
+    if (elChatReplyBar) elChatReplyBar.style.display = 'none';
+  });
+}
+if (elBtnChatShareLastNid) {
+  elBtnChatShareLastNid.addEventListener('click', () => {
+    if (!lastExtractedNid) {
+      alert('আগে একটি NID / জন্ম নিবন্ধন স্ক্যান করুন।');
+      return;
+    }
+    sendRoomMessage({
+      type: 'nid_data',
+      text: `🪪 ${lastExtractedNid.name_bn || lastExtractedNid.name_en || ''} (${lastExtractedNid.doc_number || lastExtractedNid.nid_number || ''})`,
+      payload: lastExtractedNid
+    });
+  });
+}
+if (elBtnShareResultRoom) {
+  elBtnShareResultRoom.addEventListener('click', () => {
+    if (!lastExtractedNid) return;
+    sendRoomMessage({
+      type: 'nid_data',
+      text: `🪪 ${lastExtractedNid.name_bn || lastExtractedNid.name_en || ''} (${lastExtractedNid.doc_number || lastExtractedNid.nid_number || ''})`,
+      payload: lastExtractedNid
+    });
+    elBtnShareResultRoom.textContent = '✅ শেয়ার হয়েছে!';
+    setTimeout(() => { elBtnShareResultRoom.textContent = '💬 রুমে শেয়ার'; }, 1600);
+  });
+}
+document.querySelectorAll('[data-quick-msg]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const txt = btn.getAttribute('data-quick-msg');
+    if (txt) sendRoomMessage({ type: 'text', text: txt });
+  });
+});
+if (elRoomChatFeed) {
+  elRoomChatFeed.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-act]');
+    if (!btn) return;
+    const mid = btn.getAttribute('data-mid');
+    const act = btn.getAttribute('data-act');
+    const msg = roomMsgMap.get(mid);
+    if (!msg) return;
+    if (act === 'preview' && msg.payload) {
+      displayResults(msg.payload);
+    } else if (act === 'reply') {
+      pendingReplyMsg = {
+        id: msg.id,
+        senderName: msg.senderName || 'ডিভাইস',
+        preview: (msg.text || msg.payload?.name_bn || 'ডেটা').slice(0, 80)
+      };
+      if (elChatReplyText) elChatReplyText.textContent = `↩️ ${pendingReplyMsg.senderName}: ${pendingReplyMsg.preview}`;
+      if (elChatReplyBar) elChatReplyBar.style.display = 'flex';
+      if (elChatMsgInput) elChatMsgInput.focus();
+    } else if (act === 'copy') {
+      const txt = msg.type === 'nid_data' && msg.payload
+        ? `${msg.payload.name_bn || ''}\n${msg.payload.name_en || ''}\nNID/BRC: ${msg.payload.doc_number || msg.payload.nid_number || ''}\nDOB: ${msg.payload.dob || ''}`
+        : (msg.text || '');
+      try {
+        await navigator.clipboard.writeText(txt);
+        btn.textContent = '✅';
+        setTimeout(() => { btn.textContent = '📋 কপি'; }, 1200);
+      } catch (_) {}
+    }
+  });
+}
 
 elApiKey.addEventListener('change', () => {
   localStorage.setItem('fc_gemini_api_key', elApiKey.value.trim());
@@ -353,6 +753,7 @@ btnCapture.addEventListener('click', async () => {
     socket.emit('scan-nid', {
       image: base64Data,
       room: room,
+      senderName: getDeviceName(),
       apiKey: apiKey,
       deepseekApiKey: deepseekApiKey,
       aiProvider: aiProvider,
@@ -397,6 +798,11 @@ btnCapture.addEventListener('click', async () => {
       showLoading(false);
       if (data.success) {
         displayResults(data.data);
+        sendRoomMessage({
+          type: 'nid_data',
+          text: `🪪 স্ক্যান: ${data.data.name_bn || data.data.name_en || ''} (${data.data.doc_number || data.data.nid_number || data.data.birth_reg_no || ''})`,
+          payload: data.data
+        });
       } else {
         alert('ত্রুটি: ' + data.error);
       }
@@ -420,6 +826,7 @@ function showLoading(show, message) {
 
 function displayResults(data) {
   if (!data) return;
+  lastExtractedNid = data;
   resultCard.style.display = 'block';
 
   const resDocType = document.getElementById('resDocType');
@@ -489,4 +896,6 @@ btnDismissResult.addEventListener('click', () => {
 
 // Boot up
 initSocket();
+fetchCloudRoomMessages(true);
+roomPollTimer = setInterval(() => fetchCloudRoomMessages(false), 3000);
 startCamera();

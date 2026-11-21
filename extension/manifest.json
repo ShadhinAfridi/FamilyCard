@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Family Card NID AI Auto-Filler",
-  "version": "1.7.0",
-  "description": "AI OCR Scanner (Gemini 3.1/3.5/3.8 + DeepSeek Vision Cost Tracker) & Auto-Filler for Family Card Portal (fc.bhata.gov.bd)",
+  "version": "1.8.0",
+  "description": "AI OCR Scanner (Gemini + DeepSeek Cost Tracker), Section 3-9 Defaults & Cross-Device Room Messenger for fc.bhata.gov.bd",
   "permissions": [
     "storage",
     "activeTab"

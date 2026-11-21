@@ -7,9 +7,53 @@ const ORIGIN_BASE = 'https://binary-ict.web.app';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization'
 };
+
+const FIRESTORE_ROOMS_BASE = 'https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/room_channels';
+
+function normalizeWorkerRoomCode(room) {
+  const clean = String(room || 'FC-101').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 32);
+  return clean || 'FC-101';
+}
+
+function makeWorkerRoomMsgId(ts = Date.now()) {
+  const rand = Math.random().toString(36).slice(2, 7);
+  return \`m_\${String(ts).padStart(14, '0')}_\${rand}\`;
+}
+
+function normalizeWorkerRoomMsg(raw = {}, fallbackRoom = 'FC-101') {
+  const ts = Number(raw.ts) > 0 ? Number(raw.ts) : Date.now();
+  const room = normalizeWorkerRoomCode(raw.room || fallbackRoom);
+  const type = ['text', 'nid_data', 'summary', 'system'].includes(raw.type) ? raw.type : 'text';
+  const id = String(raw.id || makeWorkerRoomMsgId(ts)).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64) || makeWorkerRoomMsgId(ts);
+  let payload = raw.payload || null;
+  if (!payload && raw.payloadJson && typeof raw.payloadJson === 'string') {
+    try { payload = JSON.parse(raw.payloadJson); } catch (_) { payload = null; }
+  }
+  let replyTo = raw.replyTo || null;
+  if (!replyTo && raw.replyToJson && typeof raw.replyToJson === 'string') {
+    try { replyTo = JSON.parse(raw.replyToJson); } catch (_) { replyTo = null; }
+  }
+  return {
+    id,
+    room,
+    type,
+    text: String(raw.text || '').slice(0, 4000),
+    payload: payload && typeof payload === 'object' ? payload : null,
+    senderName: String(raw.senderName || 'অজানা ডিভাইস').slice(0, 60),
+    senderClient: String(raw.senderClient || 'web').slice(0, 30),
+    senderId: String(raw.senderId || '').slice(0, 64),
+    replyTo: replyTo && typeof replyTo === 'object' ? {
+      id: String(replyTo.id || ''),
+      senderName: String(replyTo.senderName || ''),
+      preview: String(replyTo.preview || '').slice(0, 120)
+    } : null,
+    ts,
+    createdAt: raw.createdAt || new Date(ts).toISOString()
+  };
+}
 
 const BDT_PER_USD = 122;
 
@@ -615,6 +659,118 @@ export default {
       }
     }
 
+    // Edge API: Cross-Device Room Messaging & Data Sharing (/api/room-messages)
+    if (path === '/api/room-messages') {
+      try {
+        if (request.method === 'GET') {
+          const room = normalizeWorkerRoomCode(url.searchParams.get('room'));
+          const since = Number(url.searchParams.get('since') || 0);
+          const metaOnly = url.searchParams.get('metaOnly') === '1';
+          const metaRes = await fetch(\`\${FIRESTORE_ROOMS_BASE}/\${encodeURIComponent(room)}\`);
+          const metaJson = metaRes.ok ? await metaRes.json().catch(() => ({})) : {};
+          const mf = metaJson?.fields || {};
+          const clearedAtMs = Number(mf.cleared_at_ms?.integerValue || 0);
+          const meta = {
+            room,
+            last_msg_id: mf.last_msg_id?.stringValue || '',
+            last_sender: mf.last_sender?.stringValue || '',
+            last_preview: mf.last_preview?.stringValue || '',
+            cleared_at_ms: clearedAtMs
+          };
+          if (metaOnly) {
+            return Response.json({ success: true, room, meta }, { headers: CORS_HEADERS });
+          }
+          const listRes = await fetch(\`\${FIRESTORE_ROOMS_BASE}/\${encodeURIComponent(room)}/messages?pageSize=60\`);
+          const listJson = listRes.ok ? await listRes.json().catch(() => ({})) : {};
+          const docs = Array.isArray(listJson.documents) ? listJson.documents : [];
+          let messages = docs.map((d) => {
+            const f = d.fields || {};
+            return normalizeWorkerRoomMsg({
+              id: f.id?.stringValue || d.name?.split('/').pop(),
+              room: f.room?.stringValue || room,
+              type: f.type?.stringValue || 'text',
+              text: f.text?.stringValue || '',
+              payloadJson: f.payloadJson?.stringValue || '',
+              senderName: f.senderName?.stringValue || '',
+              senderClient: f.senderClient?.stringValue || '',
+              senderId: f.senderId?.stringValue || '',
+              replyToJson: f.replyToJson?.stringValue || '',
+              ts: Number(f.ts?.integerValue || f.ts?.doubleValue || 0),
+              createdAt: f.createdAt?.stringValue || ''
+            }, room);
+          }).filter((m) => m.ts > clearedAtMs && (since <= 0 || m.ts > since)).sort((a, b) => a.ts - b.ts);
+          return Response.json({ success: true, room, meta, messages }, { headers: CORS_HEADERS });
+        }
+
+        if (request.method === 'POST') {
+          const body = await request.json();
+          const room = normalizeWorkerRoomCode(body.room || url.searchParams.get('room'));
+          const msg = normalizeWorkerRoomMsg(body, room);
+          const fields = {
+            id: { stringValue: msg.id },
+            room: { stringValue: msg.room },
+            type: { stringValue: msg.type },
+            text: { stringValue: msg.text || '' },
+            payloadJson: { stringValue: msg.payload ? JSON.stringify(msg.payload) : '' },
+            senderName: { stringValue: msg.senderName || '' },
+            senderClient: { stringValue: msg.senderClient || '' },
+            senderId: { stringValue: msg.senderId || '' },
+            replyToJson: { stringValue: msg.replyTo ? JSON.stringify(msg.replyTo) : '' },
+            ts: { integerValue: String(msg.ts) },
+            createdAt: { stringValue: msg.createdAt }
+          };
+          const writeRes = await fetch(\`\${FIRESTORE_ROOMS_BASE}/\${encodeURIComponent(msg.room)}/messages/\${encodeURIComponent(msg.id)}\`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fields })
+          });
+          if (!writeRes.ok) {
+            const errTxt = await writeRes.text().catch(() => '');
+            return Response.json({ success: false, error: \`Room store error (\${writeRes.status}): \${errTxt}\` }, { status: 502, headers: CORS_HEADERS });
+          }
+          const preview = (msg.text || (msg.type === 'nid_data' ? (msg.payload?.name_bn || msg.payload?.doc_number || 'NID ডেটা') : 'বার্তা')).slice(0, 120);
+          const metaFields = {
+            room: { stringValue: msg.room },
+            last_msg_id: { stringValue: msg.id },
+            last_sender: { stringValue: msg.senderName || '' },
+            last_preview: { stringValue: preview },
+            updated_at: { timestampValue: new Date().toISOString() }
+          };
+          const metaMask = Object.keys(metaFields).map(k => \`updateMask.fieldPaths=\${encodeURIComponent(k)}\`).join('&');
+          await fetch(\`\${FIRESTORE_ROOMS_BASE}/\${encodeURIComponent(msg.room)}?\${metaMask}\`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fields: metaFields })
+          });
+          return Response.json({ success: true, room: msg.room, message: msg }, { headers: CORS_HEADERS });
+        }
+
+        if (request.method === 'DELETE') {
+          const room = normalizeWorkerRoomCode(url.searchParams.get('room'));
+          const clearedAt = Date.now();
+          const metaFields = {
+            room: { stringValue: room },
+            last_msg_id: { stringValue: '' },
+            cleared_at_ms: { integerValue: String(clearedAt) },
+            updated_at: { timestampValue: new Date().toISOString() }
+          };
+          const metaMask = Object.keys(metaFields).map(k => \`updateMask.fieldPaths=\${encodeURIComponent(k)}\`).join('&');
+          await fetch(\`\${FIRESTORE_ROOMS_BASE}/\${encodeURIComponent(room)}?\${metaMask}\`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fields: metaFields })
+          });
+          const listRes = await fetch(\`\${FIRESTORE_ROOMS_BASE}/\${encodeURIComponent(room)}/messages?pageSize=60\`);
+          const listJson = listRes.ok ? await listRes.json().catch(() => ({})) : {};
+          const docs = Array.isArray(listJson.documents) ? listJson.documents : [];
+          await Promise.all(docs.slice(0, 40).map((d) => fetch(\`https://firestore.googleapis.com/v1/\${d.name}\`, { method: 'DELETE' }).catch(() => null)));
+          return Response.json({ success: true, room, cleared: docs.length, clearedAt }, { headers: CORS_HEADERS });
+        }
+      } catch (err) {
+        return Response.json({ success: false, error: err.message }, { status: 500, headers: CORS_HEADERS });
+      }
+    }
+
     // Health check endpoint
     if (path === '/api/info') {
       return Response.json({
@@ -624,6 +780,7 @@ export default {
         bdtPerUsd: BDT_PER_USD,
         deepSeekPeakNow: isDeepSeekPeakUtc(),
         pricing: AI_MODEL_CATALOG,
+        features: ['room_messaging', 'cloud_room_sync', 'nid_data_share', 'summary_share'],
         upstream: ORIGIN_BASE
       }, { headers: CORS_HEADERS });
     }

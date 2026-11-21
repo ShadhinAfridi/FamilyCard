@@ -35,7 +35,8 @@
 
   let socket = null;
   let serverUrl = 'http://localhost:3000';
-  let roomCode = 'FC-101';
+  let roomCode = (localStorage.getItem('fc_room_code') || 'FC-101').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '') || 'FC-101';
+  let myDeviceName = localStorage.getItem('fc_device_name') || 'পিসি-এক্সটেনশন';
   let geminiApiKey = '';
   let deepseekApiKey = '';
   let aiProvider = localStorage.getItem('fc_ai_provider') || 'economy';
@@ -43,6 +44,7 @@
   let geminiModel = localStorage.getItem('fc_gemini_model') || 'gemini-3.1-flash-lite';
   let deepseekModel = localStorage.getItem('fc_deepseek_model') || 'deepseek-flash';
   let lastExtractedData = null;
+  window.__fcLastScannedAny = null;
   let activeScanTarget = { type: 'applicant', card: null, index: 'self' };
   let activeMediaStream = null;
   let savedPostcode = localStorage.getItem('fc_default_postcode') || '7721';
@@ -103,9 +105,10 @@
 
   // Retrieve saved settings
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
-    chrome.storage.sync.get(['serverUrl', 'roomCode', 'geminiApiKey', 'deepseekApiKey', 'aiProvider', 'defaultKeySlot', 'geminiModel', 'deepseekModel'], (res) => {
+    chrome.storage.sync.get(['serverUrl', 'roomCode', 'deviceName', 'geminiApiKey', 'deepseekApiKey', 'aiProvider', 'defaultKeySlot', 'geminiModel', 'deepseekModel'], (res) => {
       if (res.serverUrl) serverUrl = res.serverUrl;
-      if (res.roomCode) roomCode = res.roomCode.toUpperCase();
+      if (res.roomCode) roomCode = res.roomCode.toUpperCase().replace(/[^A-Z0-9_-]/g, '') || 'FC-101';
+      if (res.deviceName) myDeviceName = res.deviceName;
       if (res.geminiApiKey) geminiApiKey = res.geminiApiKey;
       if (res.deepseekApiKey) deepseekApiKey = res.deepseekApiKey;
       if (res.aiProvider) aiProvider = res.aiProvider;
@@ -131,6 +134,9 @@
       <div class="fc-fab-row">
         <div id="fc-summary-btn" title="পূর্ণাঙ্গ ফ্যামিলি কার্ড সারসংক্ষেপ দেখুন">
           <span>📊 সারসংক্ষেপ (0%)</span>
+        </div>
+        <div id="fc-chat-btn" title="একই রুমের অন্য ডিভাইসের সাথে মেসেজ ও NID শেয়ার করুন">
+          <span>💬 মেসেজ</span><span id="fc-chat-badge" style="display:none;">0</span>
         </div>
         <div id="fc-fab-scan-btn" title="ট্যাবলেটের ক্যামেরা দিয়ে সরাসরি স্ক্যান করুন">
           <span>📸 NID স্ক্যান</span>
@@ -211,6 +217,7 @@
     const closeBtn = document.getElementById('fc-close-card');
     const fabBtn = document.getElementById('fc-fab-scan-btn');
     const summaryBtn = document.getElementById('fc-summary-btn');
+    const chatBtn = document.getElementById('fc-chat-btn');
     const directScanBtn = document.getElementById('fc-btn-direct-scan');
 
     badge.addEventListener('click', () => card.classList.toggle('hidden'));
@@ -220,6 +227,7 @@
     });
 
     if (summaryBtn) summaryBtn.addEventListener('click', openSummaryModal);
+    if (chatBtn) chatBtn.addEventListener('click', openChatModal);
 
     fabBtn.addEventListener('click', () => {
       const tab6 = document.querySelector('[data-family-card-tab="6"]');
@@ -1143,6 +1151,7 @@
 
       if (response && response.success && response.data) {
         const data = response.data;
+        window.__fcLastScannedAny = data;
         const warnings = Array.isArray(data.ocr_warnings) ? data.ocr_warnings : [];
         if (data.ocr_usage) {
           recordScanCostUsage(data.ocr_usage);
@@ -1237,11 +1246,528 @@
     });
   }
 
+  // --- Cross-Device Room Messaging & Cloud/Socket Bridge ---
+  const ROOM_FIRESTORE_BASE = 'https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/room_channels';
+  const ROOM_EDGE_API = 'https://familycard-10n.pages.dev/api/room-messages';
+  function normalizeRoomCode(r) {
+    const clean = String(r || 'FC-101').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 32);
+    return clean || 'FC-101';
+  }
+  const myClientId = localStorage.getItem('fc_client_id') || (() => {
+    const id = 'ext_' + Math.random().toString(36).slice(2, 10);
+    localStorage.setItem('fc_client_id', id);
+    return id;
+  })();
+  let roomAutoFillEnabled = localStorage.getItem('fc_room_autofill') === '1';
+  const roomMsgMap = new Map();
+  let lastRoomMetaSig = '';
+  let lastRoomClearedMs = 0;
+  let roomUnreadCount = 0;
+  let pendingReplyMsg = null;
+  let roomBootstrapped = false;
+
+  function updateChatBadge() {
+    const badge = document.getElementById('fc-chat-badge');
+    if (!badge) return;
+    if (roomUnreadCount > 0) {
+      badge.textContent = toBnDigits(roomUnreadCount);
+      badge.style.display = 'inline-block';
+    } else {
+      badge.style.display = 'none';
+    }
+  }
+
+  function ensureChatModal() {
+    let cm = document.getElementById('fc-chat-modal');
+    if (cm) return cm;
+    cm = document.createElement('div');
+    cm.id = 'fc-chat-modal';
+    cm.style.cssText = 'position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(15,23,42,0.68); backdrop-filter:blur(2px); z-index:2147483645; display:none; align-items:center; justify-content:center; padding:12px; box-sizing:border-box; font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;';
+    cm.innerHTML = `
+      <div style="background:#fff; width:100%; max-width:500px; border-radius:16px; overflow:hidden; box-shadow:0 20px 40px rgba(0,0,0,0.35); display:flex; flex-direction:column; max-height:90vh;">
+        <div style="background:linear-gradient(135deg, #4f46e5, #3730a3); color:#fff; padding:12px 16px; display:flex; justify-content:space-between; align-items:center;">
+          <h3 style="margin:0; font-size:15px; font-weight:700;">💬 রুম মেসেঞ্জার ও ডাটা শেয়ার</h3>
+          <span id="fc-chat-close-btn" style="cursor:pointer; font-size:20px; font-weight:bold;">&times;</span>
+        </div>
+        <div style="padding:12px; display:flex; flex-direction:column; gap:8px; overflow-y:auto;">
+          <div style="background:#f8fafc; border:1px solid #cbd5e1; border-radius:10px; padding:8px; display:flex; flex-direction:column; gap:6px;">
+            <div style="display:flex; gap:8px;">
+              <div style="flex:1; display:flex; flex-direction:column; gap:3px;">
+                <label for="fc-chat-room-input" style="font-size:11px; font-weight:700; color:#334155;">🔗 রুম কোড:</label>
+                <input type="text" id="fc-chat-room-input" value="${escapeHtml(roomCode)}" maxlength="20" style="padding:6px 8px; border:1px solid #cbd5e1; border-radius:6px; font-size:12px; font-weight:700; text-transform:uppercase;">
+              </div>
+              <div style="flex:1; display:flex; flex-direction:column; gap:3px;">
+                <label for="fc-chat-device-name" style="font-size:11px; font-weight:700; color:#334155;">📱 আমার নাম:</label>
+                <input type="text" id="fc-chat-device-name" value="${escapeHtml(myDeviceName)}" maxlength="32" style="padding:6px 8px; border:1px solid #cbd5e1; border-radius:6px; font-size:12px;">
+              </div>
+            </div>
+            <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
+              <button type="button" id="fc-chat-room-join" class="fc-chat-chip primary">✅ রুম সেভ/যোগ</button>
+              <button type="button" id="fc-chat-room-link" class="fc-chat-chip accent">🔗 ফোনের লিংক কপি</button>
+              <label style="font-size:11px; font-weight:700; color:#334155; display:inline-flex; align-items:center; gap:4px; margin:0; cursor:pointer;">
+                <input type="checkbox" id="fc-chat-room-autofill" style="width:auto;" ${roomAutoFillEnabled ? 'checked' : ''}> ⚡ NID এলে অটো-ফিল
+              </label>
+              <button type="button" id="fc-chat-refresh" class="fc-chat-chip" title="রিফ্রেশ">🔄</button>
+              <button type="button" id="fc-chat-clear" class="fc-chat-chip" title="মুছুন">🗑️</button>
+            </div>
+            <div id="fc-chat-status" style="font-size:10.5px; color:#0f766e; font-weight:700;">☁️ ক্লাউড রুম সক্রিয় (${escapeHtml(roomCode)})</div>
+          </div>
+
+          <div id="fc-chat-feed" class="fc-chat-feed">
+            <div style="text-align:center; color:#64748b; padding:22px 8px;">লোড হচ্ছে...</div>
+          </div>
+
+          <div id="fc-chat-reply-bar" style="display:none; align-items:center; justify-content:space-between; background:#eef2ff; border-left:3px solid #4f46e5; padding:4px 8px; border-radius:6px; font-size:11px;">
+            <span id="fc-chat-reply-txt"></span>
+            <button type="button" id="fc-chat-reply-cancel" style="border:none; background:none; font-weight:bold; cursor:pointer;">✕</button>
+          </div>
+
+          <div style="display:flex; flex-wrap:wrap; gap:5px;">
+            <button type="button" id="fc-chat-share-nid" class="fc-chat-chip primary">🪪 শেষ স্ক্যান পাঠান</button>
+            <button type="button" id="fc-chat-share-sum" class="fc-chat-chip accent">📊 সারসংক্ষেপ</button>
+            <button type="button" class="fc-chat-chip" data-ext-qmsg="✅ কাজ সম্পন্ন">✅ সম্পন্ন</button>
+            <button type="button" class="fc-chat-chip" data-ext-qmsg="মোবাইল নম্বর পাঠান 📱">📱 নম্বর দিন</button>
+          </div>
+
+          <div style="display:flex; gap:6px;">
+            <input type="text" id="fc-chat-input" placeholder="মেসেজ, মোবাইল নম্বর বা তথ্য লিখুন..." style="flex:1; padding:8px 10px; border:1.5px solid #cbd5e1; border-radius:8px; font-size:12.5px;">
+            <button type="button" id="fc-chat-send" style="background:#4f46e5; color:#fff; border:none; border-radius:8px; padding:8px 14px; font-weight:700; font-size:12.5px; cursor:pointer;">📤</button>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(cm);
+
+    cm.querySelector('#fc-chat-close-btn').onclick = () => { cm.style.display = 'none'; };
+    cm.onclick = (e) => { if (e.target === cm) cm.style.display = 'none'; };
+
+    const inpRoom = cm.querySelector('#fc-chat-room-input');
+    const inpName = cm.querySelector('#fc-chat-device-name');
+    const chkAuto = cm.querySelector('#fc-chat-room-autofill');
+
+    cm.querySelector('#fc-chat-room-join').onclick = () => {
+      const nextRoom = normalizeRoomCode(inpRoom.value);
+      inpRoom.value = nextRoom;
+      myDeviceName = inpName.value.trim() || 'পিসি-এক্সটেনশন';
+      localStorage.setItem('fc_device_name', myDeviceName);
+      if (nextRoom !== roomCode) {
+        roomCode = nextRoom;
+        localStorage.setItem('fc_room_code', roomCode);
+        const roomEl = document.getElementById('fc-ui-room');
+        if (roomEl) roomEl.textContent = roomCode;
+        if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
+          chrome.storage.sync.set({ roomCode, deviceName: myDeviceName });
+        }
+        roomMsgMap.clear();
+        lastRoomMetaSig = '';
+        lastRoomClearedMs = 0;
+        roomBootstrapped = false;
+        renderChatFeed();
+        if (socket && socket.connected) {
+          socket.emit('join-room', { room: roomCode, clientName: myDeviceName, clientType: 'extension' });
+        }
+      }
+      cm.querySelector('#fc-chat-status').textContent = `${socket && socket.connected ? '🟢 সার্ভার + ক্লাউড' : '☁️ ক্লাউড রুম'} সক্রিয় (${roomCode})`;
+      fetchRoomMessages(true);
+      showToast(`🔗 রুম "${roomCode}"-এ যুক্ত হয়েছেন!`);
+    };
+
+    cm.querySelector('#fc-chat-room-link').onclick = async () => {
+      const r = normalizeRoomCode(inpRoom.value);
+      const url = `https://familycard.afridi.app/?room=${encodeURIComponent(r)}`;
+      try {
+        await navigator.clipboard.writeText(url);
+        showToast('🔗 ফোনের রুম লিংক কপি হয়েছে — অন্য ফোনে খুলুন!');
+      } catch (_) {
+        prompt('এই রুম লিংকটি অন্য ডিভাইসে খুলুন:', url);
+      }
+    };
+
+    if (chkAuto) {
+      chkAuto.onchange = () => {
+        roomAutoFillEnabled = chkAuto.checked;
+        localStorage.setItem('fc_room_autofill', roomAutoFillEnabled ? '1' : '0');
+      };
+    }
+
+    cm.querySelector('#fc-chat-refresh').onclick = () => fetchRoomMessages(true);
+    cm.querySelector('#fc-chat-clear').onclick = async () => {
+      if (!confirm(`রুম "${roomCode}"-এর সব মেসেজ মুছবেন?`)) return;
+      lastRoomClearedMs = Date.now();
+      roomMsgMap.clear();
+      renderChatFeed();
+      if (socket && socket.connected) socket.emit('clear-room-messages', { room: roomCode });
+      await fetch(`${ROOM_EDGE_API}?room=${encodeURIComponent(roomCode)}`, { method: 'DELETE' }).catch(() => {});
+      showToast(`🗑️ রুম "${roomCode}" চ্যাট ক্লিয়ার হয়েছে`);
+    };
+
+    cm.querySelector('#fc-chat-reply-cancel').onclick = () => {
+      pendingReplyMsg = null;
+      cm.querySelector('#fc-chat-reply-bar').style.display = 'none';
+    };
+
+    cm.querySelector('#fc-chat-share-nid').onclick = () => {
+      let d = window.__fcLastScannedAny || lastExtractedData;
+      if (!d) {
+        const s = collectFullFamilyCardSummary();
+        if (s.applicant && (s.applicant.nameBn || s.applicant.nid)) {
+          d = {
+            doc_type: 'nid',
+            doc_number: s.applicant.nid || '',
+            nid_number: s.applicant.nid || '',
+            name_bn: s.applicant.nameBn || '',
+            mobile_number: s.applicant.mobile || '',
+            family_id: s.familyId || ''
+          };
+        }
+      }
+      if (!d) {
+        showToast('⚠️ শেয়ার করার মতো স্ক্যান করা NID পাওয়া যায়নি।');
+        return;
+      }
+      sendRoomMessage({
+        type: 'nid_data',
+        text: `🪪 ${d.name_bn || d.name_en || ''} (${d.doc_number || d.nid_number || d.birth_reg_no || ''})`,
+        payload: d
+      });
+    };
+
+    cm.querySelector('#fc-chat-share-sum').onclick = () => {
+      const s = collectFullFamilyCardSummary();
+      const txt = buildBanglaSummaryReportText(s);
+      sendRoomMessage({
+        type: 'summary',
+        text: txt,
+        payload: { familyId: s.familyId, readinessPct: s.readinessPct, memberCount: s.members.length }
+      });
+    };
+
+    cm.querySelectorAll('[data-ext-qmsg]').forEach((b) => {
+      b.onclick = () => sendRoomMessage({ type: 'text', text: b.getAttribute('data-ext-qmsg') });
+    });
+
+    const msgInp = cm.querySelector('#fc-chat-input');
+    const submitChat = () => {
+      const txt = msgInp.value.trim();
+      if (!txt) return;
+      msgInp.value = '';
+      sendRoomMessage({ type: 'text', text: txt });
+    };
+    cm.querySelector('#fc-chat-send').onclick = submitChat;
+    msgInp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitChat(); }
+    });
+
+    cm.querySelector('#fc-chat-feed').addEventListener('click', async (e) => {
+      const btn = e.target.closest('[data-chat-act]');
+      if (!btn) return;
+      const act = btn.getAttribute('data-chat-act');
+      const mid = btn.getAttribute('data-mid');
+      const msg = roomMsgMap.get(mid);
+      if (!msg) return;
+
+      if (act === 'fill-applicant' && msg.payload) {
+        lastExtractedData = msg.payload;
+        window.__fcStep1FilledKey = '';
+        updateWidgetPreview(msg.payload);
+        cm.style.display = 'none';
+        await fillFormFields(msg.payload);
+        showToast(`⚡ রুম থেকে "${msg.payload.name_bn || msg.payload.doc_number}" আবেদনকারী ফর্মে পূরণ হয়েছে!`);
+      } else if (act === 'fill-member' && msg.payload) {
+        cm.style.display = 'none';
+        const cards = Array.from(document.querySelectorAll('.fm-members-stack .fm-member-card, [data-family-card-tab="6"] .fm-member-card'));
+        let targetCard = cards.find(c => {
+          const isSelf = c.classList.contains('fm-member-card--self') || (c.textContent.includes('সদস্য - ১') && c.textContent.includes('নিজ'));
+          if (isSelf) return false;
+          const hasName = c.querySelector('input:not([disabled])')?.value;
+          return !hasName && c.dataset.fcMemberAutoFilled !== 'true';
+        });
+        if (!targetCard) {
+          triggerPortalAddMember();
+          await new Promise(r => setTimeout(r, 450));
+          const updated = Array.from(document.querySelectorAll('.fm-members-stack .fm-member-card, [data-family-card-tab="6"] .fm-member-card'));
+          targetCard = updated[updated.length - 1];
+        }
+        if (targetCard) {
+          await fillMemberCard(targetCard, msg.payload);
+          handleSection5AndCrossMatch();
+          showToast(`✅ সদস্য "${msg.payload.name_bn || msg.payload.doc_number}" কার্ডে পূরণ হয়েছে!`);
+        } else {
+          showToast('⚠️ সেকশন ৮ (সদস্য ট্যাব) খুলুন এবং আবার চেষ্টা করুন।');
+        }
+      } else if (act === 'fill-mobile') {
+        const mob = btn.getAttribute('data-val') || '';
+        const modalMob = document.getElementById('fc-modal-mobile');
+        if (modalMob) modalMob.value = mob;
+        const tab1 = document.querySelector('[data-family-card-tab="1"]');
+        const mobInp = findInputByLabelText(['মোবাইল নম্বর'], tab1) || findInputByLabelText(['মোবাইল নম্বর']) || document.getElementById('input-1294') || document.getElementById('input-250');
+        if (mobInp) setReactiveValue(mobInp, mob);
+        showToast(`📱 মোবাইল ${mob} ফর্মে বসানো হয়েছে!`);
+      } else if (act === 'copy') {
+        const copyVal = btn.getAttribute('data-val') || (msg.type === 'nid_data' && msg.payload
+          ? `${msg.payload.name_bn || ''}\n${msg.payload.name_en || ''}\nNID/BRC: ${msg.payload.doc_number || msg.payload.nid_number || ''}\nDOB: ${msg.payload.dob || ''}`
+          : (msg.text || ''));
+        try {
+          await navigator.clipboard.writeText(copyVal);
+          showToast('📋 ক্লিপবোর্ডে কপি হয়েছে!');
+        } catch (_) {}
+      } else if (act === 'reply') {
+        pendingReplyMsg = {
+          id: msg.id,
+          senderName: msg.senderName || 'ডিভাইস',
+          preview: (msg.text || msg.payload?.name_bn || 'ডেটা').slice(0, 80)
+        };
+        const rBar = cm.querySelector('#fc-chat-reply-bar');
+        const rTxt = cm.querySelector('#fc-chat-reply-txt');
+        if (rTxt) rTxt.textContent = `↩️ ${pendingReplyMsg.senderName}: ${pendingReplyMsg.preview}`;
+        if (rBar) rBar.style.display = 'flex';
+        msgInp.focus();
+      }
+    });
+
+    return cm;
+  }
+
+  function renderChatFeed() {
+    const feed = document.getElementById('fc-chat-feed');
+    if (!feed) return;
+    const msgs = Array.from(roomMsgMap.values()).filter(m => m.ts > lastRoomClearedMs).sort((a, b) => a.ts - b.ts);
+    if (msgs.length === 0) {
+      feed.innerHTML = `<div style="text-align:center; color:#64748b; padding:22px 8px;">রুম <b>${escapeHtml(roomCode)}</b>-এ এখনো কোনো মেসেজ নেই।</div>`;
+      return;
+    }
+    feed.innerHTML = msgs.map((m) => {
+      const isMine = m.senderId === myClientId;
+      const cls = m.type === 'nid_data' ? 'nid' : (m.type === 'summary' ? 'summary' : (isMine ? 'mine' : ''));
+      const timeStr = new Date(m.ts).toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' });
+      let inner = '';
+      if (m.replyTo && m.replyTo.preview) {
+        inner += `<div style="font-size:10.5px; color:#4338ca; background:#eef2ff; padding:3px 6px; border-left:2px solid #4f46e5; border-radius:4px; margin-bottom:4px;">↩️ <b>${escapeHtml(m.replyTo.senderName || '')}:</b> ${escapeHtml(m.replyTo.preview)}</div>`;
+      }
+      const acts = [];
+      if (m.type === 'nid_data' && m.payload) {
+        const p = m.payload;
+        inner += `
+          <div style="font-weight:800; color:#0f766e;">🪪 ${escapeHtml(p.name_bn || p.name_en || 'NID/BRC কার্ড')}</div>
+          <div style="font-size:11px; color:#334155;">নম্বর: <b>${escapeHtml(p.doc_number || p.nid_number || p.birth_reg_no || '-')}</b> • জন্ম: ${escapeHtml(p.dob || '-')}${p.mobile_number ? ` • 📱 ${escapeHtml(p.mobile_number)}` : ''}</div>
+          ${p.father_name_bn || p.spouse_name_bn ? `<div style="font-size:10.5px; color:#475569;">${p.spouse_name_bn ? `স্বামী/স্ত্রী: ${escapeHtml(p.spouse_name_bn)}` : `পিতা: ${escapeHtml(p.father_name_bn)}`} • মাতা: ${escapeHtml(p.mother_name_bn || '-')}</div>` : ''}
+        `;
+        acts.push(`<button type="button" class="fc-chat-chip primary" data-chat-act="fill-applicant" data-mid="${escapeHtml(m.id)}">⚡ আবেদনকারী</button>`);
+        acts.push(`<button type="button" class="fc-chat-chip accent" data-chat-act="fill-member" data-mid="${escapeHtml(m.id)}">👨‍👩‍👧 সদস্য কার্ড</button>`);
+      } else if (m.type === 'summary') {
+        inner += `<div style="font-weight:800; color:#1e40af;">📊 ফ্যামিলি কার্ড সারসংক্ষেপ</div><div style="font-size:11px; white-space:pre-wrap; margin-top:2px;">${escapeHtml(m.text)}</div>`;
+      } else {
+        inner += `<div style="white-space:pre-wrap;">${escapeHtml(m.text)}</div>`;
+        const mobMatch = normalizeDigits(m.text).match(/(?:\+?88)?(01[3-9]\d{8})/);
+        if (mobMatch) {
+          acts.push(`<button type="button" class="fc-chat-chip primary" data-chat-act="fill-mobile" data-val="${escapeHtml(mobMatch[1])}" data-mid="${escapeHtml(m.id)}">📱 মোবাইল বসাও (${escapeHtml(mobMatch[1])})</button>`);
+        }
+        const idMatch = normalizeDigits(m.text).match(/\b(\d{10}|\d{13}|\d{17})\b/);
+        if (idMatch) {
+          acts.push(`<button type="button" class="fc-chat-chip accent" data-chat-act="copy" data-val="${escapeHtml(idMatch[1])}" data-mid="${escapeHtml(m.id)}">📋 আইডি (${escapeHtml(idMatch[1])})</button>`);
+        }
+      }
+      acts.push(`<button type="button" class="fc-chat-chip" data-chat-act="copy" data-mid="${escapeHtml(m.id)}">📋 কপি</button>`);
+      acts.push(`<button type="button" class="fc-chat-chip" data-chat-act="reply" data-mid="${escapeHtml(m.id)}">↩️</button>`);
+      return `
+        <div class="fc-chat-bubble ${cls}">
+          <div style="display:flex; justify-content:space-between; font-size:10px; color:#64748b; margin-bottom:3px; gap:8px;">
+            <b>${isMine ? 'আমি' : escapeHtml(m.senderName || 'ডিভাইস')} (${escapeHtml(m.senderClient || '')})</b>
+            <span>${escapeHtml(timeStr)}</span>
+          </div>
+          ${inner}
+          <div style="display:flex; flex-wrap:wrap; gap:4px; margin-top:5px;">${acts.join('')}</div>
+        </div>
+      `;
+    }).join('');
+    feed.scrollTop = feed.scrollHeight;
+  }
+
+  function processIncomingRoomMsg(msg, isBootstrap) {
+    if (!msg || !msg.id) return false;
+    const ts = Number(msg.ts || 0);
+    if (ts <= lastRoomClearedMs) return false;
+    const isNew = !roomMsgMap.has(msg.id);
+    roomMsgMap.set(msg.id, msg);
+    if (isNew && !isBootstrap && msg.senderId !== myClientId) {
+      const chatModal = document.getElementById('fc-chat-modal');
+      const isOpen = chatModal && chatModal.style.display === 'flex';
+      if (!isOpen) {
+        roomUnreadCount += 1;
+        updateChatBadge();
+        showToast(`💬 ${msg.senderName || 'ডিভাইস'}: ${(msg.text || msg.payload?.name_bn || 'নতুন বার্তা').slice(0, 60)}`);
+      }
+      if (roomAutoFillEnabled && msg.type === 'nid_data' && msg.payload) {
+        lastExtractedData = msg.payload;
+        window.__fcStep1FilledKey = '';
+        updateWidgetPreview(msg.payload);
+        fillFormFields(msg.payload);
+      }
+    }
+    return isNew;
+  }
+
+  async function fetchRoomMessages(forceFull = false) {
+    if (document.hidden) return;
+    try {
+      const metaRes = await fetch(`${ROOM_FIRESTORE_BASE}/${encodeURIComponent(roomCode)}?t=${Date.now()}`);
+      if (metaRes.ok) {
+        const mj = await metaRes.json().catch(() => ({}));
+        const mf = mj?.fields || {};
+        const clearedAt = Number(mf.cleared_at_ms?.integerValue || 0);
+        const lastId = mf.last_msg_id?.stringValue || '';
+        const sig = `${roomCode}|${lastId}|${clearedAt}`;
+        if (clearedAt > lastRoomClearedMs) {
+          lastRoomClearedMs = clearedAt;
+          for (const [k, v] of roomMsgMap.entries()) {
+            if (v.ts <= lastRoomClearedMs) roomMsgMap.delete(k);
+          }
+          renderChatFeed();
+        }
+        if (!forceFull && sig === lastRoomMetaSig && roomBootstrapped) return;
+        lastRoomMetaSig = sig;
+        const listRes = await fetch(`${ROOM_FIRESTORE_BASE}/${encodeURIComponent(roomCode)}/messages?pageSize=60`);
+        if (listRes.ok) {
+          const lj = await listRes.json().catch(() => ({}));
+          const docs = Array.isArray(lj.documents) ? lj.documents : [];
+          let anyNew = false;
+          docs.forEach((d) => {
+            const f = d.fields || {};
+            const id = f.id?.stringValue || d.name?.split('/').pop();
+            let payload = null;
+            try { if (f.payloadJson?.stringValue) payload = JSON.parse(f.payloadJson.stringValue); } catch (_) {}
+            let replyTo = null;
+            try { if (f.replyToJson?.stringValue) replyTo = JSON.parse(f.replyToJson.stringValue); } catch (_) {}
+            const added = processIncomingRoomMsg({
+              id,
+              room: roomCode,
+              type: f.type?.stringValue || 'text',
+              text: f.text?.stringValue || '',
+              payload,
+              replyTo,
+              senderName: f.senderName?.stringValue || 'ডিভাইস',
+              senderClient: f.senderClient?.stringValue || '',
+              senderId: f.senderId?.stringValue || '',
+              ts: Number(f.ts?.integerValue || f.ts?.doubleValue || 0)
+            }, !roomBootstrapped);
+            if (added) anyNew = true;
+          });
+          roomBootstrapped = true;
+          if (anyNew) renderChatFeed();
+          return;
+        }
+      }
+    } catch (_) {}
+    try {
+      const er = await fetch(`${ROOM_EDGE_API}?room=${encodeURIComponent(roomCode)}&t=${Date.now()}`);
+      if (er.ok) {
+        const ej = await er.json();
+        if (ej && Array.isArray(ej.messages)) {
+          let anyNew = false;
+          ej.messages.forEach(m => { if (processIncomingRoomMsg(m, !roomBootstrapped)) anyNew = true; });
+          roomBootstrapped = true;
+          if (anyNew) renderChatFeed();
+        }
+      }
+    } catch (_) {}
+  }
+
+  async function sendRoomMessage({ type = 'text', text = '', payload = null } = {}) {
+    const ts = Date.now();
+    const id = `m_${String(ts).padStart(14, '0')}_${Math.random().toString(36).slice(2, 7)}`;
+    const msg = {
+      id,
+      room: roomCode,
+      type,
+      text: String(text || '').trim(),
+      payload,
+      senderName: myDeviceName,
+      senderClient: 'extension',
+      senderId: myClientId,
+      replyTo: pendingReplyMsg,
+      ts,
+      createdAt: new Date(ts).toISOString()
+    };
+    pendingReplyMsg = null;
+    const rBar = document.getElementById('fc-chat-reply-bar');
+    if (rBar) rBar.style.display = 'none';
+    roomMsgMap.set(msg.id, msg);
+    renderChatFeed();
+
+    if (socket && socket.connected) {
+      socket.emit('room-message', msg);
+    }
+
+    try {
+      const fields = {
+        id: { stringValue: msg.id },
+        room: { stringValue: msg.room },
+        type: { stringValue: msg.type },
+        text: { stringValue: msg.text || '' },
+        payloadJson: { stringValue: msg.payload ? JSON.stringify(msg.payload) : '' },
+        senderName: { stringValue: msg.senderName },
+        senderClient: { stringValue: msg.senderClient },
+        senderId: { stringValue: msg.senderId },
+        replyToJson: { stringValue: msg.replyTo ? JSON.stringify(msg.replyTo) : '' },
+        ts: { integerValue: String(msg.ts) },
+        createdAt: { stringValue: msg.createdAt }
+      };
+      const wRes = await fetch(`${ROOM_FIRESTORE_BASE}/${encodeURIComponent(msg.room)}/messages/${encodeURIComponent(msg.id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields })
+      });
+      const preview = (msg.text || msg.payload?.name_bn || msg.payload?.doc_number || 'ডেটা').slice(0, 120);
+      const metaFields = {
+        room: { stringValue: msg.room },
+        last_msg_id: { stringValue: msg.id },
+        last_sender: { stringValue: msg.senderName },
+        last_preview: { stringValue: preview },
+        updated_at: { timestampValue: new Date().toISOString() }
+      };
+      const mask = Object.keys(metaFields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
+      await fetch(`${ROOM_FIRESTORE_BASE}/${encodeURIComponent(msg.room)}?${mask}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields: metaFields })
+      });
+      if (wRes.ok) return true;
+    } catch (_) {}
+
+    await fetch(ROOM_EDGE_API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(msg)
+    }).catch(() => {});
+    return true;
+  }
+
+  function openChatModal() {
+    const cm = ensureChatModal();
+    roomUnreadCount = 0;
+    updateChatBadge();
+    cm.style.display = 'flex';
+    fetchRoomMessages(true);
+    renderChatFeed();
+  }
+
+  window.__fcOpenChatModal = openChatModal;
+  window.__fcSendRoomMessage = sendRoomMessage;
+  setTimeout(() => fetchRoomMessages(true), 900);
+  setInterval(() => {
+    const cm = document.getElementById('fc-chat-modal');
+    if (cm && cm.style.display === 'flex') fetchRoomMessages(false);
+  }, 2500);
+  setInterval(() => {
+    const cm = document.getElementById('fc-chat-modal');
+    if (!cm || cm.style.display !== 'flex') fetchRoomMessages(false);
+  }, 6000);
+
   // --- WebSocket Connection for Cross-Device Mode ---
   function connectSocket() {
     if (typeof io === 'undefined') return;
     if (window.location.protocol === 'https:' && /^http:\/\/(?!localhost\b|127\.0\.0\.1\b)/i.test(serverUrl)) {
-      updateBadgeStatus(false, 'সরাসরি স্ক্যান মোড');
+      updateBadgeStatus(true, `ক্লাউড রুম (${roomCode})`);
       return;
     }
 
@@ -1254,20 +1780,42 @@
 
       socket.on('connect', () => {
         updateBadgeStatus(true, `সংযুক্ত (${roomCode})`);
-        socket.emit('join-room', roomCode);
+        socket.emit('join-room', { room: roomCode, clientName: myDeviceName, clientType: 'extension' });
+        const st = document.getElementById('fc-chat-status');
+        if (st) st.textContent = `🟢 সার্ভার + ক্লাউড রুম সক্রিয় (${roomCode})`;
       });
 
       socket.on('disconnect', () => {
-        updateBadgeStatus(false, 'স্ট্যান্ডঅ্যালোন মোড');
+        updateBadgeStatus(false, `ক্লাউড রুম (${roomCode})`);
       });
 
       socket.on('connect_error', () => {
-        updateBadgeStatus(false, 'সরাসরি স্ক্যান মোড');
+        updateBadgeStatus(false, `ক্লাউড রুম (${roomCode})`);
+      });
+
+      socket.on('room-joined', (data) => {
+        if (data && Array.isArray(data.history)) {
+          let changed = false;
+          data.history.forEach(m => { if (processIncomingRoomMsg(m, !roomBootstrapped)) changed = true; });
+          roomBootstrapped = true;
+          if (changed) renderChatFeed();
+        }
+      });
+
+      socket.on('room-message', (msg) => {
+        if (processIncomingRoomMsg(msg, false)) renderChatFeed();
+      });
+
+      socket.on('room-cleared', (info) => {
+        lastRoomClearedMs = Number(info?.ts || Date.now());
+        roomMsgMap.clear();
+        renderChatFeed();
       });
 
       socket.on('nid-data-extracted', async (payload) => {
         if (payload && payload.success && payload.data) {
           lastExtractedData = payload.data;
+          window.__fcLastScannedAny = payload.data;
           window.__fcStep1FilledKey = '';
           updateWidgetPreview(payload.data);
           const filled = await fillFormFields(payload.data);
@@ -4253,9 +4801,10 @@
 
     html += `
       <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px;">
-        <button type="button" id="fc-sum-copy-btn" style="flex: 1; background: #1976d2; color: #fff; border: none; border-radius: 8px; padding: 9px; font-weight: 700; font-size: 12px; cursor: pointer;">📋 রিপোর্ট কপি</button>
-        <button type="button" id="fc-sum-cloud-btn" style="flex: 1; background: #0f766e; color: #fff; border: none; border-radius: 8px; padding: 9px; font-weight: 700; font-size: 12px; cursor: pointer;">☁️ ক্লাউড সিঙ্ক</button>
-        <button type="button" id="fc-sum-scan-btn" style="flex: 1; background: #7c3aed; color: #fff; border: none; border-radius: 8px; padding: 9px; font-weight: 700; font-size: 12px; cursor: pointer;">📸 সদস্য স্ক্যান</button>
+        <button type="button" id="fc-sum-copy-btn" style="flex: 1; background: #1976d2; color: #fff; border: none; border-radius: 8px; padding: 9px; font-weight: 700; font-size: 12px; cursor: pointer;">📋 কপি</button>
+        <button type="button" id="fc-sum-cloud-btn" style="flex: 1; background: #0f766e; color: #fff; border: none; border-radius: 8px; padding: 9px; font-weight: 700; font-size: 12px; cursor: pointer;">☁️ ক্লাউড</button>
+        <button type="button" id="fc-sum-share-btn" style="flex: 1; background: #4f46e5; color: #fff; border: none; border-radius: 8px; padding: 9px; font-weight: 700; font-size: 12px; cursor: pointer;">💬 রুমে শেয়ার</button>
+        <button type="button" id="fc-sum-scan-btn" style="flex: 1; background: #7c3aed; color: #fff; border: none; border-radius: 8px; padding: 9px; font-weight: 700; font-size: 12px; cursor: pointer;">📸 স্ক্যান</button>
       </div>
     `;
 
@@ -4300,6 +4849,18 @@
       } catch (err) {
         alert('ক্লাউড সিঙ্ক ব্যর্থ: ' + err.message);
       }
+    };
+
+    body.querySelector('#fc-sum-share-btn').onclick = async () => {
+      const reportText = buildBanglaSummaryReportText(s);
+      await sendRoomMessage({
+        type: 'summary',
+        text: reportText,
+        payload: { familyId: s.familyId, readinessPct: s.readinessPct, memberCount: s.members.length, blockersCount: s.blockers.length }
+      });
+      sm.style.display = 'none';
+      openChatModal();
+      showToast(`💬 রুম ${roomCode}-এ সারসংক্ষেপ পাঠানো হয়েছে!`);
     };
 
     body.querySelector('#fc-sum-scan-btn').onclick = () => {
@@ -4387,7 +4948,11 @@
     chrome.runtime.onMessage.addListener((req, sender, sendResponse) => {
       if (req.action === 'config_updated') {
         serverUrl = req.serverUrl || serverUrl;
-        roomCode = (req.roomCode || roomCode).toUpperCase();
+        const prevRoom = roomCode;
+        roomCode = normalizeRoomCode(req.roomCode || roomCode);
+        if (req.deviceName) myDeviceName = req.deviceName;
+        localStorage.setItem('fc_room_code', roomCode);
+        localStorage.setItem('fc_device_name', myDeviceName);
         geminiApiKey = req.geminiApiKey !== undefined ? req.geminiApiKey : geminiApiKey;
         deepseekApiKey = req.deepseekApiKey !== undefined ? req.deepseekApiKey : deepseekApiKey;
         aiProvider = req.aiProvider || aiProvider;
@@ -4405,6 +4970,18 @@
         if (typeof window.__fcRenderModalCostCard === 'function') window.__fcRenderModalCostCard();
         const roomEl = document.getElementById('fc-ui-room');
         if (roomEl) roomEl.textContent = roomCode;
+        const chatRoomInp = document.getElementById('fc-chat-room-input');
+        if (chatRoomInp) chatRoomInp.value = roomCode;
+        const chatNameInp = document.getElementById('fc-chat-device-name');
+        if (chatNameInp) chatNameInp.value = myDeviceName;
+        if (prevRoom !== roomCode) {
+          roomMsgMap.clear();
+          lastRoomMetaSig = '';
+          lastRoomClearedMs = 0;
+          roomBootstrapped = false;
+          renderChatFeed();
+          fetchRoomMessages(true);
+        }
         if (socket) {
           socket.disconnect();
           connectSocket();

@@ -42,10 +42,10 @@ async function build() {
 
   // 4. Tampermonkey / Violentmonkey Userscript for automatic execution on mobile & desktop
   const userScriptHeader = `// ==UserScript==
-// @name         Family Card AI Assistant (NID & BRC Scanner + Auto-Fill)
+// @name         Family Card AI Assistant (NID & BRC Scanner + Auto-Fill + Room Chat)
 // @namespace    https://binary-ict.web.app/
-// @version      1.6.0
-// @description  Automated NID/Birth Certificate OCR, Section 3-9 Smart Defaults & 2500 Tk AI Distribution for fc.bhata.gov.bd
+// @version      1.8.0
+// @description  Automated NID/BRC OCR (Gemini + DeepSeek), Cost Tracker, Section 3-9 Smart Defaults & Cross-Device Room Messaging for fc.bhata.gov.bd
 // @author       Binary ICT
 // @match        https://fc.bhata.gov.bd/*
 // @match        http://fc.bhata.gov.bd/*

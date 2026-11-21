@@ -826,6 +826,180 @@ async function handleExtractNidRoute(req, res) {
 app.post('/api/ocr-nid', handleExtractNidRoute);
 app.post('/api/extract-nid', handleExtractNidRoute);
 
+// --- Cross-Device Room Messaging & Data Sharing Store ---
+const FIRESTORE_ROOMS_BASE = 'https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/room_channels';
+const roomMessagesStore = new Map();
+const MAX_ROOM_MESSAGES = 100;
+
+function normalizeRoomCode(room) {
+  const clean = String(room || 'FC-101').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 32);
+  return clean || 'FC-101';
+}
+
+function makeRoomMsgId(ts = Date.now()) {
+  const rand = Math.random().toString(36).slice(2, 7);
+  return `m_${String(ts).padStart(14, '0')}_${rand}`;
+}
+
+function normalizeRoomMessage(raw = {}, fallbackRoom = 'FC-101') {
+  const ts = Number(raw.ts) > 0 ? Number(raw.ts) : Date.now();
+  const room = normalizeRoomCode(raw.room || fallbackRoom);
+  const type = ['text', 'nid_data', 'summary', 'system'].includes(raw.type) ? raw.type : 'text';
+  const id = String(raw.id || makeRoomMsgId(ts)).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64) || makeRoomMsgId(ts);
+  let payload = raw.payload || null;
+  if (!payload && raw.payloadJson && typeof raw.payloadJson === 'string') {
+    try { payload = JSON.parse(raw.payloadJson); } catch (_) { payload = null; }
+  }
+  let replyTo = raw.replyTo || null;
+  if (!replyTo && raw.replyToJson && typeof raw.replyToJson === 'string') {
+    try { replyTo = JSON.parse(raw.replyToJson); } catch (_) { replyTo = null; }
+  }
+  return {
+    id,
+    room,
+    type,
+    text: String(raw.text || '').slice(0, 4000),
+    payload: payload && typeof payload === 'object' ? payload : null,
+    senderName: String(raw.senderName || 'অজানা ডিভাইস').slice(0, 60),
+    senderClient: String(raw.senderClient || 'web').slice(0, 30),
+    senderId: String(raw.senderId || '').slice(0, 64),
+    replyTo: replyTo && typeof replyTo === 'object' ? {
+      id: String(replyTo.id || ''),
+      senderName: String(replyTo.senderName || ''),
+      preview: String(replyTo.preview || '').slice(0, 120)
+    } : null,
+    ts,
+    createdAt: raw.createdAt || new Date(ts).toISOString()
+  };
+}
+
+function appendRoomMessageInMemory(rawMsg, fallbackRoom = 'FC-101') {
+  const msg = normalizeRoomMessage(rawMsg, fallbackRoom);
+  const list = roomMessagesStore.get(msg.room) || [];
+  if (!list.some((m) => m.id === msg.id)) {
+    list.push(msg);
+    list.sort((a, b) => a.ts - b.ts);
+    if (list.length > MAX_ROOM_MESSAGES) list.splice(0, list.length - MAX_ROOM_MESSAGES);
+    roomMessagesStore.set(msg.room, list);
+  }
+  return msg;
+}
+
+async function syncRoomMessageToFirestore(msg) {
+  try {
+    const fields = {
+      id: { stringValue: msg.id },
+      room: { stringValue: msg.room },
+      type: { stringValue: msg.type },
+      text: { stringValue: msg.text || '' },
+      payloadJson: { stringValue: msg.payload ? JSON.stringify(msg.payload) : '' },
+      senderName: { stringValue: msg.senderName || '' },
+      senderClient: { stringValue: msg.senderClient || '' },
+      senderId: { stringValue: msg.senderId || '' },
+      replyToJson: { stringValue: msg.replyTo ? JSON.stringify(msg.replyTo) : '' },
+      ts: { integerValue: String(msg.ts) },
+      createdAt: { stringValue: msg.createdAt }
+    };
+    const preview = (msg.text || (msg.type === 'nid_data' ? (msg.payload?.name_bn || msg.payload?.doc_number || 'NID ডেটা') : 'বার্তা')).slice(0, 120);
+    await fetch(`${FIRESTORE_ROOMS_BASE}/${encodeURIComponent(msg.room)}/messages/${encodeURIComponent(msg.id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields })
+    });
+    const metaFields = {
+      room: { stringValue: msg.room },
+      last_msg_id: { stringValue: msg.id },
+      last_sender: { stringValue: msg.senderName || '' },
+      last_preview: { stringValue: preview },
+      updated_at: { timestampValue: new Date().toISOString() }
+    };
+    const metaMask = Object.keys(metaFields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
+    await fetch(`${FIRESTORE_ROOMS_BASE}/${encodeURIComponent(msg.room)}?${metaMask}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields: metaFields })
+    });
+  } catch (e) {
+    console.warn('[Firestore Room Sync notice]:', e.message);
+  }
+}
+
+async function loadCloudRoomMessages(room) {
+  const listRes = await fetch(`${FIRESTORE_ROOMS_BASE}/${encodeURIComponent(room)}/messages?pageSize=60`);
+  if (!listRes.ok) return [];
+  const data = await listRes.json().catch(() => ({}));
+  const docs = Array.isArray(data.documents) ? data.documents : [];
+  return docs.map((d) => {
+    const f = d.fields || {};
+    return normalizeRoomMessage({
+      id: f.id?.stringValue || d.name?.split('/').pop(),
+      room: f.room?.stringValue || room,
+      type: f.type?.stringValue || 'text',
+      text: f.text?.stringValue || '',
+      payloadJson: f.payloadJson?.stringValue || '',
+      senderName: f.senderName?.stringValue || '',
+      senderClient: f.senderClient?.stringValue || '',
+      senderId: f.senderId?.stringValue || '',
+      replyToJson: f.replyToJson?.stringValue || '',
+      ts: Number(f.ts?.integerValue || f.ts?.doubleValue || 0),
+      createdAt: f.createdAt?.stringValue || ''
+    }, room);
+  }).sort((a, b) => a.ts - b.ts);
+}
+
+app.get(['/api/room-messages', '/api/rooms/:room/messages'], async (req, res) => {
+  try {
+    const room = normalizeRoomCode(req.params.room || req.query.room);
+    const since = Number(req.query.since || 0);
+    let memList = roomMessagesStore.get(room) || [];
+    if (memList.length === 0) {
+      const cloudList = await loadCloudRoomMessages(room).catch(() => []);
+      cloudList.forEach((m) => appendRoomMessageInMemory(m, room));
+      memList = roomMessagesStore.get(room) || [];
+    }
+    const filtered = since > 0 ? memList.filter((m) => m.ts > since) : memList;
+    res.json({ success: true, room, messages: filtered, serverTime: Date.now() });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post(['/api/room-messages', '/api/rooms/:room/messages'], async (req, res) => {
+  try {
+    const room = normalizeRoomCode(req.params.room || req.body?.room);
+    const msg = appendRoomMessageInMemory(req.body || {}, room);
+    io.to(room).emit('room-message', msg);
+    syncRoomMessageToFirestore(msg);
+    res.json({ success: true, room, message: msg });
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+app.delete(['/api/room-messages', '/api/rooms/:room/messages'], async (req, res) => {
+  try {
+    const room = normalizeRoomCode(req.params.room || req.query.room || req.body?.room);
+    roomMessagesStore.set(room, []);
+    io.to(room).emit('room-cleared', { room, ts: Date.now() });
+    const clearedAt = Date.now();
+    const metaFields = {
+      room: { stringValue: room },
+      last_msg_id: { stringValue: '' },
+      cleared_at_ms: { integerValue: String(clearedAt) },
+      updated_at: { timestampValue: new Date().toISOString() }
+    };
+    const metaMask = Object.keys(metaFields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
+    fetch(`${FIRESTORE_ROOMS_BASE}/${encodeURIComponent(room)}?${metaMask}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields: metaFields })
+    }).catch(() => {});
+    res.json({ success: true, room, clearedAt });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Get local server status and network info
 app.get('/api/info', (req, res) => {
   res.json({
@@ -836,28 +1010,55 @@ app.get('/api/info', (req, res) => {
     hasDeepSeekKey: Boolean(process.env.DEEPSEEK_API_KEY),
     bdtPerUsd: BDT_PER_USD,
     deepSeekPeakNow: isDeepSeekPeakUtc(),
-    pricing: AI_MODEL_CATALOG
+    pricing: AI_MODEL_CATALOG,
+    features: ['room_messaging', 'cloud_room_sync', 'nid_data_share', 'summary_share']
   });
 });
 
-// Socket.io Real-time connection for cross-device sync
+// Socket.io Real-time connection for cross-device sync & room messaging
 io.on('connection', (socket) => {
   console.log(`[Socket Connected] ID: ${socket.id}`);
 
   // Device joining a specific sync room
-  socket.on('join-room', (roomCode) => {
-    const cleanRoom = (roomCode || 'DEFAULT').toUpperCase().trim();
+  socket.on('join-room', async (roomOrInfo) => {
+    const rawRoom = typeof roomOrInfo === 'object' && roomOrInfo ? roomOrInfo.room : roomOrInfo;
+    const cleanRoom = normalizeRoomCode(rawRoom);
     socket.join(cleanRoom);
     console.log(`[Socket ${socket.id}] joined room: ${cleanRoom}`);
-    socket.emit('room-joined', { room: cleanRoom });
-    // Notify others in room
-    socket.to(cleanRoom).emit('peer-connected', { id: socket.id });
+    const peerCount = io.sockets.adapter.rooms.get(cleanRoom)?.size || 1;
+    let history = roomMessagesStore.get(cleanRoom) || [];
+    if (history.length === 0) {
+      const cloudList = await loadCloudRoomMessages(cleanRoom).catch(() => []);
+      cloudList.forEach((m) => appendRoomMessageInMemory(m, cleanRoom));
+      history = roomMessagesStore.get(cleanRoom) || [];
+    }
+    socket.emit('room-joined', { room: cleanRoom, peerCount, history });
+    io.to(cleanRoom).emit('room-presence', { room: cleanRoom, peerCount });
+    socket.to(cleanRoom).emit('peer-connected', { id: socket.id, room: cleanRoom, peerCount });
+  });
+
+  // Cross-device room chat / NID data / summary message
+  socket.on('room-message', (rawPayload, ack) => {
+    try {
+      const msg = appendRoomMessageInMemory(rawPayload || {}, rawPayload?.room);
+      io.to(msg.room).emit('room-message', msg);
+      syncRoomMessageToFirestore(msg);
+      if (typeof ack === 'function') ack({ success: true, message: msg });
+    } catch (err) {
+      if (typeof ack === 'function') ack({ success: false, error: err.message });
+    }
+  });
+
+  socket.on('clear-room-messages', (rawPayload) => {
+    const room = normalizeRoomCode(typeof rawPayload === 'string' ? rawPayload : rawPayload?.room);
+    roomMessagesStore.set(room, []);
+    io.to(room).emit('room-cleared', { room, ts: Date.now() });
   });
 
   // Mobile device sending image for processing and forwarding
   socket.on('scan-nid', async (payload) => {
     const { image, room, apiKey, deepseekApiKey, aiProvider, defaultKeySlot, geminiModel, deepseekModel } = payload;
-    const targetRoom = (room || 'DEFAULT').toUpperCase().trim();
+    const targetRoom = normalizeRoomCode(room);
 
     console.log(`[OCR Request] Received image for room: ${targetRoom}`);
     socket.emit('ocr-status', { status: 'processing', message: 'AI ডকুমেন্ট বিশ্লেষণ করছে...' });
@@ -886,6 +1087,18 @@ io.on('connection', (socket) => {
         data: extracted,
         timestamp: new Date().toISOString()
       });
+
+      // Share scanned card in room message stream as well
+      const scanMsg = appendRoomMessageInMemory({
+        room: targetRoom,
+        type: 'nid_data',
+        text: `🪪 স্ক্যান: ${extracted.name_bn || extracted.name_en || ''} (${extracted.doc_number || extracted.nid_number || extracted.birth_reg_no || ''})`,
+        payload: extracted,
+        senderName: payload.senderName || 'মোবাইল স্ক্যানার',
+        senderClient: 'companion'
+      }, targetRoom);
+      io.to(targetRoom).emit('room-message', scanMsg);
+      syncRoomMessageToFirestore(scanMsg);
 
       socket.emit('ocr-status', { status: 'completed', data: extracted });
     } catch (err) {

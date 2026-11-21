@@ -56,6 +56,8 @@
 
   let lastExtractedData = null;
   let savedApiKey = localStorage.getItem('fc_gemini_api_key') || '';
+  let savedDeepSeekKey = localStorage.getItem('fc_deepseek_api_key') || '';
+  let savedAiProvider = localStorage.getItem('fc_ai_provider') || 'auto';
   let activeMediaStream = null;
   let savedPostcode = localStorage.getItem('fc_default_postcode') || '7721';
   let savedVillageList = safeJsonParse(localStorage.getItem('fc_village_list'), ['বসাকুষ্টিয়া', 'চর কলিমহর']);
@@ -604,9 +606,25 @@ Return ONLY a single valid JSON object with those keys.
 
         <div id="fc-bm-ocr-warn" style="display: none; background: #fffbeb; border: 1.5px solid #f59e0b; color: #92400e; padding: 8px 10px; border-radius: 8px; font-size: 11.5px; line-height: 1.45;"></div>
 
-        <div class="fc-bm-col">
-          <label for="fc-bm-apikey">⚙️ Gemini API Key:</label>
-          <input type="password" id="fc-bm-apikey" placeholder="AIzaSy..." value="${escapeHtml(savedApiKey)}">
+        <div style="background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 10px; padding: 9px; display: flex; flex-direction: column; gap: 6px;">
+          <div class="fc-bm-col">
+            <label for="fc-bm-ai-provider">🧠 AI ইঞ্জিন:</label>
+            <select id="fc-bm-ai-provider">
+              <option value="auto" ${savedAiProvider === 'auto' ? 'selected' : ''}>অটো (Gemini + DeepSeek ব্যাকআপ)</option>
+              <option value="gemini" ${savedAiProvider === 'gemini' ? 'selected' : ''}>Google Gemini (3.8 Flash)</option>
+              <option value="deepseek" ${savedAiProvider === 'deepseek' ? 'selected' : ''}>DeepSeek Vision (deepseek-flash)</option>
+            </select>
+          </div>
+          <div class="fc-bm-row">
+            <div class="fc-bm-col">
+              <label for="fc-bm-apikey">⚙️ Gemini API Key:</label>
+              <input type="password" id="fc-bm-apikey" placeholder="AIzaSy..." value="${escapeHtml(savedApiKey)}">
+            </div>
+            <div class="fc-bm-col">
+              <label for="fc-bm-deepseek-key">🐋 DeepSeek Key:</label>
+              <input type="password" id="fc-bm-deepseek-key" placeholder="sk-..." value="${escapeHtml(savedDeepSeekKey)}">
+            </div>
+          </div>
         </div>
 
         <div id="fc-bm-loading" style="display: none; text-align: center; padding: 10px;">
@@ -624,6 +642,8 @@ Return ONLY a single valid JSON object with those keys.
   const btnGallery = document.getElementById('fc-bm-btn-gallery');
   const fileInput = document.getElementById('fc-bm-file-input');
   const inputApiKey = document.getElementById('fc-bm-apikey');
+  const inputDeepSeekKey = document.getElementById('fc-bm-deepseek-key');
+  const selectAiProvider = document.getElementById('fc-bm-ai-provider');
   const loading = document.getElementById('fc-bm-loading');
   const imgWrap = document.getElementById('fc-bm-img-wrap');
   const imgPreview = document.getElementById('fc-bm-img');
@@ -769,15 +789,35 @@ Return ONLY a single valid JSON object with those keys.
     }
   });
 
+  function saveAndValidateApiKeys() {
+    savedApiKey = inputApiKey.value.trim();
+    savedDeepSeekKey = inputDeepSeekKey ? inputDeepSeekKey.value.trim() : '';
+    savedAiProvider = selectAiProvider ? selectAiProvider.value : 'auto';
+    localStorage.setItem('fc_gemini_api_key', savedApiKey);
+    localStorage.setItem('fc_deepseek_api_key', savedDeepSeekKey);
+    localStorage.setItem('fc_ai_provider', savedAiProvider);
+
+    if (savedAiProvider === 'deepseek' && !savedDeepSeekKey && !/^sk-/i.test(savedApiKey)) {
+      alert('অনুগ্রহ করে নিচে DeepSeek API Key (sk-...) দিন।');
+      if (inputDeepSeekKey) inputDeepSeekKey.focus();
+      return false;
+    }
+    if (savedAiProvider === 'gemini' && !savedApiKey) {
+      alert('অনুগ্রহ করে নিচে Gemini API Key দিন।');
+      inputApiKey.focus();
+      return false;
+    }
+    if (!savedApiKey && !savedDeepSeekKey) {
+      alert('অনুগ্রহ করে নিচে আপনার Gemini বা DeepSeek API Key দিন।');
+      inputApiKey.focus();
+      return false;
+    }
+    return true;
+  }
+
   // Start Live WebRTC Camera (Prevents Android LMK Chrome process kill)
   btnCam.addEventListener('click', async () => {
-    savedApiKey = inputApiKey.value.trim();
-    if (!savedApiKey) {
-      alert('অনুগ্রহ করে নিচে আপনার Gemini API Key দিন।');
-      inputApiKey.focus();
-      return;
-    }
-    localStorage.setItem('fc_gemini_api_key', savedApiKey);
+    if (!saveAndValidateApiKeys()) return;
 
     try {
       if (activeMediaStream) stopLiveCamera();
@@ -831,13 +871,7 @@ Return ONLY a single valid JSON object with those keys.
 
   // Gallery file picker
   btnGallery.addEventListener('click', () => {
-    savedApiKey = inputApiKey.value.trim();
-    if (!savedApiKey) {
-      alert('অনুগ্রহ করে নিচে আপনার Gemini API Key দিন।');
-      inputApiKey.focus();
-      return;
-    }
-    localStorage.setItem('fc_gemini_api_key', savedApiKey);
+    if (!saveAndValidateApiKeys()) return;
     stopLiveCamera();
     fileInput.click();
   });
@@ -1007,6 +1041,114 @@ Return ONLY a single valid JSON object with those keys.
     throw new Error(`OCR ব্যর্থ: ${lastErr}`);
   }
 
+  async function callDeepSeekVisionOCR(deepseekKey, rawBase64, detectedMime, promptText) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30000);
+    try {
+      const res = await fetch('https://api.deepseek.com/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${deepseekKey}`
+        },
+        body: JSON.stringify({
+          model: 'deepseek-flash',
+          messages: [
+            {
+              role: 'system',
+              content: 'You are an expert Bangladeshi NID and Birth Certificate OCR engine. Return ONLY a single valid JSON object matching the exact requested keys.'
+            },
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: promptText },
+                { type: 'image_url', image_url: { url: `data:${detectedMime};base64,${rawBase64}` } }
+              ]
+            }
+          ],
+          response_format: { type: 'json_object' },
+          max_tokens: 2048
+        }),
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+
+      const jsonRes = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg = jsonRes?.error?.message || jsonRes?.message || `HTTP ${res.status}`;
+        if (res.status === 401) throw new Error('DeepSeek API Key সঠিক নয়।');
+        if (res.status === 402) throw new Error('DeepSeek অ্যাকাউন্টে ব্যালেন্স শেষ (Insufficient Balance)।');
+        throw new Error(`DeepSeek API (${res.status}): ${msg}`);
+      }
+
+      const content = jsonRes?.choices?.[0]?.message?.content;
+      if (!content) throw new Error('DeepSeek থেকে কোনো উত্তর পাওয়া যায়নি।');
+      const fenceMatch = content.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+      let cleanText = fenceMatch ? fenceMatch[1].trim() : content.trim();
+      const objMatch = cleanText.match(/\{[\s\S]*\}/);
+      if (objMatch) cleanText = objMatch[0];
+      const parsed = JSON.parse(cleanText);
+      parsed.ocr_model_used = 'deepseek-flash (api.deepseek.com)';
+      return parsed;
+    } catch (e) {
+      clearTimeout(timer);
+      // Fallback through Cloudflare edge worker proxy if direct browser request hits CORS/network block
+      if (e.name === 'TypeError') {
+        const edgeRes = await fetch('https://familycard-10n.pages.dev/api/ocr-nid', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            imageBase64: `data:${detectedMime};base64,${rawBase64}`,
+            mimeType: detectedMime,
+            aiProvider: 'deepseek',
+            deepseekApiKey: deepseekKey
+          })
+        });
+        const ej = await edgeRes.json().catch(() => ({}));
+        if (ej && ej.success && ej.data) return ej.data;
+        if (ej && ej.error) throw new Error(ej.error);
+      }
+      if (e.name === 'AbortError') throw new Error('DeepSeek OCR সময় শেষ হয়েছে (Timeout)');
+      throw e;
+    }
+  }
+
+  async function runMultiProviderOCR({ aiProvider = 'auto', geminiKey = '', deepseekKey = '', rawBase64, detectedMime, promptText }) {
+    let gKey = String(geminiKey || '').trim();
+    let dKey = String(deepseekKey || '').trim();
+    if (!dKey && /^sk-/i.test(gKey)) {
+      dKey = gKey;
+      gKey = '';
+    }
+    const mode = ['gemini', 'deepseek', 'auto'].includes(aiProvider) ? aiProvider : 'auto';
+
+    if (mode === 'deepseek') {
+      if (!dKey) throw new Error('DeepSeek API Key দেওয়া হয়নি!');
+      return await callDeepSeekVisionOCR(dKey, rawBase64, detectedMime, promptText);
+    }
+    if (mode === 'gemini') {
+      if (!gKey) throw new Error('Gemini API Key দেওয়া হয়নি!');
+      return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText);
+    }
+
+    const errors = [];
+    if (gKey) {
+      try {
+        return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText);
+      } catch (err) {
+        errors.push(`Gemini: ${err.message}`);
+      }
+    }
+    if (dKey) {
+      try {
+        return await callDeepSeekVisionOCR(dKey, rawBase64, detectedMime, promptText);
+      } catch (err) {
+        errors.push(`DeepSeek: ${err.message}`);
+      }
+    }
+    throw new Error(errors.length ? errors.join(' | ') : 'Gemini বা DeepSeek API Key দেওয়া হয়নি!');
+  }
+
   function validateAndNormalizeOcrData(data, docTypeChoice = 'auto') {
     const warnings = [];
     if (docTypeChoice && docTypeChoice !== 'auto') {
@@ -1095,15 +1237,17 @@ Return ONLY a single valid JSON object with those keys.
     }
   }
 
-  // Gemini Vision OCR execution
+  // Multi-Engine Vision OCR execution (Gemini 3.8 Flash + DeepSeek Vision)
   async function runGeminiOCR(base64Image) {
-    const apiKey = inputApiKey.value.trim() || localStorage.getItem('fc_gemini_api_key');
-    if (!apiKey) {
-      alert('Gemini API Key দেওয়া হয়নি!');
-      return;
-    }
-    localStorage.setItem('fc_gemini_api_key', apiKey);
+    if (!saveAndValidateApiKeys()) return;
     showModalOcrWarnings([]);
+
+    const loadTxt = document.getElementById('fc-bm-loading-text');
+    if (loadTxt) {
+      loadTxt.textContent = savedAiProvider === 'deepseek'
+        ? 'DeepSeek AI (deepseek-flash) দিয়ে ডকুমেন্ট স্ক্যান হচ্ছে...'
+        : 'AI দিয়ে ডকুমেন্ট স্ক্যান হচ্ছে (Gemini / DeepSeek)...';
+    }
 
     loading.style.display = 'block';
     btnCam.style.display = 'none';
@@ -1122,7 +1266,14 @@ Return ONLY a single valid JSON object with those keys.
         ? (document.getElementById('fc-bm-doc-type')?.value || 'auto')
         : 'auto';
 
-      const data = await callGeminiResilientOCR(apiKey, rawBase64, detectedMime, buildGeminiPrompt(docTypeChoice));
+      const data = await runMultiProviderOCR({
+        aiProvider: savedAiProvider,
+        geminiKey: savedApiKey,
+        deepseekKey: savedDeepSeekKey,
+        rawBase64,
+        detectedMime,
+        promptText: buildGeminiPrompt(docTypeChoice)
+      });
       validateAndNormalizeOcrData(data, docTypeChoice);
 
       data.family_id = scrapeFamilyId() || '';

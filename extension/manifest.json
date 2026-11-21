@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Family Card NID AI Auto-Filler",
-  "version": "1.6.0",
-  "description": "AI OCR Scanner & Auto-Filler for Family Card Portal (fc.bhata.gov.bd) - Supports Single Device (Tab) & Cross-device",
+  "version": "1.6.1",
+  "description": "AI OCR Scanner (Gemini 3.8 + DeepSeek Vision) & Auto-Filler for Family Card Portal (fc.bhata.gov.bd)",
   "permissions": [
     "storage",
     "activeTab"
@@ -10,6 +10,7 @@
   "host_permissions": [
     "https://fc.bhata.gov.bd/*",
     "https://generativelanguage.googleapis.com/*",
+    "https://api.deepseek.com/*",
     "http://*/*",
     "https://*/*"
   ],

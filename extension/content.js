@@ -37,6 +37,8 @@
   let serverUrl = 'http://localhost:3000';
   let roomCode = 'FC-101';
   let geminiApiKey = '';
+  let deepseekApiKey = '';
+  let aiProvider = localStorage.getItem('fc_ai_provider') || 'auto';
   let lastExtractedData = null;
   let activeScanTarget = { type: 'applicant', card: null, index: 'self' };
   let activeMediaStream = null;
@@ -58,10 +60,12 @@
 
   // Retrieve saved settings
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
-    chrome.storage.sync.get(['serverUrl', 'roomCode', 'geminiApiKey'], (res) => {
+    chrome.storage.sync.get(['serverUrl', 'roomCode', 'geminiApiKey', 'deepseekApiKey', 'aiProvider'], (res) => {
       if (res.serverUrl) serverUrl = res.serverUrl;
       if (res.roomCode) roomCode = res.roomCode.toUpperCase();
       if (res.geminiApiKey) geminiApiKey = res.geminiApiKey;
+      if (res.deepseekApiKey) deepseekApiKey = res.deepseekApiKey;
+      if (res.aiProvider) aiProvider = res.aiProvider;
       initUI();
       connectSocket();
     });
@@ -360,6 +364,15 @@
                 <button id="fc-modal-btn-add-village" type="button" style="padding: 6px 12px; font-size: 12px; font-weight: 700; background: #0284c7; color: #fff; border: none; border-radius: 8px; cursor: pointer;">+ যোগ</button>
               </div>
             </div>
+          </div>
+
+          <div class="fc-modal-field" style="margin-bottom: 6px;">
+            <label for="fc-modal-ai-provider">🧠 AI ইঞ্জিন (প্রোভাইডার):</label>
+            <select id="fc-modal-ai-provider">
+              <option value="auto" ${aiProvider === 'auto' ? 'selected' : ''}>অটো (Gemini + DeepSeek ব্যাকআপ)</option>
+              <option value="gemini" ${aiProvider === 'gemini' ? 'selected' : ''}>Google Gemini (3.8 Flash)</option>
+              <option value="deepseek" ${aiProvider === 'deepseek' ? 'selected' : ''}>DeepSeek Vision (deepseek-flash)</option>
+            </select>
           </div>
 
           <div id="fc-modal-ocr-warn" style="display: none; background: #fffbeb; border: 1.5px solid #f59e0b; color: #92400e; padding: 8px 10px; border-radius: 8px; font-size: 11.5px; line-height: 1.45;"></div>
@@ -966,6 +979,10 @@
     const mimeMatch = String(base64Data || '').match(/^data:([^;]+);base64,/);
     if (mimeMatch) detectedMime = mimeMatch[1] || 'image/jpeg';
 
+    const modalProvider = document.getElementById('fc-modal-ai-provider')?.value || aiProvider || 'auto';
+    aiProvider = modalProvider;
+    localStorage.setItem('fc_ai_provider', modalProvider);
+
     chrome.runtime.sendMessage({
       action: 'ocr_nid_direct',
       imageBase64: base64Data,
@@ -974,7 +991,9 @@
       religion,
       mobileNumber,
       docType: docTypeChoice,
-      apiKey: geminiApiKey
+      aiProvider: modalProvider,
+      apiKey: geminiApiKey,
+      deepseekApiKey: deepseekApiKey
     }, async (response) => {
       loading.style.display = 'none';
       btnCamera.style.display = 'flex';
@@ -4201,7 +4220,11 @@
       if (req.action === 'config_updated') {
         serverUrl = req.serverUrl || serverUrl;
         roomCode = (req.roomCode || roomCode).toUpperCase();
-        geminiApiKey = req.geminiApiKey || geminiApiKey;
+        geminiApiKey = req.geminiApiKey !== undefined ? req.geminiApiKey : geminiApiKey;
+        deepseekApiKey = req.deepseekApiKey !== undefined ? req.deepseekApiKey : deepseekApiKey;
+        aiProvider = req.aiProvider || aiProvider;
+        const modalProv = document.getElementById('fc-modal-ai-provider');
+        if (modalProv) modalProv.value = aiProvider;
         const roomEl = document.getElementById('fc-ui-room');
         if (roomEl) roomEl.textContent = roomCode;
         if (socket) {

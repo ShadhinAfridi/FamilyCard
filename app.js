@@ -16,7 +16,9 @@ let selectedFileBase64 = null;
 
 const elStatus = document.getElementById('connectionStatus');
 const elRoomCode = document.getElementById('roomCode');
+const elProvider = document.getElementById('aiProvider');
 const elApiKey = document.getElementById('apiKey');
+const elDeepSeekKey = document.getElementById('deepseekApiKey');
 const btnConnect = document.getElementById('btnConnect');
 
 const tabCamera = document.getElementById('tabCamera');
@@ -42,8 +44,14 @@ const btnDismissResult = document.getElementById('btnDismissResult');
 if (localStorage.getItem('fc_room_code')) {
   elRoomCode.value = localStorage.getItem('fc_room_code');
 }
+if (localStorage.getItem('fc_ai_provider') && elProvider) {
+  elProvider.value = localStorage.getItem('fc_ai_provider');
+}
 if (localStorage.getItem('fc_gemini_api_key')) {
   elApiKey.value = localStorage.getItem('fc_gemini_api_key');
+}
+if (localStorage.getItem('fc_deepseek_api_key') && elDeepSeekKey) {
+  elDeepSeekKey.value = localStorage.getItem('fc_deepseek_api_key');
 }
 
 // Initialize Socket.io connection
@@ -102,6 +110,16 @@ btnConnect.addEventListener('click', () => {
 elApiKey.addEventListener('change', () => {
   localStorage.setItem('fc_gemini_api_key', elApiKey.value.trim());
 });
+if (elDeepSeekKey) {
+  elDeepSeekKey.addEventListener('change', () => {
+    localStorage.setItem('fc_deepseek_api_key', elDeepSeekKey.value.trim());
+  });
+}
+if (elProvider) {
+  elProvider.addEventListener('change', () => {
+    localStorage.setItem('fc_ai_provider', elProvider.value);
+  });
+}
 
 // Camera Stream Setup
 async function startCamera() {
@@ -217,14 +235,20 @@ btnCapture.addEventListener('click', async () => {
     base64Data = selectedFileBase64;
   }
 
-  showLoading(true, 'Gemini AI দ্বারা ডকুমেন্ট বিশ্লেষণ করা হচ্ছে...');
+  showLoading(true, 'AI ডকুমেন্ট বিশ্লেষণ করা হচ্ছে (Gemini / DeepSeek)...');
 
   const room = (elRoomCode.value || 'FC-101').trim().toUpperCase();
   const apiKey = elApiKey.value.trim();
+  const deepseekApiKey = elDeepSeekKey ? elDeepSeekKey.value.trim() : '';
+  const aiProvider = elProvider ? elProvider.value : 'auto';
   const docType = document.getElementById('docType')?.value || 'auto';
   const maritalStatus = document.getElementById('maritalStatus')?.value || 'বিবাহিত';
   const religion = document.getElementById('religion')?.value || 'ইসলাম';
   const mobileNumber = normalizeDigits(document.getElementById('mobileNumber')?.value?.trim() || '');
+
+  localStorage.setItem('fc_gemini_api_key', apiKey);
+  if (elDeepSeekKey) localStorage.setItem('fc_deepseek_api_key', deepseekApiKey);
+  localStorage.setItem('fc_ai_provider', aiProvider);
 
   // Send over Socket.io
   if (socket && socket.connected) {
@@ -232,19 +256,29 @@ btnCapture.addEventListener('click', async () => {
       image: base64Data,
       room: room,
       apiKey: apiKey,
+      deepseekApiKey: deepseekApiKey,
+      aiProvider: aiProvider,
       docType: docType,
       maritalStatus: maritalStatus,
       religion: religion,
       mobileNumber: mobileNumber
     });
   } else {
-    // Fallback direct HTTP POST
+    // Direct HTTP POST (local Express / Cloudflare Pages Edge OCR fallback)
     try {
-      const resp = await fetch('/api/ocr-nid', {
+      const payload = JSON.stringify({ image: base64Data, room, apiKey, deepseekApiKey, aiProvider, docType, maritalStatus, religion, mobileNumber });
+      let resp = await fetch('/api/ocr-nid', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: base64Data, room, apiKey, docType, maritalStatus, religion, mobileNumber })
+        body: payload
       });
+      if (resp.status === 404 || resp.status === 405 || !/application\/json/i.test(resp.headers.get('content-type') || '')) {
+        resp = await fetch('https://familycard-10n.pages.dev/api/ocr-nid', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: payload
+        });
+      }
       const data = await resp.json();
       showLoading(false);
       if (data.success) {

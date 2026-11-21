@@ -178,13 +178,26 @@ export default {
       return new Response(null, { status: 204, headers: CORS_HEADERS });
     }
 
-    // API: OCR Endpoint (supports both /api/extract-nid and /api/ocr-nid)
+    // API: OCR Endpoint (supports both /api/extract-nid and /api/ocr-nid; Gemini + DeepSeek)
     if ((path === '/api/extract-nid' || path === '/api/ocr-nid') && request.method === 'POST') {
       try {
         const body = await request.json();
-        const apiKey = body.apiKey || env.GEMINI_API_KEY;
-        if (!apiKey) {
+        let gKey = String(body.apiKey || env.GEMINI_API_KEY || '').trim();
+        let dKey = String(body.deepseekApiKey || env.DEEPSEEK_API_KEY || '').trim();
+        if (!dKey && /^sk-/i.test(gKey)) {
+          dKey = gKey;
+          gKey = '';
+        }
+        const aiProvider = ['gemini', 'deepseek', 'auto'].includes(body.aiProvider) ? body.aiProvider : 'auto';
+
+        if (aiProvider === 'deepseek' && !dKey) {
+          return Response.json({ success: false, error: 'DeepSeek API Key প্রয়োজন।' }, { status: 400, headers: CORS_HEADERS });
+        }
+        if (aiProvider === 'gemini' && !gKey) {
           return Response.json({ success: false, error: 'Gemini API Key প্রয়োজন।' }, { status: 400, headers: CORS_HEADERS });
+        }
+        if (!gKey && !dKey) {
+          return Response.json({ success: false, error: 'Gemini বা DeepSeek API Key প্রয়োজন।' }, { status: 400, headers: CORS_HEADERS });
         }
 
         const rawInput = body.imageBase64 || body.image || '';
@@ -201,101 +214,174 @@ export default {
         }
 
         const promptText = buildGeminiPrompt(body.docType || 'auto');
-        const attempts = [
-          {
-            label: 'gemini-3.8-flash (interactions)',
-            url: 'https://generativelanguage.googleapis.com/v1beta/interactions',
-            headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey, 'Api-Revision': '2026-05-20' },
-            body: {
-              model: 'gemini-3.8-flash',
-              input: [{ type: 'text', text: promptText }, { type: 'image', data: rawBase64, mime_type: mimeType }],
-              generation_config: { thinking_level: 'low' },
-              response_format: { type: 'text', mime_type: 'application/json', schema: OCR_RESPONSE_SCHEMA },
-              store: false
+
+        async function runWorkerGemini() {
+          const attempts = [
+            {
+              label: 'gemini-3.8-flash (interactions)',
+              url: 'https://generativelanguage.googleapis.com/v1beta/interactions',
+              headers: { 'Content-Type': 'application/json', 'x-goog-api-key': gKey, 'Api-Revision': '2026-05-20' },
+              body: {
+                model: 'gemini-3.8-flash',
+                input: [{ type: 'text', text: promptText }, { type: 'image', data: rawBase64, mime_type: mimeType }],
+                generation_config: { thinking_level: 'low' },
+                response_format: { type: 'text', mime_type: 'application/json', schema: OCR_RESPONSE_SCHEMA },
+                store: false
+              }
+            },
+            {
+              label: 'gemini-3.8-flash (generateContent)',
+              url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent',
+              headers: { 'Content-Type': 'application/json', 'x-goog-api-key': gKey },
+              body: {
+                contents: [{ parts: [{ text: promptText }, { inline_data: { mime_type: mimeType, data: rawBase64 } }] }],
+                generationConfig: { response_mime_type: 'application/json' }
+              }
+            },
+            {
+              label: 'gemini-3.5-flash-lite (interactions)',
+              url: 'https://generativelanguage.googleapis.com/v1beta/interactions',
+              headers: { 'Content-Type': 'application/json', 'x-goog-api-key': gKey, 'Api-Revision': '2026-05-20' },
+              body: {
+                model: 'gemini-3.5-flash-lite',
+                input: [{ type: 'text', text: promptText }, { type: 'image', data: rawBase64, mime_type: mimeType }],
+                response_format: { type: 'text', mime_type: 'application/json', schema: OCR_RESPONSE_SCHEMA },
+                store: false
+              }
+            },
+            {
+              label: 'gemini-3.5-flash-lite (generateContent)',
+              url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent',
+              headers: { 'Content-Type': 'application/json', 'x-goog-api-key': gKey },
+              body: {
+                contents: [{ parts: [{ text: promptText }, { inline_data: { mime_type: mimeType, data: rawBase64 } }] }],
+                generationConfig: { response_mime_type: 'application/json' }
+              }
             }
-          },
-          {
-            label: 'gemini-3.8-flash (generateContent)',
-            url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent',
-            headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-            body: {
-              contents: [{ parts: [{ text: promptText }, { inline_data: { mime_type: mimeType, data: rawBase64 } }] }],
-              generationConfig: { response_mime_type: 'application/json' }
-            }
-          },
-          {
-            label: 'gemini-3.5-flash-lite (interactions)',
-            url: 'https://generativelanguage.googleapis.com/v1beta/interactions',
-            headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey, 'Api-Revision': '2026-05-20' },
-            body: {
-              model: 'gemini-3.5-flash-lite',
-              input: [{ type: 'text', text: promptText }, { type: 'image', data: rawBase64, mime_type: mimeType }],
-              response_format: { type: 'text', mime_type: 'application/json', schema: OCR_RESPONSE_SCHEMA },
-              store: false
-            }
-          },
-          {
-            label: 'gemini-3.5-flash-lite (generateContent)',
-            url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent',
-            headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-            body: {
-              contents: [{ parts: [{ text: promptText }, { inline_data: { mime_type: mimeType, data: rawBase64 } }] }],
-              generationConfig: { response_mime_type: 'application/json' }
+          ];
+          let lastErr = 'Gemini OCR থেকে উত্তর পাওয়া যায়নি।';
+          for (const attempt of attempts) {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 28000);
+            try {
+              const geminiRes = await fetch(attempt.url, {
+                method: 'POST',
+                headers: attempt.headers,
+                body: JSON.stringify(attempt.body),
+                signal: controller.signal
+              });
+              clearTimeout(timer);
+              const gJson = await geminiRes.json().catch(() => ({}));
+              if (!geminiRes.ok) {
+                const msg = gJson?.error?.message || gJson?.message || \`HTTP \${geminiRes.status}\`;
+                if (geminiRes.status === 400 && /API[_\\s]?key/i.test(msg)) {
+                  const err = new Error('Gemini API Key সঠিক নয়।');
+                  err.statusCode = 400;
+                  throw err;
+                }
+                lastErr = \`\${attempt.label}: \${msg}\`;
+                continue;
+              }
+              const outText = extractTextFromGemini(gJson);
+              if (!outText) { lastErr = \`\${attempt.label}: খালি উত্তর\`; continue; }
+              const fenceMatch = outText.match(/\\\`\\\`\\\`(?:json)?\\s*([\\s\\S]*?)\\s*\\\`\\\`\\\`/i);
+              let cleaned = fenceMatch ? fenceMatch[1].trim() : outText.trim();
+              const objMatch = cleaned.match(/\\{[\\s\\S]*\\}/);
+              if (objMatch) cleaned = objMatch[0];
+              const p = JSON.parse(cleaned);
+              p.ocr_model_used = attempt.label;
+              return p;
+            } catch (e) {
+              clearTimeout(timer);
+              if (e.statusCode === 400) throw e;
+              lastErr = e.name === 'AbortError' ? \`\${attempt.label}: Timeout\` : \`\${attempt.label}: \${e.message}\`;
             }
           }
-        ];
+          throw new Error(\`Gemini Error: \${lastErr}\`);
+        }
 
-        let parsed = null;
-        let lastErr = 'Gemini OCR থেকে উত্তর পাওয়া যায়নি।';
-        for (const attempt of attempts) {
+        async function runWorkerDeepSeek() {
           const controller = new AbortController();
           const timer = setTimeout(() => controller.abort(), 28000);
           try {
-            const geminiRes = await fetch(attempt.url, {
+            const dsRes = await fetch('https://api.deepseek.com/chat/completions', {
               method: 'POST',
-              headers: attempt.headers,
-              body: JSON.stringify(attempt.body),
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': \`Bearer \${dKey}\`
+              },
+              body: JSON.stringify({
+                model: 'deepseek-flash',
+                messages: [
+                  {
+                    role: 'system',
+                    content: 'You are an expert Bangladeshi NID and Birth Certificate OCR engine. Return ONLY a single valid JSON object matching the requested schema.'
+                  },
+                  {
+                    role: 'user',
+                    content: [
+                      { type: 'text', text: promptText },
+                      { type: 'image_url', image_url: { url: \`data:\${mimeType};base64,\${rawBase64}\` } }
+                    ]
+                  }
+                ],
+                response_format: { type: 'json_object' },
+                max_tokens: 2048
+              }),
               signal: controller.signal
             });
             clearTimeout(timer);
-            const gJson = await geminiRes.json().catch(() => ({}));
-            if (!geminiRes.ok) {
-              const msg = gJson?.error?.message || gJson?.message || \`HTTP \${geminiRes.status}\`;
-              if (geminiRes.status === 400 && /API[_\\s]?key/i.test(msg)) {
-                return Response.json({ success: false, error: 'Gemini API Key সঠিক নয়।' }, { status: 400, headers: CORS_HEADERS });
-              }
-              lastErr = \`\${attempt.label}: \${msg}\`;
-              continue;
+            const dsJson = await dsRes.json().catch(() => ({}));
+            if (!dsRes.ok) {
+              const msg = dsJson?.error?.message || dsJson?.message || \`HTTP \${dsRes.status}\`;
+              const err = new Error(dsRes.status === 401 ? 'DeepSeek API Key সঠিক নয়।' : \`DeepSeek Error (\${dsRes.status}): \${msg}\`);
+              if (dsRes.status === 401) err.statusCode = 400;
+              throw err;
             }
-            const outText = extractTextFromGemini(gJson);
-            if (!outText) { lastErr = \`\${attempt.label}: খালি উত্তর\`; continue; }
+            const outText = dsJson?.choices?.[0]?.message?.content || '';
+            if (!outText) throw new Error('DeepSeek খালি উত্তর পাঠিয়েছে।');
             const fenceMatch = outText.match(/\\\`\\\`\\\`(?:json)?\\s*([\\s\\S]*?)\\s*\\\`\\\`\\\`/i);
             let cleaned = fenceMatch ? fenceMatch[1].trim() : outText.trim();
             const objMatch = cleaned.match(/\\{[\\s\\S]*\\}/);
             if (objMatch) cleaned = objMatch[0];
-            parsed = JSON.parse(cleaned);
-            parsed.ocr_model_used = attempt.label;
-            break;
+            const p = JSON.parse(cleaned);
+            p.ocr_model_used = 'deepseek-flash (api.deepseek.com)';
+            return p;
           } catch (e) {
             clearTimeout(timer);
-            lastErr = e.name === 'AbortError' ? \`\${attempt.label}: Timeout\` : \`\${attempt.label}: \${e.message}\`;
+            if (e.name === 'AbortError') throw new Error('DeepSeek Timeout');
+            throw e;
           }
         }
 
-        if (!parsed) {
-          return Response.json({ success: false, error: \`Gemini Error: \${lastErr}\` }, { status: 500, headers: CORS_HEADERS });
+        let parsed = null;
+        if (aiProvider === 'deepseek') {
+          parsed = await runWorkerDeepSeek();
+        } else if (aiProvider === 'gemini') {
+          parsed = await runWorkerGemini();
+        } else {
+          const errs = [];
+          if (gKey) {
+            try { parsed = await runWorkerGemini(); }
+            catch (e) { if (e.statusCode === 400 && !dKey) throw e; errs.push(e.message); }
+          }
+          if (!parsed && dKey) {
+            try { parsed = await runWorkerDeepSeek(); }
+            catch (e) { errs.push(e.message); }
+          }
+          if (!parsed) throw new Error(errs.join(' | '));
         }
 
         validateAndNormalizeOcrData(parsed, body);
         return Response.json({ success: true, data: parsed }, { headers: CORS_HEADERS });
       } catch (err) {
-        return Response.json({ success: false, error: err.message }, { status: 500, headers: CORS_HEADERS });
+        return Response.json({ success: false, error: err.message }, { status: err.statusCode || 500, headers: CORS_HEADERS });
       }
     }
 
     // Health check endpoint
     if (path === '/api/info') {
-      return Response.json({ status: 'online', edge: 'cloudflare-worker', upstream: ORIGIN_BASE }, { headers: CORS_HEADERS });
+      return Response.json({ status: 'online', edge: 'cloudflare-worker', providers: ['gemini', 'deepseek'], upstream: ORIGIN_BASE }, { headers: CORS_HEADERS });
     }
 
     // Static & Bookmarklet Assets via global Firebase CDN upstream with full CORS

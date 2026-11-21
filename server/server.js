@@ -332,43 +332,70 @@ async function syncToFirestore(data) {
   }
 }
 
-// Resilient Gemini OCR caller: Gemini 3.8 Flash primary, Gemini 3.5 Flash-Lite backup
-async function extractNidWithGemini(base64Image, customApiKey, options = {}) {
-  const apiKey = customApiKey || process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error('No Gemini API Key provided. Set GEMINI_API_KEY in .env or provide it in the request.');
-  }
+async function callDeepSeekVisionOCR(deepseekKey, cleanBase64, mimeType, promptText) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30000);
+  try {
+    const response = await fetch('https://api.deepseek.com/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${deepseekKey}`
+      },
+      body: JSON.stringify({
+        model: 'deepseek-flash',
+        messages: [
+          {
+            role: 'system',
+            content: 'You are an expert Bangladeshi NID and Birth Certificate OCR engine. Return ONLY a single valid JSON object matching the exact requested keys.'
+          },
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: promptText },
+              { type: 'image_url', image_url: { url: `data:${mimeType};base64,${cleanBase64}` } }
+            ]
+          }
+        ],
+        response_format: { type: 'json_object' },
+        max_tokens: 2048
+      }),
+      signal: controller.signal
+    });
+    clearTimeout(timer);
 
-  let mimeType = options.mimeType || 'image/jpeg';
-  let cleanBase64 = String(base64Image || '');
-  const dataUriMatch = cleanBase64.match(/^data:([^;]+);base64,(.+)$/s);
-  if (dataUriMatch) {
-    mimeType = dataUriMatch[1] || mimeType;
-    cleanBase64 = dataUriMatch[2];
-  }
+    const resData = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const msg = resData?.error?.message || resData?.message || `HTTP ${response.status}`;
+      if (response.status === 401) throw new Error('Invalid DeepSeek API Key.');
+      if (response.status === 402) throw new Error('DeepSeek insufficient balance.');
+      throw new Error(`DeepSeek API Error (${response.status}): ${msg}`);
+    }
 
-  const promptText = buildGeminiPrompt(options.docType || 'auto');
+    const content = resData?.choices?.[0]?.message?.content;
+    if (!content) throw new Error('Empty response from DeepSeek OCR.');
+
+    const parsed = parseOcrJsonText(content);
+    parsed.ocr_model_used = 'deepseek-flash (api.deepseek.com)';
+    return parsed;
+  } catch (err) {
+    clearTimeout(timer);
+    if (err.name === 'AbortError') throw new Error('DeepSeek OCR timed out.');
+    throw err;
+  }
+}
+
+async function runGeminiCascade(apiKey, cleanBase64, mimeType, promptText) {
   const attempts = [
     {
       label: 'gemini-3.8-flash (interactions)',
       url: 'https://generativelanguage.googleapis.com/v1beta/interactions',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': apiKey,
-        'Api-Revision': '2026-05-20'
-      },
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey, 'Api-Revision': '2026-05-20' },
       body: {
         model: 'gemini-3.8-flash',
-        input: [
-          { type: 'text', text: promptText },
-          { type: 'image', data: cleanBase64, mime_type: mimeType }
-        ],
+        input: [{ type: 'text', text: promptText }, { type: 'image', data: cleanBase64, mime_type: mimeType }],
         generation_config: { thinking_level: 'low' },
-        response_format: {
-          type: 'text',
-          mime_type: 'application/json',
-          schema: OCR_RESPONSE_SCHEMA
-        },
+        response_format: { type: 'text', mime_type: 'application/json', schema: OCR_RESPONSE_SCHEMA },
         store: false
       }
     },
@@ -377,34 +404,18 @@ async function extractNidWithGemini(base64Image, customApiKey, options = {}) {
       url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
       body: {
-        contents: [{
-          parts: [
-            { text: promptText },
-            { inline_data: { mime_type: mimeType, data: cleanBase64 } }
-          ]
-        }],
+        contents: [{ parts: [{ text: promptText }, { inline_data: { mime_type: mimeType, data: cleanBase64 } }] }],
         generationConfig: { response_mime_type: 'application/json' }
       }
     },
     {
       label: 'gemini-3.5-flash-lite (interactions)',
       url: 'https://generativelanguage.googleapis.com/v1beta/interactions',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': apiKey,
-        'Api-Revision': '2026-05-20'
-      },
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey, 'Api-Revision': '2026-05-20' },
       body: {
         model: 'gemini-3.5-flash-lite',
-        input: [
-          { type: 'text', text: promptText },
-          { type: 'image', data: cleanBase64, mime_type: mimeType }
-        ],
-        response_format: {
-          type: 'text',
-          mime_type: 'application/json',
-          schema: OCR_RESPONSE_SCHEMA
-        },
+        input: [{ type: 'text', text: promptText }, { type: 'image', data: cleanBase64, mime_type: mimeType }],
+        response_format: { type: 'text', mime_type: 'application/json', schema: OCR_RESPONSE_SCHEMA },
         store: false
       }
     },
@@ -413,12 +424,7 @@ async function extractNidWithGemini(base64Image, customApiKey, options = {}) {
       url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
       body: {
-        contents: [{
-          parts: [
-            { text: promptText },
-            { inline_data: { mime_type: mimeType, data: cleanBase64 } }
-          ]
-        }],
+        contents: [{ parts: [{ text: promptText }, { inline_data: { mime_type: mimeType, data: cleanBase64 } }] }],
         generationConfig: { response_mime_type: 'application/json' }
       }
     }
@@ -440,44 +446,93 @@ async function extractNidWithGemini(base64Image, customApiKey, options = {}) {
       const resData = await response.json().catch(() => ({}));
       if (!response.ok) {
         const msg = resData?.error?.message || resData?.message || `HTTP ${response.status}`;
-        if (response.status === 400 && /API[_\s]?key/i.test(msg)) {
-          throw new Error('Invalid Gemini API Key.');
-        }
+        if (response.status === 400 && /API[_\s]?key/i.test(msg)) throw new Error('Invalid Gemini API Key.');
         lastError = `${attempt.label}: ${msg}`;
         continue;
       }
 
       const textOutput = extractTextFromGeminiResponse(resData);
-      if (!textOutput) {
-        lastError = `${attempt.label}: Empty model response`;
-        continue;
-      }
+      if (!textOutput) { lastError = `${attempt.label}: Empty model response`; continue; }
 
       const data = parseOcrJsonText(textOutput);
       data.ocr_model_used = attempt.label;
-      return validateAndNormalizeOcrData(data, options);
+      return data;
     } catch (err) {
       clearTimeout(timer);
       if (/Invalid Gemini API Key/.test(err.message || '')) throw err;
       lastError = err.name === 'AbortError' ? `${attempt.label}: Request timed out` : `${attempt.label}: ${err.message}`;
     }
   }
-
   throw new Error(`Gemini OCR Error: ${lastError}`);
+}
+
+// Resilient Multi-Provider OCR caller: Gemini 3.8 Flash + DeepSeek Vision (deepseek-flash)
+async function extractNidWithAI(base64Image, customApiKey, options = {}) {
+  let gKey = String(customApiKey || process.env.GEMINI_API_KEY || '').trim();
+  let dKey = String(options.deepseekApiKey || process.env.DEEPSEEK_API_KEY || '').trim();
+  if (!dKey && /^sk-/i.test(gKey)) {
+    dKey = gKey;
+    gKey = '';
+  }
+
+  const mode = ['gemini', 'deepseek', 'auto'].includes(options.aiProvider) ? options.aiProvider : 'auto';
+  if (mode === 'gemini' && !gKey) throw new Error('No Gemini API Key provided.');
+  if (mode === 'deepseek' && !dKey) throw new Error('No DeepSeek API Key provided.');
+  if (!gKey && !dKey) {
+    throw new Error('No Gemini or DeepSeek API Key provided. Configure .env or provide an API key.');
+  }
+
+  let mimeType = options.mimeType || 'image/jpeg';
+  let cleanBase64 = String(base64Image || '');
+  const dataUriMatch = cleanBase64.match(/^data:([^;]+);base64,(.+)$/s);
+  if (dataUriMatch) {
+    mimeType = dataUriMatch[1] || mimeType;
+    cleanBase64 = dataUriMatch[2];
+  }
+
+  const promptText = buildGeminiPrompt(options.docType || 'auto');
+  let rawParsed = null;
+
+  if (mode === 'deepseek') {
+    rawParsed = await callDeepSeekVisionOCR(dKey, cleanBase64, mimeType, promptText);
+  } else if (mode === 'gemini') {
+    rawParsed = await runGeminiCascade(gKey, cleanBase64, mimeType, promptText);
+  } else {
+    const errors = [];
+    if (gKey) {
+      try {
+        rawParsed = await runGeminiCascade(gKey, cleanBase64, mimeType, promptText);
+      } catch (err) {
+        errors.push(err.message);
+      }
+    }
+    if (!rawParsed && dKey) {
+      try {
+        rawParsed = await callDeepSeekVisionOCR(dKey, cleanBase64, mimeType, promptText);
+      } catch (err) {
+        errors.push(err.message);
+      }
+    }
+    if (!rawParsed) throw new Error(errors.join(' | '));
+  }
+
+  return validateAndNormalizeOcrData(rawParsed, options);
 }
 
 // REST API for direct OCR (supports both /api/ocr-nid and /api/extract-nid)
 async function handleExtractNidRoute(req, res) {
   try {
     const image = req.body.image || req.body.imageBase64;
-    const { apiKey, room, mimeType, docType } = req.body;
+    const { apiKey, deepseekApiKey, aiProvider, room, mimeType, docType } = req.body;
     if (!image) {
       return res.status(400).json({ success: false, error: 'No image provided.' });
     }
 
-    const extracted = await extractNidWithGemini(image, apiKey, {
+    const extracted = await extractNidWithAI(image, apiKey, {
       mimeType,
       docType,
+      aiProvider,
+      deepseekApiKey,
       maritalStatus: req.body.maritalStatus,
       religion: req.body.religion,
       mobileNumber: req.body.mobileNumber,
@@ -512,7 +567,8 @@ app.get('/api/info', (req, res) => {
     status: 'online',
     port: PORT,
     localIps: getLocalIpAddresses(),
-    hasEnvApiKey: Boolean(process.env.GEMINI_API_KEY)
+    hasEnvApiKey: Boolean(process.env.GEMINI_API_KEY),
+    hasDeepSeekKey: Boolean(process.env.DEEPSEEK_API_KEY)
   });
 });
 
@@ -532,15 +588,17 @@ io.on('connection', (socket) => {
 
   // Mobile device sending image for processing and forwarding
   socket.on('scan-nid', async (payload) => {
-    const { image, room, apiKey } = payload;
+    const { image, room, apiKey, deepseekApiKey, aiProvider } = payload;
     const targetRoom = (room || 'DEFAULT').toUpperCase().trim();
 
     console.log(`[OCR Request] Received image for room: ${targetRoom}`);
-    socket.emit('ocr-status', { status: 'processing', message: 'Gemini AI is reading the NID card...' });
+    socket.emit('ocr-status', { status: 'processing', message: 'AI ডকুমেন্ট বিশ্লেষণ করছে...' });
 
     try {
-      const extracted = await extractNidWithGemini(image, apiKey, {
+      const extracted = await extractNidWithAI(image, apiKey, {
         docType: payload.docType,
+        aiProvider,
+        deepseekApiKey,
         maritalStatus: payload.maritalStatus,
         religion: payload.religion,
         mobileNumber: payload.mobileNumber,

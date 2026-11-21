@@ -43,11 +43,19 @@
       </div>
 
       <details class="settings-details">
-        <summary>⚙️ Gemini AI API কী সেটিংস</summary>
+        <summary>⚙️ AI API কী সেটিংস (Gemini + DeepSeek)</summary>
         <div class="settings-body">
+          <label for="aiProvider">AI ইঞ্জিন:</label>
+          <select id="aiProvider" class="select-input" style="margin-bottom: 8px;">
+            <option value="auto" selected>অটো (Gemini + DeepSeek ব্যাকআপ)</option>
+            <option value="gemini">Google Gemini AI (3.8 Flash)</option>
+            <option value="deepseek">DeepSeek AI (deepseek-flash)</option>
+          </select>
           <label for="apiKey">Gemini API Key (ঐচ্ছিক যদি সার্ভারে সেট থাকে):</label>
           <input type="password" id="apiKey" placeholder="AIzaSy...">
-          <small>আপনার কি আপনার ব্রাউজারে সুরক্ষিতভাবে সংরক্ষিত থাকবে।</small>
+          <label for="deepseekApiKey" style="margin-top: 8px; display: block;">DeepSeek API Key (ঐচ্ছিক / ব্যাকআপ):</label>
+          <input type="password" id="deepseekApiKey" placeholder="sk-...">
+          <small>আপনার কীগুলো শুধুমাত্র আপনার ব্রাউজারে সংরক্ষিত থাকবে।</small>
         </div>
       </details>
     </section>

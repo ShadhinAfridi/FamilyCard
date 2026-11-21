@@ -30,7 +30,7 @@
       color: #475569;
       margin-bottom: 4px;
     }
-    input {
+    input, select {
       width: 100%;
       padding: 7px 9px;
       border: 1px solid #cbd5e1;
@@ -38,8 +38,9 @@
       font-size: 12.5px;
       box-sizing: border-box;
       outline: none;
+      background: #fff;
     }
-    input:focus {
+    input:focus, select:focus {
       border-color: #1976d2;
     }
     .btn {
@@ -91,8 +92,20 @@
 
   <div class="section-title">📱 Single Device (শুধুমাত্র ট্যাব)</div>
   <div class="field">
-    <label for="geminiApiKey">Gemini AI API Key (কোন সার্ভার লাগবে না):</label>
+    <label for="aiProvider">🧠 AI ইঞ্জিন (প্রোভাইডার):</label>
+    <select id="aiProvider">
+      <option value="auto" selected>অটো (Gemini + DeepSeek ব্যাকআপ)</option>
+      <option value="gemini">Google Gemini AI (3.8 Flash)</option>
+      <option value="deepseek">DeepSeek AI (deepseek-flash)</option>
+    </select>
+  </div>
+  <div class="field">
+    <label for="geminiApiKey">Gemini API Key:</label>
     <input type="password" id="geminiApiKey" placeholder="AIzaSy...">
+  </div>
+  <div class="field">
+    <label for="deepseekApiKey">DeepSeek API Key (ঐচ্ছিক / ব্যাকআপ):</label>
+    <input type="password" id="deepseekApiKey" placeholder="sk-...">
   </div>
 
   <div class="section-title">🔄 Cross-Device (অন্য ফোন দিয়ে স্ক্যান)</div>

@@ -400,6 +400,110 @@ async function callGeminiResilientOCR(apiKey, rawBase64, detectedMime, promptTex
   throw new Error(`OCR ব্যর্থ: ${lastErrorMsg}`);
 }
 
+async function callDeepSeekVisionOCR(deepseekKey, rawBase64, detectedMime, promptText) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30000);
+  try {
+    const response = await fetch('https://api.deepseek.com/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${deepseekKey}`
+      },
+      body: JSON.stringify({
+        model: 'deepseek-flash',
+        messages: [
+          {
+            role: 'system',
+            content: 'You are an expert Bangladeshi NID and Birth Certificate OCR engine. Return ONLY a single valid JSON object matching the exact requested keys.'
+          },
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: promptText },
+              {
+                type: 'image_url',
+                image_url: { url: `data:${detectedMime};base64,${rawBase64}` }
+              }
+            ]
+          }
+        ],
+        response_format: { type: 'json_object' },
+        max_tokens: 2048
+      }),
+      signal: controller.signal
+    });
+    clearTimeout(timer);
+
+    const resData = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const msg = resData?.error?.message || resData?.message || `HTTP ${response.status}`;
+      if (response.status === 401) {
+        throw new Error('DeepSeek API Key সঠিক নয়। অনুগ্রহ করে সঠিক Key দিন।');
+      }
+      if (response.status === 402) {
+        throw new Error('DeepSeek অ্যাকাউন্টে ব্যালেন্স শেষ (Insufficient Balance)।');
+      }
+      throw new Error(`DeepSeek API (${response.status}): ${msg}`);
+    }
+
+    const content = resData?.choices?.[0]?.message?.content;
+    if (!content) {
+      throw new Error('DeepSeek API থেকে কোনো উত্তর পাওয়া যায়নি।');
+    }
+
+    const parsed = parseOcrJsonText(content);
+    parsed.ocr_model_used = 'deepseek-flash (api.deepseek.com)';
+    return parsed;
+  } catch (err) {
+    clearTimeout(timer);
+    if (err.name === 'AbortError') {
+      throw new Error('DeepSeek OCR সময় শেষ হয়েছে (Timeout)');
+    }
+    throw err;
+  }
+}
+
+async function runMultiProviderOCR({ aiProvider = 'auto', geminiKey = '', deepseekKey = '', rawBase64, detectedMime, promptText }) {
+  let gKey = String(geminiKey || '').trim();
+  let dKey = String(deepseekKey || '').trim();
+  if (!dKey && /^sk-/i.test(gKey)) {
+    dKey = gKey;
+    gKey = '';
+  }
+
+  const mode = ['gemini', 'deepseek', 'auto'].includes(aiProvider) ? aiProvider : 'auto';
+
+  if (mode === 'deepseek') {
+    if (!dKey) throw new Error('DeepSeek API Key সেট করা নেই। সেটিংসে গিয়ে sk-... Key দিন।');
+    return await callDeepSeekVisionOCR(dKey, rawBase64, detectedMime, promptText);
+  }
+
+  if (mode === 'gemini') {
+    if (!gKey) throw new Error('Gemini API Key সেট করা নেই।');
+    return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText);
+  }
+
+  // auto mode: Gemini primary -> automatic DeepSeek failover (or DeepSeek directly if only DeepSeek key exists)
+  const errors = [];
+  if (gKey) {
+    try {
+      return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText);
+    } catch (err) {
+      errors.push(`Gemini: ${err.message}`);
+    }
+  }
+  if (dKey) {
+    try {
+      return await callDeepSeekVisionOCR(dKey, rawBase64, detectedMime, promptText);
+    } catch (err) {
+      errors.push(`DeepSeek: ${err.message}`);
+    }
+  }
+
+  throw new Error(errors.length ? errors.join(' | ') : 'Gemini বা DeepSeek API Key সেট করা নেই।');
+}
+
 chrome.runtime.onMessage.addListener((req, sender, sendResponse) => {
   if (req.action === 'ocr_nid_direct') {
     handleDirectOCR(req)
@@ -412,17 +516,17 @@ chrome.runtime.onMessage.addListener((req, sender, sendResponse) => {
 async function handleDirectOCR(req) {
   const { imageBase64, mimeType = 'image/jpeg', maritalStatus = 'বিবাহিত', religion = 'ইসলাম', mobileNumber = '', docType = 'auto' } = req;
 
-  let apiKey = req.apiKey;
-  if (!apiKey) {
-    const stored = await chrome.storage.sync.get(['geminiApiKey', 'serverUrl']);
-    apiKey = stored.geminiApiKey;
-    if (!apiKey && stored.serverUrl) {
-      return await forwardToServer(stored.serverUrl, imageBase64, mimeType, maritalStatus, religion, mobileNumber, docType);
-    }
+  const stored = await chrome.storage.sync.get(['aiProvider', 'geminiApiKey', 'deepseekApiKey', 'serverUrl']);
+  const aiProvider = req.aiProvider || stored.aiProvider || 'auto';
+  const apiKey = req.apiKey || stored.geminiApiKey || '';
+  const deepseekApiKey = req.deepseekApiKey || stored.deepseekApiKey || '';
+
+  if (!apiKey && !deepseekApiKey && stored.serverUrl) {
+    return await forwardToServer(stored.serverUrl, imageBase64, mimeType, maritalStatus, religion, mobileNumber, docType, aiProvider, deepseekApiKey);
   }
 
-  if (!apiKey) {
-    throw new Error('Gemini API Key সেট করা নেই। এক্সটেনশন আইকনে ক্লিক করে API Key দিন।');
+  if (!apiKey && !deepseekApiKey) {
+    throw new Error('Gemini বা DeepSeek API Key সেট করা নেই। এক্সটেনশন আইকনে ক্লিক করে Key দিন।');
   }
 
   let detectedMime = mimeType;
@@ -434,7 +538,14 @@ async function handleDirectOCR(req) {
   }
 
   const promptText = buildGeminiPrompt(docType);
-  const parsedData = await callGeminiResilientOCR(apiKey, rawBase64, detectedMime, promptText);
+  const parsedData = await runMultiProviderOCR({
+    aiProvider,
+    geminiKey: apiKey,
+    deepseekKey: deepseekApiKey,
+    rawBase64,
+    detectedMime,
+    promptText
+  });
   validateAndNormalizeOcrData(parsedData, { docType, maritalStatus, religion, mobileNumber });
 
   return {
@@ -444,7 +555,7 @@ async function handleDirectOCR(req) {
 }
 
 // Forward to backend server if user has a server configured
-async function forwardToServer(serverUrl, imageBase64, mimeType, maritalStatus, religion, mobileNumber, docType = 'auto') {
+async function forwardToServer(serverUrl, imageBase64, mimeType, maritalStatus, religion, mobileNumber, docType = 'auto', aiProvider = 'auto', deepseekApiKey = '') {
   const url = `${serverUrl.replace(/\/+$/, '')}/api/extract-nid`;
   const response = await fetch(url, {
     method: 'POST',
@@ -455,7 +566,9 @@ async function forwardToServer(serverUrl, imageBase64, mimeType, maritalStatus, 
       maritalStatus,
       religion,
       mobileNumber,
-      docType
+      docType,
+      aiProvider,
+      deepseekApiKey
     })
   });
 

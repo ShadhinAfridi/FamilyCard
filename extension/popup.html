@@ -103,7 +103,50 @@
 </head>
 <body>
   <h3>🪪 NID Auto-Filler</h3>
-  <div class="status-tag">সক্রিয় (Active • v1.9)</div>
+  <div class="status-tag">সক্রিয় (Active • v2.0)</div>
+
+  <div class="section-title">📊 স্টেপ ৫ ডিফল্ট (প্রোগ্রাম ও এমএফএস)</div>
+  <div class="row-2">
+    <div class="field">
+      <label for="s5MfsAccount">📱 মোবাইল ব্যাংকিং:</label>
+      <select id="s5MfsAccount">
+        <option value="নগদ" selected>নগদ</option>
+        <option value="বিকাশ">বিকাশ</option>
+        <option value="রকেট">রকেট</option>
+        <option value="উপায়">উপায়</option>
+        <option value="প্রযোজ্য নয়">প্রযোজ্য নয় / নেই</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="s5Training">🎓 প্রশিক্ষণ/সুবিধা:</label>
+      <select id="s5Training">
+        <option value="না" selected>না</option>
+        <option value="হ্যাঁ">হ্যাঁ</option>
+      </select>
+    </div>
+  </div>
+  <div class="row-2">
+    <div class="field">
+      <label for="s5TransCount">⚧️ হিজড়া সংখ্যা:</label>
+      <select id="s5TransCount">
+        <option value="০" selected>০</option>
+        <option value="১">১</option>
+        <option value="২">২</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="s5AbroadDefault">✈️ প্রবাসী (সকল):</label>
+      <select id="s5AbroadDefault">
+        <option value="০" selected>০ (না)</option>
+        <option value="১">১</option>
+        <option value="২">২</option>
+      </select>
+    </div>
+  </div>
+  <div class="field" style="display:flex; align-items:center; gap:6px;">
+    <input type="checkbox" id="s5AutoFill" checked style="width:auto;">
+    <label for="s5AutoFill" style="margin:0; font-weight:600; cursor:pointer;">স্টেপ ৫ খালি ডিফল্ট অটো-ফিল চালু</label>
+  </div>
 
   <div class="section-title">📱 AI মডেল, ডিফল্ট কী ও খরচ</div>
   <div class="field">

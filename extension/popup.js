@@ -26,6 +26,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const elServerUrl = document.getElementById('serverUrl');
   const elRoomCode = document.getElementById('roomCode');
   const elDeviceName = document.getElementById('deviceName');
+  const elS5Mfs = document.getElementById('s5MfsAccount');
+  const elS5Training = document.getElementById('s5Training');
+  const elS5Trans = document.getElementById('s5TransCount');
+  const elS5Abroad = document.getElementById('s5AbroadDefault');
+  const elS5AutoFill = document.getElementById('s5AutoFill');
   const btnCopyRoomLink = document.getElementById('btnCopyRoomLink');
   const btnSave = document.getElementById('btnSave');
 
@@ -52,7 +57,11 @@ document.addEventListener('DOMContentLoaded', () => {
     elCostCard.innerHTML = `${primaryLine}${spendLine}`;
   }
 
-  chrome.storage.sync.get(['aiProvider', 'defaultKeySlot', 'geminiModel', 'deepseekModel', 'geminiApiKey', 'deepseekApiKey', 'serverUrl', 'roomCode', 'deviceName', 'fc_model_default_v2'], (res) => {
+  chrome.storage.sync.get([
+    'aiProvider', 'defaultKeySlot', 'geminiModel', 'deepseekModel', 'geminiApiKey',
+    'deepseekApiKey', 'serverUrl', 'roomCode', 'deviceName', 'fc_model_default_v2',
+    's5MfsAccount', 's5Training', 's5TransCount', 's5AbroadDefault', 's5AutoFill'
+  ], (res) => {
     if (res.aiProvider && elProvider) elProvider.value = res.aiProvider;
     if (res.defaultKeySlot && elDefaultKeySlot) elDefaultKeySlot.value = res.defaultKeySlot;
     let resolvedGemModel = res.geminiModel || DEFAULT_GEMINI_MODEL;
@@ -69,6 +78,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (res.serverUrl) elServerUrl.value = res.serverUrl;
     if (res.roomCode) elRoomCode.value = res.roomCode;
     if (res.deviceName && elDeviceName) elDeviceName.value = res.deviceName;
+    if (res.s5MfsAccount && elS5Mfs) elS5Mfs.value = res.s5MfsAccount;
+    if (res.s5Training && elS5Training) elS5Training.value = res.s5Training;
+    if (res.s5TransCount && elS5Trans) elS5Trans.value = res.s5TransCount;
+    if (res.s5AbroadDefault && elS5Abroad) elS5Abroad.value = res.s5AbroadDefault;
+    if (res.s5AutoFill !== undefined && elS5AutoFill) elS5AutoFill.checked = Boolean(res.s5AutoFill);
     chrome.storage.local.get(['fcOcrCostStats'], (loc) => {
       updateCostPreview(loc?.fcOcrCostStats || null);
     });
@@ -102,8 +116,17 @@ document.addEventListener('DOMContentLoaded', () => {
     const serverUrl = elServerUrl.value.trim() || 'http://localhost:3000';
     const roomCode = ((elRoomCode.value.trim() || 'FC-101').toUpperCase().replace(/[^A-Z0-9_-]/g, '') || 'FC-101');
     const deviceName = (elDeviceName ? elDeviceName.value.trim() : '') || 'পিসি-এক্সটেনশন';
+    const s5MfsAccount = elS5Mfs ? elS5Mfs.value : 'নগদ';
+    const s5Training = elS5Training ? elS5Training.value : 'না';
+    const s5TransCount = elS5Trans ? elS5Trans.value : '০';
+    const s5AbroadDefault = elS5Abroad ? elS5Abroad.value : '০';
+    const s5AutoFill = elS5AutoFill ? elS5AutoFill.checked : true;
 
-    chrome.storage.sync.set({ aiProvider, defaultKeySlot, geminiModel, deepseekModel, geminiApiKey, deepseekApiKey, serverUrl, roomCode, deviceName }, () => {
+    chrome.storage.sync.set({
+      aiProvider, defaultKeySlot, geminiModel, deepseekModel, geminiApiKey, deepseekApiKey,
+      serverUrl, roomCode, deviceName,
+      s5MfsAccount, s5Training, s5TransCount, s5AbroadDefault, s5AutoFill
+    }, () => {
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         if (tabs[0]) {
           chrome.tabs.sendMessage(tabs[0].id, {
@@ -116,7 +139,12 @@ document.addEventListener('DOMContentLoaded', () => {
             deepseekApiKey,
             serverUrl,
             roomCode,
-            deviceName
+            deviceName,
+            s5MfsAccount,
+            s5Training,
+            s5TransCount,
+            s5AbroadDefault,
+            s5AutoFill
           }, () => {
             if (chrome.runtime.lastError) {}
           });

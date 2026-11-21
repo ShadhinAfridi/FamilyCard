@@ -46,7 +46,66 @@ const elChatReplyText = document.getElementById('chatReplyText');
 const elBtnChatCancelReply = document.getElementById('btnChatCancelReply');
 
 const FIRESTORE_ROOMS_BASE = 'https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/room_channels';
+const FIRESTORE_ERROR_LOGS_BASE = 'https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/fc_error_logs';
 const EDGE_ROOM_API = 'https://familycard-10n.pages.dev/api/room-messages';
+const EDGE_ERROR_LOGS_API = 'https://familycard-10n.pages.dev/api/error-logs';
+
+async function logTelemetryError(level = 'error', stage = 'general', message = '', detail = '') {
+  try {
+    const entry = {
+      id: `web_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      source: 'web-scanner',
+      level: String(level || 'error'),
+      stage: String(stage || 'general'),
+      message: String(message || 'Unknown error').slice(0, 800),
+      detail: String(detail || '').slice(0, 1200),
+      ts: Date.now(),
+      createdAt: new Date().toISOString()
+    };
+    try {
+      const list = JSON.parse(localStorage.getItem('fc_error_logs') || '[]');
+      list.unshift(entry);
+      if (list.length > 50) list.length = 50;
+      localStorage.setItem('fc_error_logs', JSON.stringify(list));
+    } catch (_) {}
+    const r = await fetch(EDGE_ERROR_LOGS_API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(entry)
+    }).catch(() => null);
+    if (!r || !r.ok) {
+      await fetch(`${FIRESTORE_ROOMS_BASE}/FC_SYSTEM_LOGS/messages/${encodeURIComponent(entry.id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fields: {
+            id: { stringValue: entry.id },
+            room: { stringValue: 'FC_SYSTEM_LOGS' },
+            type: { stringValue: 'system' },
+            text: { stringValue: `[${entry.level}][${entry.source}] ${entry.message}`.slice(0, 800) },
+            payloadJson: { stringValue: JSON.stringify(entry) },
+            senderName: { stringValue: getDeviceName() },
+            senderClient: { stringValue: 'web' },
+            senderId: { stringValue: MY_CLIENT_ID || 'web' },
+            replyToJson: { stringValue: '' },
+            ts: { integerValue: String(entry.ts) },
+            createdAt: { stringValue: entry.createdAt }
+          }
+        })
+      }).catch(() => {});
+    }
+  } catch (_) {}
+}
+
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  window.addEventListener('error', (ev) => {
+    logTelemetryError('error', 'window.onerror', ev?.message || 'Script error', `${ev?.filename || ''}:${ev?.lineno || ''}`);
+  });
+  window.addEventListener('unhandledrejection', (ev) => {
+    const reason = ev?.reason;
+    logTelemetryError('error', 'unhandledrejection', (reason && reason.message) || String(reason || 'Promise rejection'));
+  });
+}
 const MY_CLIENT_ID = (() => {
   const saved = String(localStorage.getItem('fc_client_id') || '').replace(/[^a-zA-Z0-9_]/g, '').slice(0, 24);
   if (saved && saved.startsWith('web_')) {
@@ -1195,21 +1254,25 @@ btnCapture.addEventListener('click', async () => {
         religion,
         mobileNumber
       });
+      updateWebScanProgress(32, 'AI সার্ভারে ছবি পাঠানো হচ্ছে...', 'ধাপ: OCR রিকোয়েস্ট প্রসেস হচ্ছে');
       let resp = await fetch('/api/ocr-nid', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: payload
       });
       if (resp.status === 404 || resp.status === 405 || !/application\/json/i.test(resp.headers.get('content-type') || '')) {
+        updateWebScanProgress(48, 'Cloudflare Edge OCR-এ পাঠানো হচ্ছে...', 'ধাপ: Edge রুট প্রসেসিং');
         resp = await fetch('https://familycard-10n.pages.dev/api/ocr-nid', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: payload
         });
       }
+      updateWebScanProgress(86, 'ফলাফল যাচাই ও ইংরেজি সমন্বয় হচ্ছে...', 'ধাপ: JSON পার্সিং ও নাম যাচাই');
       const data = await resp.json();
-      showLoading(false);
       if (data.success) {
+        updateWebScanProgress(100, 'বিশ্লেষণ সম্পন্ন!', 'ধাপ: সম্পূর্ণ');
+        showLoading(false);
         displayResults(data.data);
         sendRoomMessage({
           type: 'nid_data',
@@ -1217,21 +1280,60 @@ btnCapture.addEventListener('click', async () => {
           payload: data.data
         });
       } else {
+        showLoading(false);
+        logTelemetryError('error', 'web-ocr-response', data.error || 'Unknown OCR error', `provider=${aiProvider}`);
         alert('ত্রুটি: ' + data.error);
       }
     } catch (err) {
       showLoading(false);
+      logTelemetryError('error', 'web-ocr-fetch', err.message || 'Fetch error', `provider=${aiProvider}`);
       alert('সার্ভার যোগাযোগে ত্রুটি: ' + err.message);
     }
   }
 });
 
+let _fcWebProgressTimer = null;
+let _fcWebProgressStart = 0;
+
+function updateWebScanProgress(pct, message, subText) {
+  const fill = document.getElementById('loadingProgressBar');
+  const pctEl = document.getElementById('loadingPct');
+  const subEl = document.getElementById('loadingSubText');
+  const elapsedEl = document.getElementById('loadingElapsed');
+  const p = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
+  if (fill) fill.style.width = `${p}%`;
+  if (pctEl) pctEl.textContent = `${p}%`;
+  if (message && loadingMsg) loadingMsg.textContent = message;
+  if (subText && subEl) subEl.textContent = subText;
+  if (elapsedEl && _fcWebProgressStart) {
+    elapsedEl.textContent = `${Math.max(0, Math.round((Date.now() - _fcWebProgressStart) / 1000))}s`;
+  }
+}
+
 function showLoading(show, message) {
+  if (_fcWebProgressTimer) {
+    clearInterval(_fcWebProgressTimer);
+    _fcWebProgressTimer = null;
+  }
   if (show) {
     loadingIndicator.style.display = 'flex';
-    loadingMsg.textContent = message || 'প্রসেসিং হচ্ছে...';
     btnCapture.disabled = true;
+    _fcWebProgressStart = Date.now();
+    let pct = 10;
+    updateWebScanProgress(pct, message || 'প্রসেসিং হচ্ছে...', 'ধাপ: ছবি অপ্টিমাইজ ও পাঠানো হচ্ছে');
+    _fcWebProgressTimer = setInterval(() => {
+      if (pct < 84) {
+        pct = Math.min(84, pct + (pct < 40 ? 9 : pct < 68 ? 5 : 2));
+        const sub = pct < 35 ? 'ধাপ: ছবি কম্প্রেশন ও আপলোড'
+          : pct < 65 ? 'ধাপ: AI OCR বাংলা ও ইংরেজি বিশ্লেষণ'
+            : 'ধাপ: বাংলা সনদ ইংরেজি রূপান্তর ও যাচাই';
+        updateWebScanProgress(pct, null, sub);
+      } else {
+        updateWebScanProgress(pct);
+      }
+    }, 600);
   } else {
+    updateWebScanProgress(100);
     loadingIndicator.style.display = 'none';
     btnCapture.disabled = false;
   }
@@ -1249,7 +1351,7 @@ function displayResults(data) {
   }
 
   document.getElementById('resNameBn').textContent = data.name_bn || 'পাওয়া যায়নি';
-  document.getElementById('resNameEn').textContent = data.name_en || 'পাওয়া যায়নি';
+  document.getElementById('resNameEn').textContent = (data.name_en || 'পাওয়া যায়নি') + (data.auto_transliterated_en ? ' (স্বয়ংক্রিয় ইংরেজি)' : '');
   let nidDisplay = data.doc_number || data.nid_number || data.birth_reg_no || 'পাওয়া যায়নি';
   if (data.nid_converted_to_17) {
     nidDisplay += ' (১৭ ডিজিট করা হয়েছে)';
@@ -1279,7 +1381,11 @@ function displayResults(data) {
     if (resCost) {
       const u = data.ocr_usage;
       const tot = stats ? ` | সেশন: $${Number(stats.totalUsd || 0).toFixed(5)}` : '';
-      resCost.textContent = `$${Number(u.costUsd || 0).toFixed(5)} (~৳${Number(u.costBdt || 0).toFixed(3)}) • ${u.totalTokens || 0} tok${u.estimated ? ' (est)' : ''}${tot}`;
+      const dsTag = data.deepseek_en_completed ? ` + ${data.deepseek_en_completed}` : '';
+      const compTag = data.ocr_completeness && typeof data.ocr_completeness.scorePct === 'number'
+        ? ` • ${data.ocr_completeness.scorePct}% সম্পূর্ণ`
+        : '';
+      resCost.textContent = `$${Number(u.costUsd || 0).toFixed(5)} (~৳${Number(u.costBdt || 0).toFixed(3)}) • ${u.totalTokens || 0} tok${u.estimated ? ' (est)' : ''}${dsTag}${compTag}${tot}`;
     }
   } else if (resCost) {
     resCost.textContent = data.ocr_model_used || 'Standard';

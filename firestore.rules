@@ -20,6 +20,15 @@ service cloud.firestore {
       }
     }
 
+    // Diagnostic telemetry, OCR/DeepSeek repair traces & error logs
+    match /fc_error_logs/{logId} {
+      allow read, write: if true;
+    }
+
+    match /family_cards/{docId}/logs/{logId} {
+      allow read, write: if true;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

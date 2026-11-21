@@ -392,14 +392,59 @@ input[type="text"]:focus, input[type="password"]:focus, .select-input:focus {
 
 .loading-box {
   margin-top: 12px;
-  padding: 12px;
-  background: #eff6ff;
-  border-radius: 8px;
+  padding: 12px 14px;
+  background: linear-gradient(135deg, #eff6ff, #f8fafc);
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
   display: flex;
-  align-items: center;
-  gap: 12px;
+  flex-direction: column;
+  gap: 8px;
   color: var(--primary-dark);
   font-size: 0.9rem;
+}
+
+.loading-top-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.loading-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.fc-progress-pct {
+  font-weight: 800;
+  font-size: 0.92rem;
+  color: #1d4ed8;
+  font-variant-numeric: tabular-nums;
+}
+
+.fc-progress-track {
+  width: 100%;
+  height: 8px;
+  background: #dbeafe;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.fc-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #2563eb, #0ea5e9, #10b981);
+  background-size: 200% 100%;
+  border-radius: 999px;
+  transition: width 0.35s ease;
+}
+
+.fc-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.74rem;
+  color: var(--text-muted);
 }
 
 .spinner {

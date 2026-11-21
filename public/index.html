@@ -196,8 +196,20 @@
 
       <!-- Live Loading / Status -->
       <div id="loadingIndicator" class="loading-box" style="display: none;">
-        <div class="spinner"></div>
-        <p id="loadingMsg">Gemini AI দ্বারা NID বিশ্লেষণ করা হচ্ছে...</p>
+        <div class="loading-top-row">
+          <div class="loading-left">
+            <div class="spinner"></div>
+            <p id="loadingMsg">AI দ্বারা ডকুমেন্ট বিশ্লেষণ করা হচ্ছে...</p>
+          </div>
+          <span id="loadingPct" class="fc-progress-pct">0%</span>
+        </div>
+        <div class="fc-progress-track">
+          <div id="loadingProgressBar" class="fc-progress-fill"></div>
+        </div>
+        <div class="fc-progress-meta">
+          <span id="loadingSubText">ধাপ: ডকুমেন্ট প্রস্তুত হচ্ছে</span>
+          <span id="loadingElapsed">0s</span>
+        </div>
       </div>
     </section>
 

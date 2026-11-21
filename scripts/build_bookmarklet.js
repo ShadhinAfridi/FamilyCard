@@ -38,13 +38,13 @@ async function build() {
   const bookmarkletCode = 'javascript:' + encodeURI(rawMinCode).replace(/#/g, '%23');
 
   // 3. Tiny 1-line Mobile Chrome Loader Bookmarklet (Network-first live fetch with 2.6s timeout + offline localStorage fallback)
-  const mobileLoaderCode = "javascript:!function(){if(window.__fcOpenModal)return void window.__fcOpenModal();var k='fc_app_v18',u='https://binary-ict.web.app/bookmarklet/app.min.js',b='https://familycard.afridi.app/bookmarklet/app.min.js',c=localStorage.getItem(k),ac=typeof AbortController!=='undefined'?new AbortController():null,tm=ac?setTimeout(function(){ac.abort()},2600):0,op=ac?{signal:ac.signal,cache:'no-store'}:{cache:'no-store'};fetch(u+'?t='+Date.now(),op).then(function(r){if(!r.ok)throw 0;return r.text()}).catch(function(){return fetch(b+'?t='+Date.now(),{cache:'no-store'}).then(function(r){if(!r.ok)throw 0;return r.text()})}).then(function(t){clearTimeout(tm);if(t&&t.length>999){try{localStorage.setItem(k,t);localStorage.setItem('fc_app_v15',t)}catch(e){}(0,eval)(t)}}).catch(function(){clearTimeout(tm);if(c)try{(0,eval)(c)}catch(e){c=0}if(!c){var s=document.createElement('script');s.src=u+'?t='+Date.now();(document.head||document.documentElement).appendChild(s)}})}();";
+  const mobileLoaderCode = "javascript:!function(){if(window.__fcOpenModal)return void window.__fcOpenModal();var k='fc_app_v19',u='https://binary-ict.web.app/bookmarklet/app.min.js',b='https://familycard.afridi.app/bookmarklet/app.min.js',c=localStorage.getItem(k),ac=typeof AbortController!=='undefined'?new AbortController():null,tm=ac?setTimeout(function(){ac.abort()},2600):0,op=ac?{signal:ac.signal,cache:'no-store'}:{cache:'no-store'};fetch(u+'?t='+Date.now(),op).then(function(r){if(!r.ok)throw 0;return r.text()}).catch(function(){return fetch(b+'?t='+Date.now(),{cache:'no-store'}).then(function(r){if(!r.ok)throw 0;return r.text()})}).then(function(t){clearTimeout(tm);if(t&&t.length>999){try{localStorage.setItem(k,t);localStorage.setItem('fc_app_v18',t);localStorage.setItem('fc_app_v15',t)}catch(e){}(0,eval)(t)}}).catch(function(){clearTimeout(tm);if(c)try{(0,eval)(c)}catch(e){c=0}if(!c){var s=document.createElement('script');s.src=u+'?t='+Date.now();(document.head||document.documentElement).appendChild(s)}})}();";
 
   // 4. Tampermonkey / Violentmonkey Userscript for automatic execution on mobile & desktop
   const userScriptHeader = `// ==UserScript==
 // @name         Family Card AI Assistant (NID & BRC Scanner + Auto-Fill + Room Chat)
 // @namespace    https://binary-ict.web.app/
-// @version      1.8.1
+// @version      1.9.0
 // @description  Automated NID/BRC OCR (Gemini + DeepSeek), Cost Tracker, Section 3-9 Smart Defaults & Cross-Device Room Messaging for fc.bhata.gov.bd
 // @author       Binary ICT
 // @match        https://fc.bhata.gov.bd/*
@@ -58,10 +58,19 @@ async function build() {
 `;
   const userScriptCode = userScriptHeader + rawMinCode;
 
-  fs.writeFileSync(distMinPath, bookmarkletCode, 'utf8');
-  console.log(`[Build] Written ${distMinPath} (${bookmarkletCode.length} chars)`);
+  const distAppMinPath = path.join(rootDir, 'bookmarklet', 'app.min.js');
+  const distLoaderPath = path.join(rootDir, 'bookmarklet', 'loader.min.js');
+  const distUserScriptPath = path.join(rootDir, 'bookmarklet', 'familycard.user.js');
+  const srcIndexPath = path.join(rootDir, 'bookmarklet', 'index.html');
+  const publicIndexPath = path.join(rootDir, 'public', 'bookmarklet', 'index.html');
 
   fs.mkdirSync(path.dirname(publicMinPath), { recursive: true });
+  fs.writeFileSync(distMinPath, bookmarkletCode, 'utf8');
+  fs.writeFileSync(distAppMinPath, rawMinCode, 'utf8');
+  fs.writeFileSync(distLoaderPath, mobileLoaderCode, 'utf8');
+  fs.writeFileSync(distUserScriptPath, userScriptCode, 'utf8');
+  console.log(`[Build] Written ${distMinPath} (${bookmarkletCode.length} chars)`);
+
   fs.writeFileSync(publicMinPath, bookmarkletCode, 'utf8');
   console.log(`[Build] Written ${publicMinPath} (${bookmarkletCode.length} chars)`);
 
@@ -76,6 +85,11 @@ async function build() {
 
   fs.writeFileSync(publicSrcPath, srcCode, 'utf8');
   console.log(`[Build] Written ${publicSrcPath} (${srcCode.length} chars)`);
+
+  if (fs.existsSync(srcIndexPath)) {
+    fs.copyFileSync(srcIndexPath, publicIndexPath);
+    console.log(`[Build] Synced ${publicIndexPath}`);
+  }
 
   console.log('✅ Bookmarklet build completed successfully!');
 }

@@ -37,11 +37,20 @@
   let serverUrl = 'http://localhost:3000';
   let roomCode = (localStorage.getItem('fc_room_code') || 'FC-101').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '') || 'FC-101';
   let myDeviceName = localStorage.getItem('fc_device_name') || 'পিসি-এক্সটেনশন';
+  const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash-lite';
+  if (!localStorage.getItem('fc_model_default_v2')) {
+    const prevGem = localStorage.getItem('fc_gemini_model');
+    if (!prevGem || prevGem === 'gemini-3.1-flash-lite') {
+      localStorage.setItem('fc_gemini_model', DEFAULT_GEMINI_MODEL);
+    }
+    localStorage.setItem('fc_model_default_v2', '1');
+  }
+
   let geminiApiKey = '';
   let deepseekApiKey = '';
   let aiProvider = localStorage.getItem('fc_ai_provider') || 'economy';
   let defaultKeySlot = localStorage.getItem('fc_default_key_slot') || 'auto';
-  let geminiModel = localStorage.getItem('fc_gemini_model') || 'gemini-3.1-flash-lite';
+  let geminiModel = localStorage.getItem('fc_gemini_model') || DEFAULT_GEMINI_MODEL;
   let deepseekModel = localStorage.getItem('fc_deepseek_model') || 'deepseek-flash';
   let lastExtractedData = null;
   window.__fcLastScannedAny = null;
@@ -56,9 +65,10 @@
 
   const BDT_PER_USD = 122;
   const MODAL_MODEL_PRICING = {
-    'gemini-3.1-flash-lite': { label: 'Gemini 3.1 Flash-Lite', inM: 0.25, outM: 1.50, est1k: 0.78, rpm: '4K' },
     'gemini-3.5-flash-lite': { label: 'Gemini 3.5 Flash-Lite', inM: 0.30, outM: 2.50, est1k: 1.11, rpm: '4K' },
     'gemini-3.8-flash': { label: 'Gemini 3.8 Flash', inM: 0.75, outM: 3.75, est1k: 2.53, rpm: '1K' },
+    'gemini-4-argon': { label: 'Gemini 4 Argon', inM: 2.00, outM: 10.00, est1k: 6.50, rpm: '500' },
+    'gemini-3.1-flash-lite': { label: 'Gemini 3.1 Flash-Lite', inM: 0.25, outM: 1.50, est1k: 0.78, rpm: '4K' },
     'deepseek-flash': { label: 'DeepSeek Flash', offInM: 0.15, offOutM: 0.60, peakInM: 0.30, peakOutM: 1.20 }
   };
 
@@ -105,7 +115,7 @@
 
   // Retrieve saved settings
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
-    chrome.storage.sync.get(['serverUrl', 'roomCode', 'deviceName', 'geminiApiKey', 'deepseekApiKey', 'aiProvider', 'defaultKeySlot', 'geminiModel', 'deepseekModel'], (res) => {
+    chrome.storage.sync.get(['serverUrl', 'roomCode', 'deviceName', 'geminiApiKey', 'deepseekApiKey', 'aiProvider', 'defaultKeySlot', 'geminiModel', 'deepseekModel', 'fc_model_default_v2'], (res) => {
       if (res.serverUrl) serverUrl = res.serverUrl;
       if (res.roomCode) roomCode = res.roomCode.toUpperCase().replace(/[^A-Z0-9_-]/g, '') || 'FC-101';
       if (res.deviceName) myDeviceName = res.deviceName;
@@ -113,7 +123,15 @@
       if (res.deepseekApiKey) deepseekApiKey = res.deepseekApiKey;
       if (res.aiProvider) aiProvider = res.aiProvider;
       if (res.defaultKeySlot) defaultKeySlot = res.defaultKeySlot;
-      if (res.geminiModel) geminiModel = res.geminiModel;
+      let resolvedModel = res.geminiModel || geminiModel || DEFAULT_GEMINI_MODEL;
+      if (!res.fc_model_default_v2) {
+        if (!res.geminiModel || res.geminiModel === 'gemini-3.1-flash-lite') {
+          resolvedModel = DEFAULT_GEMINI_MODEL;
+        }
+        chrome.storage.sync.set({ geminiModel: resolvedModel, fc_model_default_v2: '1' });
+      }
+      geminiModel = MODAL_MODEL_PRICING[resolvedModel] ? resolvedModel : DEFAULT_GEMINI_MODEL;
+      localStorage.setItem('fc_gemini_model', geminiModel);
       if (res.deepseekModel) deepseekModel = res.deepseekModel;
       initUI();
       connectSocket();
@@ -277,13 +295,13 @@
     modal.innerHTML = `
       <div class="fc-modal-container">
         <div class="fc-modal-header">
-          <h3>🪪 সরাসরি NID ও জন্ম নিবন্ধন স্ক্যান (v1.8.1)</h3>
+          <h3>🪪 সরাসরি NID ও জন্ম নিবন্ধন স্ক্যান (v1.9.0)</h3>
           <button type="button" id="fc-modal-hdr-chat" style="background:rgba(255,255,255,0.22); border:1px solid rgba(255,255,255,0.45); color:#fff; border-radius:6px; padding:3px 8px; font-size:11px; font-weight:700; cursor:pointer; margin-left:auto; margin-right:8px;">💬 রুম মেসেজ</button>
           <span class="fc-modal-close" id="fc-modal-close-btn">&times;</span>
         </div>
         <div class="fc-modal-body">
           <!-- Target Selector: Applicant vs Family Member -->
-          <div style="display: flex; gap: 6px; margin-bottom: 10px; background: #f1f5f9; padding: 4px; border-radius: 8px;">
+          <div style="display: flex; gap: 6px; background: #f1f5f9; padding: 4px; border-radius: 8px;">
             <button type="button" id="fc-modal-target-self-btn" style="flex: 1; padding: 6px 10px; border: none; border-radius: 6px; font-weight: 700; font-size: 11.5px; cursor: pointer; background: #0284c7; color: #fff;">
               👤 প্রধান আবেদনকারী
             </button>
@@ -292,8 +310,15 @@
             </button>
           </div>
 
+          <!-- Document & Camera Frame Size Bar (Works for Applicant + Member) -->
+          <div id="fc-modal-doc-frame-bar" class="fc-modal-doc-pills">
+            <button type="button" class="fc-modal-frame-pill active" data-doc-choice="nid" data-frame-mode="id">🪪 NID (ID কার্ড)</button>
+            <button type="button" class="fc-modal-frame-pill" data-doc-choice="birth_certificate" data-frame-mode="a4">📄 জন্ম নিবন্ধন (A4)</button>
+            <button type="button" class="fc-modal-frame-pill" data-doc-choice="auto">🤖 অটো</button>
+          </div>
+
           <!-- Family Member Sub-panel (Shown when member target selected) -->
-          <div id="fc-modal-member-settings" style="display: none; background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 10px; padding: 10px; margin-bottom: 10px; flex-direction: column; gap: 8px;">
+          <div id="fc-modal-member-settings" style="display: none; background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 10px; padding: 10px; flex-direction: column; gap: 8px;">
             <div style="font-weight: 700; color: #166534; font-size: 12px; display: flex; justify-content: space-between; align-items: center;">
               <span>👨‍👩‍👧‍👦 সদস্য স্ক্যান কনফিগারেশন</span>
               <span id="fc-modal-member-badge" style="font-size: 10.5px; color: #0f766e; font-weight: bold; background: #ccfbf1; padding: 2px 6px; border-radius: 4px;">সদস্য নির্বাচন করুন</span>
@@ -309,7 +334,7 @@
                 <label for="fc-modal-doc-type">📄 সনদের ধরন*</label>
                 <select id="fc-modal-doc-type" style="padding: 4px 6px; border-radius: 6px; border: 1px solid #86efac; font-weight: 600;">
                   <option value="auto">অটো-ডিটেক্ট (NID বা জন্ম সনদ)</option>
-                  <option value="nid">জাতীয় পরিচিতি নম্বর (NID)</option>
+                  <option value="nid" selected>জাতীয় পরিচিতি নম্বর (NID)</option>
                   <option value="birth_certificate">জন্ম নিবন্ধন সনদ (BRC)</option>
                 </select>
               </div>
@@ -341,12 +366,15 @@
 
           <input type="file" id="fc-modal-file-input" accept="image/*" capture="environment" style="display: none;">
 
-          <div id="fc-modal-viewfinder" class="fc-modal-cam-box" style="display: none;">
+          <div id="fc-modal-viewfinder" class="fc-modal-cam-box mode-id" style="display: none;">
             <video id="fc-modal-video" playsinline autoplay muted></video>
-            <div class="fc-modal-cam-bracket tl"></div>
-            <div class="fc-modal-cam-bracket tr"></div>
-            <div class="fc-modal-cam-bracket bl"></div>
-            <div class="fc-modal-cam-bracket br"></div>
+            <div id="fc-modal-crop-frame" class="fc-modal-crop-frame">
+              <div class="fc-modal-cam-bracket tl"></div>
+              <div class="fc-modal-cam-bracket tr"></div>
+              <div class="fc-modal-cam-bracket bl"></div>
+              <div class="fc-modal-cam-bracket br"></div>
+              <div id="fc-modal-cam-hint" class="fc-modal-crop-hint">NID কার্ডটি নীল ফ্রেমের ভেতর রাখুন (বাইরের অংশ ক্রপ হবে)</div>
+            </div>
           </div>
 
           <div id="fc-modal-preview-wrap" class="fc-preview-img-wrap" style="display: none;">
@@ -426,9 +454,9 @@
               <div class="fc-modal-field">
                 <label for="fc-modal-ai-provider">🧠 AI কৌশল:</label>
                 <select id="fc-modal-ai-provider">
-                  <option value="economy" ${aiProvider === 'economy' ? 'selected' : ''}>💸 সাশ্রয়ী অটো (Lite → 3.8)</option>
+                  <option value="economy" ${aiProvider === 'economy' ? 'selected' : ''}>💸 সাশ্রয়ী অটো (3.5 Lite → 3.8)</option>
                   <option value="deepseek" ${aiProvider === 'deepseek' ? 'selected' : ''}>🐋 DeepSeek Flash (~$0.38/1K)</option>
-                  <option value="gemini_lite" ${aiProvider === 'gemini_lite' ? 'selected' : ''}>⚡ Gemini Lite (~$0.78/1K)</option>
+                  <option value="gemini_lite" ${aiProvider === 'gemini_lite' ? 'selected' : ''}>⚡ Gemini Lite (~$0.78–$1.11/1K)</option>
                   <option value="auto" ${aiProvider === 'auto' ? 'selected' : ''}>⚖️ ডুয়াল-AI (ডিফল্ট কী → ব্যাকআপ)</option>
                   <option value="gemini" ${aiProvider === 'gemini' ? 'selected' : ''}>💎 Gemini শুধুমাত্র (নির্বাচিত মডেল)</option>
                 </select>
@@ -446,9 +474,10 @@
               <div class="fc-modal-field">
                 <label for="fc-modal-gemini-model">✨ Gemini মডেল:</label>
                 <select id="fc-modal-gemini-model">
-                  <option value="gemini-3.1-flash-lite" ${geminiModel === 'gemini-3.1-flash-lite' ? 'selected' : ''}>3.1 Lite ($0.25/$1.50)</option>
                   <option value="gemini-3.5-flash-lite" ${geminiModel === 'gemini-3.5-flash-lite' ? 'selected' : ''}>3.5 Lite ($0.30/$2.50)</option>
                   <option value="gemini-3.8-flash" ${geminiModel === 'gemini-3.8-flash' ? 'selected' : ''}>3.8 Flash ($0.75/$3.75)</option>
+                  <option value="gemini-4-argon" ${geminiModel === 'gemini-4-argon' ? 'selected' : ''}>4 Argon ($2.00/$10.00)</option>
+                  <option value="gemini-3.1-flash-lite" ${geminiModel === 'gemini-3.1-flash-lite' ? 'selected' : ''}>3.1 Lite ($0.25/$1.50)</option>
                 </select>
               </div>
               <div class="fc-modal-field">
@@ -484,7 +513,51 @@
     const btnSnap = document.getElementById('fc-modal-btn-snap');
     const btnGallery = document.getElementById('fc-modal-btn-gallery');
     const viewFinder = document.getElementById('fc-modal-viewfinder');
+    const cropFrameElem = document.getElementById('fc-modal-crop-frame');
+    const camHintElem = document.getElementById('fc-modal-cam-hint');
     const videoElem = document.getElementById('fc-modal-video');
+    const selectMemberDocType = document.getElementById('fc-modal-doc-type');
+    const docFramePills = Array.from(document.querySelectorAll('#fc-modal-doc-frame-bar .fc-modal-frame-pill'));
+    window.__fcModalDocChoice = window.__fcModalDocChoice || 'nid';
+    window.__fcModalFrameMode = window.__fcModalFrameMode || 'id';
+
+    function applyModalDocumentFrameMode(docChoice, explicitFrameMode = null) {
+      window.__fcModalDocChoice = docChoice || 'nid';
+      if (selectMemberDocType && selectMemberDocType.value !== window.__fcModalDocChoice) {
+        selectMemberDocType.value = window.__fcModalDocChoice;
+      }
+      if (explicitFrameMode) {
+        window.__fcModalFrameMode = explicitFrameMode;
+      } else if (window.__fcModalDocChoice === 'birth_certificate') {
+        window.__fcModalFrameMode = 'a4';
+      } else if (window.__fcModalDocChoice === 'nid') {
+        window.__fcModalFrameMode = 'id';
+      }
+      if (viewFinder) {
+        viewFinder.classList.toggle('mode-a4', window.__fcModalFrameMode === 'a4');
+        viewFinder.classList.toggle('mode-id', window.__fcModalFrameMode !== 'a4');
+      }
+      if (camHintElem) {
+        camHintElem.textContent = window.__fcModalFrameMode === 'a4'
+          ? 'A4 জন্ম নিবন্ধন সনদ নীল ফ্রেমে রাখুন (বাইরের অংশ ক্রপ হবে)'
+          : 'NID কার্ডটি নীল ফ্রেমের ভেতর রাখুন (বাইরের অংশ ক্রপ হবে)';
+      }
+      docFramePills.forEach((p) => {
+        p.classList.toggle('active', p.dataset.docChoice === window.__fcModalDocChoice);
+      });
+    }
+
+    docFramePills.forEach((pill) => {
+      pill.addEventListener('click', () => {
+        const choice = pill.dataset.docChoice || 'nid';
+        const nextFrame = pill.dataset.frameMode || (choice === 'birth_certificate' ? 'a4' : (choice === 'nid' ? 'id' : window.__fcModalFrameMode));
+        applyModalDocumentFrameMode(choice, nextFrame);
+      });
+    });
+    if (selectMemberDocType) {
+      selectMemberDocType.addEventListener('change', () => applyModalDocumentFrameMode(selectMemberDocType.value));
+    }
+    applyModalDocumentFrameMode('nid', 'id');
     const btnSubmit = document.getElementById('fc-modal-btn-submit');
     const btnTargetSelf = document.getElementById('fc-modal-target-self-btn');
     const btnTargetMember = document.getElementById('fc-modal-target-member-btn');
@@ -509,7 +582,7 @@
       const st = modalSelProv ? modalSelProv.value : aiProvider;
       const ks = modalSelKeySlot ? modalSelKeySlot.value : defaultKeySlot;
       const gm = modalSelGem ? modalSelGem.value : geminiModel;
-      const gemSpec = MODAL_MODEL_PRICING[gm] || MODAL_MODEL_PRICING['gemini-3.1-flash-lite'];
+      const gemSpec = MODAL_MODEL_PRICING[gm] || MODAL_MODEL_PRICING[DEFAULT_GEMINI_MODEL];
       const peak = isDeepSeekPeakUtc();
       const ds1k = peak ? 0.76 : 0.38;
       const dsIn = peak ? 0.30 : 0.15;
@@ -624,12 +697,23 @@
     btnCamera.addEventListener('click', async () => {
       try {
         if (activeMediaStream) stopLiveCamera();
-        const constraints = {
-          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
-          audio: false
-        };
-        activeMediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+        const candidates = [
+          { video: { facingMode: { ideal: 'environment' }, width: { ideal: 2560 }, height: { ideal: 1920 } }, audio: false },
+          { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false },
+          { video: { facingMode: 'environment' }, audio: false },
+          { video: true, audio: false }
+        ];
+        let stream = null;
+        for (const c of candidates) {
+          try {
+            stream = await navigator.mediaDevices.getUserMedia(c);
+            if (stream) break;
+          } catch (_) {}
+        }
+        if (!stream) throw new Error('No camera stream available');
+        activeMediaStream = stream;
         if (videoElem) videoElem.srcObject = activeMediaStream;
+        applyModalDocumentFrameMode(window.__fcModalDocChoice, window.__fcModalFrameMode);
         if (viewFinder) viewFinder.style.display = 'flex';
         const previewWrap = document.getElementById('fc-modal-preview-wrap');
         if (previewWrap) previewWrap.style.display = 'none';
@@ -641,6 +725,43 @@
       }
     });
 
+    function captureCroppedModalCameraFrame(videoEl, frameEl, frameMode = 'id', quality = 0.92) {
+      const natW = videoEl.videoWidth;
+      const natH = videoEl.videoHeight;
+      if (!natW || !natH) return null;
+
+      const vRect = videoEl.getBoundingClientRect();
+      const fRect = frameEl ? frameEl.getBoundingClientRect() : null;
+      let sx = 0, sy = 0, sw = natW, sh = natH;
+
+      if (fRect && vRect.width > 0 && vRect.height > 0 && fRect.width > 0 && fRect.height > 0) {
+        const scale = Math.max(vRect.width / natW, vRect.height / natH);
+        const offsetX = (natW * scale - vRect.width) / 2;
+        const offsetY = (natH * scale - vRect.height) / 2;
+        sx = Math.round((fRect.left - vRect.left + offsetX) / scale);
+        sy = Math.round((fRect.top - vRect.top + offsetY) / scale);
+        sw = Math.round(fRect.width / scale);
+        sh = Math.round(fRect.height / scale);
+        sx = Math.max(0, Math.min(natW - 1, sx));
+        sy = Math.max(0, Math.min(natH - 1, sy));
+        sw = Math.max(1, Math.min(natW - sx, sw));
+        sh = Math.max(1, Math.min(natH - sy, sh));
+      }
+
+      const maxDim = frameMode === 'a4' ? 2200 : 1800;
+      const downScale = Math.min(1, maxDim / Math.max(sw, sh));
+      const outW = Math.max(1, Math.round(sw * downScale));
+      const outH = Math.max(1, Math.round(sh * downScale));
+
+      const canvas = document.createElement('canvas');
+      canvas.width = outW;
+      canvas.height = outH;
+      const ctx = canvas.getContext('2d');
+      if ('filter' in ctx) ctx.filter = 'contrast(1.08) brightness(1.03)';
+      ctx.drawImage(videoEl, sx, sy, sw, sh, 0, 0, outW, outH);
+      return canvas.toDataURL('image/jpeg', quality);
+    }
+
     let currentCompressedBase64 = null;
 
     if (btnSnap) {
@@ -649,20 +770,8 @@
           alert('ক্যামেরা প্রস্তুত নয়, অনুগ্রহ করে কিছুক্ষণ অপেক্ষা করুন।');
           return;
         }
-        const canvas = document.createElement('canvas');
-        let w = videoElem.videoWidth;
-        let h = videoElem.videoHeight;
-        const maxDim = 1800;
-        if (w > maxDim || h > maxDim) {
-          if (w > h) { h = Math.round((h * maxDim) / w); w = maxDim; }
-          else { w = Math.round((w * maxDim) / h); h = maxDim; }
-        }
-        canvas.width = w;
-        canvas.height = h;
-        const ctx = canvas.getContext('2d');
-        if ('filter' in ctx) ctx.filter = 'contrast(1.08) brightness(1.03)';
-        ctx.drawImage(videoElem, 0, 0, w, h);
-        currentCompressedBase64 = canvas.toDataURL('image/jpeg', 0.90);
+        currentCompressedBase64 = captureCroppedModalCameraFrame(videoElem, cropFrameElem, window.__fcModalFrameMode, 0.92);
+        if (!currentCompressedBase64) return;
         stopLiveCamera();
 
         const previewWrap = document.getElementById('fc-modal-preview-wrap');
@@ -689,7 +798,8 @@
       const imgPreview = document.getElementById('fc-modal-img-preview');
 
       try {
-        currentCompressedBase64 = await compressImageFile(file, 1800, 0.90);
+        const maxDim = window.__fcModalFrameMode === 'a4' ? 2200 : 1800;
+        currentCompressedBase64 = await compressImageFile(file, maxDim, 0.92);
         imgPreview.src = currentCompressedBase64;
         previewWrap.style.display = 'flex';
         btnCamera.textContent = '🔄 পুনরায় ছবি তুলুন';
@@ -844,23 +954,11 @@
   async function fillMemberCard(card, data) {
     if (!card || !data) return;
 
-    // 1. Verification Type Radio (NID vs Birth Certificate) — scoped strictly to .v-radio
-    const isBirthReg = data.doc_type === 'birth_certificate';
-    const radios = Array.from(card.querySelectorAll('.v-radio'));
-    for (const rl of radios) {
-      const txt = normalizeBn(rl.textContent || '');
-      if (isBirthReg && (txt.includes('জন্ম নিবন্ধন') || txt.includes('নিবন্ধন'))) {
-        const r = rl.querySelector('input[type="radio"]');
-        if (r) r.click(); else rl.click();
-        break;
-      } else if (!isBirthReg && (txt.includes('জাতীয় পরিচিতি') || txt.includes('এনআইডি') || txt.includes('NID'))) {
-        const r = rl.querySelector('input[type="radio"]');
-        if (r) r.click(); else rl.click();
-        break;
-      }
-    }
+    const { docType, docNumber } = resolveDocNumberAndType(data);
+    const isBirthReg = docType === 'birth_certificate';
 
-    await new Promise(r => setTimeout(r, 220));
+    // 1. Verification Type Radio (NID vs Birth Certificate) — scoped strictly to .v-radio
+    await ensureVerificationRadio(card, isBirthReg);
 
     function findCardInput(keywords) {
       return findInputByLabelText(keywords, card);
@@ -871,10 +969,10 @@
       const labels = Array.from(card.querySelectorAll('label'));
       let container = null;
       for (const label of labels) {
-        if (label.closest('.v-radio')) continue;
+        if (label.closest('.v-radio, .v-checkbox, .v-input--selection-controls, [role="radiogroup"]')) continue;
         const text = normalizeBn(label.textContent || '');
         if (normKeys.some(k => text.includes(k))) {
-          container = label.closest('.col, [class*="col-"], span, div');
+          container = label.closest('.col, [class*="col-"], .v-input') || label.parentElement;
           break;
         }
       }
@@ -882,11 +980,17 @@
       await selectSingleVuetifyOption(container, candidates);
     }
 
-    // 2. Identification number
-    const num = data.doc_number || data.nid_number || '';
-    if (num) {
-      const idInp = findCardInput(['জাতীয় পরিচিতি নম্বর', 'এনআইডি', 'জন্ম নিবন্ধন নম্বর', 'নিবন্ধন']);
-      if (idInp) setReactiveValue(idInp, num);
+    // 2. Identification number (poll briefly if Vuetify swaps field after radio switch)
+    if (docNumber) {
+      const numKeys = isBirthReg
+        ? ['জন্ম নিবন্ধন নম্বর', 'নিবন্ধন নম্বর', 'জন্ম নিবন্ধন']
+        : ['জাতীয় পরিচিতি নম্বর', 'জাতীয় পরিচিতি নম্বর', 'এনআইডি', 'পরিচিতি নম্বর'];
+      let idInp = findCardInput(numKeys);
+      for (let t = 0; !idInp && t < 5; t++) {
+        await new Promise(r => setTimeout(r, 100));
+        idInp = findCardInput(numKeys);
+      }
+      if (idInp) setReactiveValue(idInp, docNumber);
     }
 
     // 3. Date of birth
@@ -1100,9 +1204,7 @@
     const maritalStatus = document.getElementById('fc-modal-marital')?.value || 'বিবাহিত';
     const religion = document.getElementById('fc-modal-religion')?.value || 'ইসলাম';
     const mobileNumber = document.getElementById('fc-modal-mobile')?.value?.trim() || '';
-    const docTypeChoice = activeScanTarget.type === 'member'
-      ? (document.getElementById('fc-modal-doc-type')?.value || 'auto')
-      : 'auto';
+    const docTypeChoice = window.__fcModalDocChoice || document.getElementById('fc-modal-doc-type')?.value || 'auto';
 
     showModalOcrWarnings([]);
     loading.style.display = 'flex';
@@ -1115,7 +1217,7 @@
 
     const modalProvider = document.getElementById('fc-modal-ai-provider')?.value || aiProvider || 'economy';
     const modalKeySlot = document.getElementById('fc-modal-default-key')?.value || defaultKeySlot || 'auto';
-    const modalGemModel = document.getElementById('fc-modal-gemini-model')?.value || geminiModel || 'gemini-3.1-flash-lite';
+    const modalGemModel = document.getElementById('fc-modal-gemini-model')?.value || geminiModel || DEFAULT_GEMINI_MODEL;
     const modalDsModel = document.getElementById('fc-modal-deepseek-model')?.value || deepseekModel || 'deepseek-flash';
     aiProvider = modalProvider;
     defaultKeySlot = modalKeySlot;
@@ -2076,7 +2178,7 @@
   function updateWidgetPreview(data) {
     document.getElementById('fc-prev-name-bn').textContent = data.name_bn || '-';
     document.getElementById('fc-prev-name-en').textContent = data.name_en || '-';
-    document.getElementById('fc-prev-nid').textContent = data.nid_number || '-';
+    document.getElementById('fc-prev-nid').textContent = data.doc_number || data.nid_number || data.birth_reg_no || '-';
     document.getElementById('fc-prev-dob').textContent = data.dob || '-';
     document.getElementById('fc-prev-gender').textContent = data.gender || '-';
     const fatBn = document.getElementById('fc-prev-fat-bn');
@@ -2123,6 +2225,14 @@
     input.dispatchEvent(new Event('change', { bubbles: true }));
     input.dispatchEvent(new Event('blur', { bubbles: true }));
 
+    if (/DD\/MM/i.test(input.placeholder || '') || input.getAttribute('aria-haspopup') === 'true') {
+      setTimeout(() => {
+        if (document.querySelector('.v-menu__content.menuable__content__active .v-picker--date')) {
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        }
+      }, 60);
+    }
+
     const container = input.closest('.v-input') || input;
     container.style.transition = 'background-color 0.4s ease';
     const oldBg = container.style.backgroundColor;
@@ -2134,25 +2244,131 @@
     return true;
   }
 
+  function isElementVisible(el) {
+    if (!el) return false;
+    if (el.style && el.style.display === 'none') return false;
+    try {
+      const cs = window.getComputedStyle ? window.getComputedStyle(el) : null;
+      if (cs && (cs.display === 'none' || cs.visibility === 'hidden')) return false;
+    } catch (_) {}
+    return true;
+  }
+
+  function resolveDocNumberAndType(data) {
+    if (!data || typeof data !== 'object') return { docType: 'nid', docNumber: '' };
+    const clean = (raw) => normalizeDigits(raw || '').replace(/[^0-9]/g, '');
+    const pick = (cands, lens) => {
+      const list = cands.map(clean).filter(Boolean);
+      for (const l of lens) {
+        const hit = list.find(x => x.length === l);
+        if (hit) return hit;
+      }
+      return list[0] || '';
+    };
+    const rawBrc = clean(data.birth_reg_no);
+    const rawNid = clean(data.nid_number);
+    const rawDoc = clean(data.doc_number);
+    const isBrc = data.doc_type === 'birth_certificate' || (!rawNid && rawBrc.length === 17);
+    const docType = isBrc ? 'birth_certificate' : 'nid';
+    let docNumber = isBrc
+      ? pick([rawBrc, rawDoc, rawNid], [17])
+      : pick([rawNid, rawDoc, rawBrc], [10, 17, 13]);
+    if (!isBrc && docNumber.length === 13 && data.dob) {
+      const ym = String(standardizeDate(data.dob)).match(/\b(19\d{2}|20\d{2})\b/);
+      if (ym) docNumber = ym[1] + docNumber;
+    }
+    return { docType, docNumber };
+  }
+
+  function isRadioSelected(radioWrap) {
+    if (!radioWrap) return false;
+    const inp = radioWrap.querySelector('input[type="radio"]');
+    return Boolean((inp && (inp.checked || inp.getAttribute('aria-checked') === 'true')) || radioWrap.classList.contains('v-item--active'));
+  }
+
+  async function ensureVerificationRadio(scope, isBirthReg) {
+    if (!scope) return false;
+    const radios = Array.from(scope.querySelectorAll('.v-radio'));
+    if (!radios.length) return false;
+    const target = radios.find((rl) => {
+      const txt = normalizeBn(rl.textContent || '');
+      return isBirthReg
+        ? (txt.includes('জন্ম নিবন্ধন') || txt.includes('নিবন্ধন'))
+        : (txt.includes('জাতীয় পরিচিতি') || txt.includes('জাতীয় পরিচিতি') || txt.includes('এনআইডি') || txt.includes('NID'));
+    });
+    if (!target) return false;
+    if (!isRadioSelected(target)) {
+      const inp = target.querySelector('input[type="radio"]');
+      const label = target.querySelector('label');
+      if (label) label.click();
+      else if (inp) inp.click();
+      else target.click();
+      await new Promise((r) => setTimeout(r, 260));
+      return true;
+    }
+    return false;
+  }
+
+  function isFillableTextInput(inp) {
+    if (!inp || inp.disabled) return false;
+    const t = String(inp.type || 'text').toLowerCase();
+    if (['hidden', 'radio', 'checkbox', 'file', 'button', 'submit', 'reset', 'image'].includes(t)) return false;
+    if (inp.closest('.v-radio, .v-checkbox, .v-input--selection-controls, [role="radiogroup"]')) return false;
+    if (inp.readOnly && inp.closest('.v-select') && !inp.closest('.v-autocomplete') && !/DD\/MM/i.test(inp.placeholder || '')) return false;
+    return true;
+  }
+
   function findInputByLabelText(keywords, rootEl = null) {
     const scope = rootEl || document;
     const normKeys = keywords.map(k => normalizeBn(k));
     const labels = Array.from(scope.querySelectorAll('label'));
     for (const label of labels) {
+      if (label.closest('.v-radio, .v-checkbox, .v-input--selection-controls, [role="radiogroup"]')) continue;
       const text = normalizeBn(label.textContent || '');
-      if (normKeys.some(k => text.includes(k))) {
-        if (label.htmlFor) {
-          const inp = document.getElementById(label.htmlFor);
-          if (inp && !inp.disabled && (!rootEl || rootEl.contains(inp))) return inp;
-        }
-        const parent = label.closest('.col, [class*="col-"], span, div');
-        if (parent) {
-          const inp = parent.querySelector('input:not([type="hidden"]):not([disabled])');
-          if (inp) return inp;
-        }
+      if (!normKeys.some(k => text.includes(k))) continue;
+      if (label.htmlFor) {
+        const inp = document.getElementById(label.htmlFor);
+        if (isFillableTextInput(inp) && (!rootEl || rootEl.contains(inp))) return inp;
+      }
+      const vInput = label.closest('.v-input');
+      if (vInput) {
+        const cand = Array.from(vInput.querySelectorAll('input, textarea')).find(isFillableTextInput);
+        if (cand) return cand;
+      }
+      let cur = label.parentElement;
+      for (let depth = 0; cur && cur !== scope && depth < 5; depth++, cur = cur.parentElement) {
+        if (cur.matches('.v-radio, .v-checkbox, [role="radiogroup"]')) continue;
+        const cand = Array.from(cur.querySelectorAll('input, textarea')).find(isFillableTextInput);
+        if (cand) return cand;
+        if (cur.matches('.col, [class*="col-"]')) break;
       }
     }
     return null;
+  }
+
+  function findStep0DocNumberInput(tab0, isBirthReg) {
+    const numKeys = isBirthReg
+      ? ['জন্ম নিবন্ধন নম্বর', 'নিবন্ধন নম্বর', 'জন্ম নিবন্ধন']
+      : ['জাতীয় পরিচিতি নম্বর (এনআইডি)', 'জাতীয় পরিচিতি নম্বর', 'জাতীয় পরিচিতি নম্বর', 'জাতীয় পরিচয়পত্র নম্বর', 'এনআইডি নম্বর', 'পরিচিতি নম্বর'];
+    const byLabel = findInputByLabelText(numKeys, tab0);
+    if (byLabel) return byLabel;
+
+    const scope = tab0 || document;
+    const candidates = Array.from(scope.querySelectorAll('input')).filter(isFillableTextInput);
+    const nonDob = candidates.filter((inp) => !/DD\/MM|YYYY/i.test(inp.placeholder || ''));
+    const byContext = nonDob.find((inp) => {
+      const box = inp.closest('.col, [class*="col-"], .v-input, .row');
+      const txt = normalizeBn(box?.textContent || '');
+      return isBirthReg
+        ? (txt.includes('নিবন্ধন') || txt.includes('birth'))
+        : (txt.includes('পরিচিতি') || txt.includes('এনআইডি') || txt.includes('nid'));
+    });
+    if (byContext) return byContext;
+
+    if (tab0 && nonDob.length >= 3) {
+      return nonDob[2];
+    }
+    return document.getElementById('input-594') || document.getElementById('input-215');
   }
 
   // Helper to normalize Bengali numerals (০-৯) to English (0-9)
@@ -2262,7 +2478,7 @@
     }
   }
 
-  function selectVuetifyDropdown(labelKeywords, targetValueText, rootEl = null) {
+  function selectDropdownByLabel(labelKeywords, targetValueText, rootEl = null) {
     return new Promise((resolve) => {
       if (!targetValueText) return resolve(false);
       const scope = rootEl || document;
@@ -2271,9 +2487,15 @@
       const labels = Array.from(scope.querySelectorAll('label'));
       let container = null;
       for (const l of labels) {
+        if (l.closest('.v-radio, .v-checkbox, .v-input--selection-controls, [role="radiogroup"]')) continue;
         if (normKeys.some(k => normalizeBn(l.textContent || '').includes(k))) {
-          container = l.closest('.col, [class*="col-"], span, div');
-          break;
+          let cur = l.parentElement;
+          for (let d = 0; cur && cur !== scope && d < 5; d++, cur = cur.parentElement) {
+            if (cur.querySelector('.v-input__slot')) { container = cur; break; }
+            if (cur.matches('.col, [class*="col-"]')) break;
+          }
+          if (!container) container = l.closest('.col, [class*="col-"], .v-input') || l.parentElement;
+          if (container) break;
         }
       }
 
@@ -2333,83 +2555,88 @@
       const tab0 = document.querySelector('[data-family-card-tab="0"]');
       const tab1 = document.querySelector('[data-family-card-tab="1"]');
 
-      // Canonicalize DOB first so Bengali digits work for 13->17 NID conversion
       if (data.dob) {
         data.dob = standardizeDate(data.dob);
       }
 
-      // 1. সম্পূর্ণ নাম (বাংলা)
-      if (data.name_bn) {
-        const inp = findInputByLabelText(['সম্পূর্ণ নাম (বাংলা)'], tab0) || findInputByLabelText(['সম্পূর্ণ নাম (বাংলা)']) || document.getElementById('input-211');
-        if (setReactiveValue(inp, data.name_bn)) filledCount++;
-      }
+      const { docType, docNumber } = resolveDocNumberAndType(data);
+      const isBirthReg = docType === 'birth_certificate';
 
-      // 2. সম্পূর্ণ নাম (ইংরেজি)
-      if (data.name_en) {
-        const inp = findInputByLabelText(['সম্পূর্ণ নাম (ইংরেজি)'], tab0) || findInputByLabelText(['সম্পূর্ণ নাম (ইংরেজি)']) || document.getElementById('input-213');
-        if (setReactiveValue(inp, String(data.name_en).toUpperCase().trim())) filledCount++;
-      }
+      // Step 0: Verification & Basic Identity (fill when tab0 is visible or absent)
+      if (!tab0 || isElementVisible(tab0)) {
+        const scope0 = tab0 || document;
+        await ensureVerificationRadio(scope0, isBirthReg);
 
-      // 3. জাতীয় পরিচিতি নম্বর (এনআইডি) - শুধুমাত্র ১০ অথবা ১৭ ডিজিট
-      if (data.nid_number) {
-        let cleanNid = normalizeDigits(data.nid_number).replace(/[^0-9]/g, '');
-        if (cleanNid.length === 13) {
-          const yearMatch = String(data.dob || '').match(/\b(19\d{2}|20\d{2})\b/);
-          if (yearMatch) {
-            cleanNid = yearMatch[1] + cleanNid;
-          }
+        if (data.name_bn) {
+          const inp = findInputByLabelText(['সম্পূর্ণ নাম (বাংলা)', 'পূর্ণ নাম (বাংলা)', 'নাম (বাংলা)'], tab0) || findInputByLabelText(['সম্পূর্ণ নাম (বাংলা)']) || document.getElementById('input-211');
+          if (setReactiveValue(inp, data.name_bn)) filledCount++;
         }
-        data.nid_number = cleanNid;
-        const inp = findInputByLabelText(['জাতীয় পরিচিতি নম্বর (এনআইডি)', 'জাতীয় পরিচিতি নম্বর'], tab0) || findInputByLabelText(['জাতীয় পরিচিতি নম্বর']) || document.getElementById('input-215');
-        if (setReactiveValue(inp, cleanNid)) filledCount++;
+
+        if (data.name_en) {
+          const inp = findInputByLabelText(['সম্পূর্ণ নাম (ইংরেজি)', 'পূর্ণ নাম (ইংরেজি)', 'নাম (ইংরেজি)'], tab0) || findInputByLabelText(['সম্পূর্ণ নাম (ইংরেজি)']) || document.getElementById('input-213');
+          if (setReactiveValue(inp, String(data.name_en).toUpperCase().trim())) filledCount++;
+        }
+
+        if (docNumber) {
+          if (isBirthReg) data.birth_reg_no = docNumber;
+          else data.nid_number = docNumber;
+          data.doc_number = docNumber;
+          let inp = findStep0DocNumberInput(tab0, isBirthReg);
+          for (let t = 0; !inp && t < 5; t++) {
+            await new Promise(r => setTimeout(r, 100));
+            inp = findStep0DocNumberInput(tab0, isBirthReg);
+          }
+          if (setReactiveValue(inp, docNumber)) filledCount++;
+        }
+
+        if (data.dob) {
+          const inp = findInputByLabelText(['জন্ম তারিখ'], tab0) || findInputByLabelText(['জন্ম তারিখ']) || scope0.querySelector('input[placeholder*="DD/MM"]') || document.getElementById('input-221');
+          if (setReactiveValue(inp, data.dob)) filledCount++;
+        }
+
+        if (data.gender) {
+          const genderMap = { 'তৃতীয় লিঙ্গ': 'হিজড়া', 'তৃতীয় লিঙ্গ': 'হিজড়া', 'হিজড়া': 'হিজড়া', 'Male': 'পুরুষ', 'male': 'পুরুষ', 'Female': 'নারী', 'female': 'নারী' };
+          const ng = normalizeBn(data.gender);
+          const normG = genderMap[ng] || genderMap[String(data.gender).trim()] || ng;
+          if (await selectDropdownByLabel(['লিঙ্গ'], normG, scope0)) filledCount++;
+        }
       }
 
-      // 4. জন্ম তারিখ (DD/MM/YYYY)
-      if (data.dob) {
-        const inp = findInputByLabelText(['জন্ম তারিখ'], tab0) || findInputByLabelText(['জন্ম তারিখ']) || document.getElementById('input-221');
-        if (setReactiveValue(inp, data.dob)) filledCount++;
-      }
-
-      // 5. লিঙ্গ
-      if (data.gender) {
-        await selectVuetifyDropdown(['লিঙ্গ'], data.gender, tab0 || document);
-      }
-
-      // 6. বৈবাহিক অবস্থা (Default: বিবাহিত)
-      if (data.marital_status) {
-        await selectVuetifyDropdown(['বৈবাহিক অবস্থা'], data.marital_status, tab1 || document);
-      }
-
-      // 7. ধর্ম (Default: ইসলাম)
-      if (data.religion) {
-        await selectVuetifyDropdown(['ধর্ম'], data.religion, tab1 || document);
-      }
-
-      // 8. Personal details (Father's/Mother's name in Step 1)
-      if (data.father_name_bn) {
-        const inp = findInputByLabelText(['পিতার নাম (বাংলা)'], tab1) || findInputByLabelText(['পিতার নাম (বাংলা)']) || document.getElementById('input-1286') || document.getElementById('input-242');
-        if (setReactiveValue(inp, data.father_name_bn)) filledCount++;
-      }
-      if (data.father_name_en) {
-        const fatEn = String(data.father_name_en).toUpperCase().trim();
-        const inp = findInputByLabelText(['পিতার নাম (ইংরেজি)'], tab1) || findInputByLabelText(['পিতার নাম (ইংরেজি)']) || document.getElementById('input-1288') || document.getElementById('input-244');
-        if (setReactiveValue(inp, fatEn)) filledCount++;
-      }
-      if (data.mother_name_bn) {
-        const inp = findInputByLabelText(['মাতার নাম (বাংলা)'], tab1) || findInputByLabelText(['মাতার নাম (বাংলা)']) || document.getElementById('input-1290') || document.getElementById('input-246');
-        if (setReactiveValue(inp, data.mother_name_bn)) filledCount++;
-      }
-      if (data.mother_name_en) {
-        const motEn = String(data.mother_name_en).toUpperCase().trim();
-        const inp = findInputByLabelText(['মাতার নাম (ইংরেজি)'], tab1) || findInputByLabelText(['মাতার নাম (ইংরেজি)']) || document.getElementById('input-1292') || document.getElementById('input-248');
-        if (setReactiveValue(inp, motEn)) filledCount++;
-      }
-
-      // 9. মোবাইল নম্বর
-      if (data.mobile_number) {
-        const cleanMobile = normalizeDigits(data.mobile_number);
-        const inp = findInputByLabelText(['মোবাইল নম্বর'], tab1) || findInputByLabelText(['মোবাইল নম্বর']) || document.getElementById('input-1294') || document.getElementById('input-250');
-        if (setReactiveValue(inp, cleanMobile)) filledCount++;
+      // Step 1: Personal Details (fill ONLY when tab1 is visible or absent)
+      if (!tab1 || isElementVisible(tab1)) {
+        const scope1 = tab1 || document;
+        if (data.marital_status) {
+          if (await selectDropdownByLabel(['বৈবাহিক অবস্থা'], data.marital_status, scope1)) filledCount++;
+        }
+        if (data.religion) {
+          if (await selectDropdownByLabel(['ধর্ম'], data.religion, scope1)) filledCount++;
+        }
+        if (data.father_name_bn) {
+          const inp = findInputByLabelText(['পিতার নাম (বাংলা)'], tab1) || findInputByLabelText(['পিতার নাম (বাংলা)']) || document.getElementById('input-1286') || document.getElementById('input-242');
+          if (setReactiveValue(inp, data.father_name_bn)) filledCount++;
+        }
+        if (data.father_name_en) {
+          const fatEn = String(data.father_name_en).toUpperCase().trim();
+          const inp = findInputByLabelText(['পিতার নাম (ইংরেজি)'], tab1) || findInputByLabelText(['পিতার নাম (ইংরেজি)']) || document.getElementById('input-1288') || document.getElementById('input-244');
+          if (setReactiveValue(inp, fatEn)) filledCount++;
+        }
+        if (data.mother_name_bn) {
+          const inp = findInputByLabelText(['মাতার নাম (বাংলা)'], tab1) || findInputByLabelText(['মাতার নাম (বাংলা)']) || document.getElementById('input-1290') || document.getElementById('input-246');
+          if (setReactiveValue(inp, data.mother_name_bn)) filledCount++;
+        }
+        if (data.mother_name_en) {
+          const motEn = String(data.mother_name_en).toUpperCase().trim();
+          const inp = findInputByLabelText(['মাতার নাম (ইংরেজি)'], tab1) || findInputByLabelText(['মাতার নাম (ইংরেজি)']) || document.getElementById('input-1292') || document.getElementById('input-248');
+          if (setReactiveValue(inp, motEn)) filledCount++;
+        }
+        if (data.mobile_number) {
+          const cleanMobile = normalizeDigits(data.mobile_number);
+          const inp = findInputByLabelText(['মোবাইল নম্বর'], tab1) || findInputByLabelText(['মোবাইল নম্বর']) || document.getElementById('input-1294') || document.getElementById('input-250');
+          if (setReactiveValue(inp, cleanMobile)) filledCount++;
+        }
+        if (tab1) {
+          window.__fcStep1FilledKey = `${scrapeFamilyId() || ''}_${docNumber || ''}`;
+        }
       }
 
       // Step 4: Collection Address Auto-fill
@@ -2417,7 +2644,7 @@
 
       return filledCount > 0;
     } finally {
-      setTimeout(() => { isFillingFormFields = false; }, 200);
+      isFillingFormFields = false;
     }
   }
 
@@ -4671,7 +4898,7 @@
     if (!col) return '';
     const sel = col.querySelector('.v-select__selection');
     if (sel && sel.textContent.trim()) return sel.textContent.trim();
-    const inp = col.querySelector('input:not([type="hidden"])');
+    const inp = Array.from(col.querySelectorAll('input, textarea')).find(isFillableTextInput);
     return inp ? String(inp.value || '').trim() : '';
   }
 
@@ -4680,11 +4907,19 @@
     const normKeys = keys.map(k => normalizeBn(k));
     const labels = Array.from(scope.querySelectorAll('label'));
     for (const l of labels) {
+      if (l.closest('.v-radio, .v-checkbox, .v-input--selection-controls, [role="radiogroup"]')) continue;
       const t = normalizeBn(l.textContent || '');
       if (normKeys.some(k => t.includes(k))) {
-        const col = l.closest('.col, [class*="col-"]');
-        const v = readColVal(col);
-        if (v) return v;
+        if (l.htmlFor) {
+          const inp = document.getElementById(l.htmlFor);
+          if (isFillableTextInput(inp) && String(inp.value || '').trim()) return String(inp.value || '').trim();
+        }
+        let cur = l.parentElement;
+        for (let d = 0; cur && cur !== scope && d < 5; d++, cur = cur.parentElement) {
+          const v = readColVal(cur);
+          if (v) return v;
+          if (cur.matches('.col, [class*="col-"]')) break;
+        }
       }
     }
     return '';
@@ -5119,17 +5354,17 @@
   function setupStepObserver() {
     function runExtensionAutomations() {
       if (document.hidden || activeMediaStream) return;
-      if (lastExtractedData) {
+      if (lastExtractedData && !isFillingFormFields) {
+        const { docNumber } = resolveDocNumberAndType(lastExtractedData);
         const tab1 = document.querySelector('[data-family-card-tab="1"]');
-        const isTab1Visible = !tab1 || tab1.style.display !== 'none';
-        const stepSig = `${scrapeFamilyId() || ''}_${lastExtractedData.nid_number || lastExtractedData.doc_number || ''}`;
+        const isTab1Visible = tab1 && isElementVisible(tab1);
+        const stepSig = `${scrapeFamilyId() || ''}_${docNumber || ''}`;
         if (isTab1Visible && window.__fcStep1FilledKey !== stepSig) {
-          const fatherInput = findInputByLabelText(['পিতার নাম (বাংলা)'], tab1) || findInputByLabelText(['পিতার নাম (বাংলা)']) || document.getElementById('input-1286');
-          if (fatherInput && !fatherInput.value) {
-            window.__fcStep1FilledKey = stepSig;
-            fillFormFields(lastExtractedData);
-            showToast('✅ পিতা-মাতা, বৈবাহিক অবস্থা ও ধর্ম অটো-ফিল করা হয়েছে!');
-          }
+          fillFormFields(lastExtractedData).then((ok) => {
+            if (ok && window.__fcStep1FilledKey === stepSig) {
+              showToast('✅ পিতা-মাতা, বৈবাহিক অবস্থা ও ধর্ম অটো-ফিল করা হয়েছে!');
+            }
+          });
         }
       }
       traceSection3Media();

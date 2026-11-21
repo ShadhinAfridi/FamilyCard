@@ -86,10 +86,12 @@ function getDeviceName() {
 }
 
 const BDT_PER_USD = 122;
+const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash-lite';
 const MODEL_PRICING = {
-  'gemini-3.1-flash-lite': { label: 'Gemini 3.1 Flash-Lite', inM: 0.25, outM: 1.50, est1k: 0.78, quota: '4K RPM / 150K RPD' },
   'gemini-3.5-flash-lite': { label: 'Gemini 3.5 Flash-Lite', inM: 0.30, outM: 2.50, est1k: 1.11, quota: '4K RPM / 150K RPD' },
   'gemini-3.8-flash': { label: 'Gemini 3.8 Flash', inM: 0.75, outM: 3.75, est1k: 2.53, quota: '1K RPM / 10K RPD' },
+  'gemini-4-argon': { label: 'Gemini 4 Argon', inM: 2.00, outM: 10.00, est1k: 6.50, quota: '500 RPM / 5K RPD' },
+  'gemini-3.1-flash-lite': { label: 'Gemini 3.1 Flash-Lite', inM: 0.25, outM: 1.50, est1k: 0.78, quota: '4K RPM / 150K RPD' },
   'deepseek-flash': { label: 'DeepSeek Flash', offInM: 0.15, offOutM: 0.60, peakInM: 0.30, peakOutM: 1.20 }
 };
 
@@ -125,8 +127,8 @@ function renderCostPreview() {
   if (!elCostPreview) return;
   const strategy = elProvider ? elProvider.value : 'economy';
   const keySlot = elDefaultKeySlot ? elDefaultKeySlot.value : 'auto';
-  const gemModel = elGeminiModel ? elGeminiModel.value : 'gemini-3.1-flash-lite';
-  const gemSpec = MODEL_PRICING[gemModel] || MODEL_PRICING['gemini-3.1-flash-lite'];
+  const gemModel = elGeminiModel ? elGeminiModel.value : DEFAULT_GEMINI_MODEL;
+  const gemSpec = MODEL_PRICING[gemModel] || MODEL_PRICING[DEFAULT_GEMINI_MODEL];
   const peak = isDeepSeekPeakNow();
   const ds1k = peak ? 0.76 : 0.38;
   const dsIn = peak ? 0.30 : 0.15;
@@ -205,8 +207,16 @@ if (localStorage.getItem('fc_ai_provider') && elProvider) {
 if (localStorage.getItem('fc_default_key_slot') && elDefaultKeySlot) {
   elDefaultKeySlot.value = localStorage.getItem('fc_default_key_slot');
 }
-if (localStorage.getItem('fc_gemini_model') && elGeminiModel) {
-  elGeminiModel.value = localStorage.getItem('fc_gemini_model');
+if (!localStorage.getItem('fc_model_default_v2')) {
+  const prevGem = localStorage.getItem('fc_gemini_model');
+  if (!prevGem || prevGem === 'gemini-3.1-flash-lite') {
+    localStorage.setItem('fc_gemini_model', DEFAULT_GEMINI_MODEL);
+  }
+  localStorage.setItem('fc_model_default_v2', '1');
+}
+const savedGemModel = localStorage.getItem('fc_gemini_model');
+if (elGeminiModel) {
+  elGeminiModel.value = (savedGemModel && MODEL_PRICING[savedGemModel]) ? savedGemModel : DEFAULT_GEMINI_MODEL;
 }
 if (localStorage.getItem('fc_deepseek_model') && elDeepSeekModel) {
   elDeepSeekModel.value = localStorage.getItem('fc_deepseek_model');
@@ -905,23 +915,78 @@ if (elProvider) {
   });
 }
 
-// Camera Stream Setup
+const elDocType = document.getElementById('docType');
+const elCameraCropFrame = document.getElementById('cameraCropFrame');
+const elCameraOverlayHint = document.getElementById('cameraOverlayHint');
+const docFramePills = Array.from(document.querySelectorAll('.doc-frame-bar .frame-pill'));
+const btnCropUploadId = document.getElementById('btnCropUploadId');
+const btnCropUploadA4 = document.getElementById('btnCropUploadA4');
+const btnResetUpload = document.getElementById('btnResetUpload');
+let currentFrameMode = 'id';
+let originalUploadDataUrl = null;
+
+function applyDocumentFrameMode(docChoice, explicitFrameMode = null) {
+  const normalizedChoice = docChoice || 'nid';
+  if (elDocType && elDocType.value !== normalizedChoice) {
+    elDocType.value = normalizedChoice;
+  }
+  if (explicitFrameMode) {
+    currentFrameMode = explicitFrameMode;
+  } else if (normalizedChoice === 'birth_certificate') {
+    currentFrameMode = 'a4';
+  } else if (normalizedChoice === 'nid') {
+    currentFrameMode = 'id';
+  }
+  if (cameraContainer) {
+    cameraContainer.classList.toggle('mode-a4', currentFrameMode === 'a4');
+    cameraContainer.classList.toggle('mode-id', currentFrameMode !== 'a4');
+  }
+  if (elCameraOverlayHint) {
+    elCameraOverlayHint.textContent = currentFrameMode === 'a4'
+      ? 'A4 জন্ম নিবন্ধন সনদ নীল ফ্রেমে রাখুন (বাইরের অংশ ক্রপ হবে)'
+      : 'NID কার্ডটি নীল ফ্রেমের ভেতর রাখুন (বাইরের অংশ ক্রপ হবে)';
+  }
+  docFramePills.forEach((pill) => {
+    pill.classList.toggle('active', pill.dataset.docChoice === normalizedChoice);
+  });
+}
+
+docFramePills.forEach((pill) => {
+  pill.addEventListener('click', () => {
+    const choice = pill.dataset.docChoice || 'nid';
+    const nextFrame = pill.dataset.frameMode || (choice === 'birth_certificate' ? 'a4' : (choice === 'nid' ? 'id' : currentFrameMode));
+    applyDocumentFrameMode(choice, nextFrame);
+  });
+});
+
+if (elDocType) {
+  elDocType.addEventListener('change', () => {
+    applyDocumentFrameMode(elDocType.value);
+  });
+  applyDocumentFrameMode(elDocType.value || 'nid');
+}
+
+// Camera Stream Setup with progressive high-res constraints
 async function startCamera() {
   try {
     if (currentStream) {
       currentStream.getTracks().forEach(t => t.stop());
     }
-
-    const constraints = {
-      video: {
-        facingMode: { ideal: 'environment' }, // back camera on mobile
-        width: { ideal: 1920 },
-        height: { ideal: 1080 }
-      },
-      audio: false
-    };
-
-    currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+    const candidates = [
+      { video: { facingMode: { ideal: 'environment' }, width: { ideal: 2560 }, height: { ideal: 1920 } }, audio: false },
+      { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false },
+      { video: { facingMode: 'environment' }, audio: false },
+      { video: true, audio: false }
+    ];
+    let stream = null;
+    for (const c of candidates) {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(c);
+        if (stream) break;
+      } catch (_) {}
+    }
+    if (!stream) throw new Error('No camera stream available');
+    currentStream = stream;
     videoElement.srcObject = currentStream;
   } catch (err) {
     console.warn('Camera error:', err);
@@ -957,19 +1022,63 @@ function switchMode(mode) {
 tabCamera.addEventListener('click', () => switchMode('camera'));
 tabGallery.addEventListener('click', () => switchMode('gallery'));
 
-// Resize, enhance contrast & downscale image via Canvas for accurate Bengali OCR
-function downscaleImage(imgOrVideo, maxDim = 1800, quality = 0.90) {
-  const width = imgOrVideo.videoWidth || imgOrVideo.naturalWidth || imgOrVideo.width;
-  const height = imgOrVideo.videoHeight || imgOrVideo.naturalHeight || imgOrVideo.height;
+// Crop strictly to visible inner guide frame (compensating object-fit: cover scaling)
+function captureCroppedCameraFrame(videoElem, frameEl, frameMode = 'id', quality = 0.92) {
+  const natW = videoElem.videoWidth;
+  const natH = videoElem.videoHeight;
+  if (!natW || !natH) return null;
 
-  let targetWidth = width;
-  let targetHeight = height;
+  const vRect = videoElem.getBoundingClientRect();
+  const fRect = frameEl ? frameEl.getBoundingClientRect() : null;
+  let sx = 0, sy = 0, sw = natW, sh = natH;
 
-  if (targetWidth > maxDim || targetHeight > maxDim) {
-    const ratio = Math.min(maxDim / targetWidth, maxDim / targetHeight);
-    targetWidth = Math.round(targetWidth * ratio);
-    targetHeight = Math.round(targetHeight * ratio);
+  if (fRect && vRect.width > 0 && vRect.height > 0 && fRect.width > 0 && fRect.height > 0) {
+    const scale = Math.max(vRect.width / natW, vRect.height / natH);
+    const offsetX = (natW * scale - vRect.width) / 2;
+    const offsetY = (natH * scale - vRect.height) / 2;
+    sx = Math.round((fRect.left - vRect.left + offsetX) / scale);
+    sy = Math.round((fRect.top - vRect.top + offsetY) / scale);
+    sw = Math.round(fRect.width / scale);
+    sh = Math.round(fRect.height / scale);
+    sx = Math.max(0, Math.min(natW - 1, sx));
+    sy = Math.max(0, Math.min(natH - 1, sy));
+    sw = Math.max(1, Math.min(natW - sx, sw));
+    sh = Math.max(1, Math.min(natH - sy, sh));
   }
+
+  const maxDim = frameMode === 'a4' ? 2200 : 1800;
+  const downScale = Math.min(1, maxDim / Math.max(sw, sh));
+  const outW = Math.max(1, Math.round(sw * downScale));
+  const outH = Math.max(1, Math.round(sh * downScale));
+
+  photoCanvas.width = outW;
+  photoCanvas.height = outH;
+  const ctx = photoCanvas.getContext('2d');
+  if ('filter' in ctx) ctx.filter = 'contrast(1.08) brightness(1.03)';
+  ctx.drawImage(videoElem, sx, sy, sw, sh, 0, 0, outW, outH);
+  return photoCanvas.toDataURL('image/jpeg', quality);
+}
+
+// Resize, enhance contrast & downscale image via Canvas for accurate Bengali OCR
+function downscaleImage(imgOrVideo, maxDim = 1800, quality = 0.92, targetAspect = null) {
+  const natW = imgOrVideo.videoWidth || imgOrVideo.naturalWidth || imgOrVideo.width;
+  const natH = imgOrVideo.videoHeight || imgOrVideo.naturalHeight || imgOrVideo.height;
+
+  let sx = 0, sy = 0, sw = natW, sh = natH;
+  if (targetAspect && natW > 0 && natH > 0) {
+    const curAspect = natW / natH;
+    if (curAspect > targetAspect) {
+      sw = Math.round(natH * targetAspect);
+      sx = Math.round((natW - sw) / 2);
+    } else {
+      sh = Math.round(natW / targetAspect);
+      sy = Math.round((natH - sh) / 2);
+    }
+  }
+
+  const downScale = Math.min(1, maxDim / Math.max(sw, sh));
+  const targetWidth = Math.max(1, Math.round(sw * downScale));
+  const targetHeight = Math.max(1, Math.round(sh * downScale));
 
   photoCanvas.width = targetWidth;
   photoCanvas.height = targetHeight;
@@ -977,10 +1086,25 @@ function downscaleImage(imgOrVideo, maxDim = 1800, quality = 0.90) {
   if ('filter' in ctx) {
     ctx.filter = 'contrast(1.08) brightness(1.03)';
   }
-  ctx.drawImage(imgOrVideo, 0, 0, targetWidth, targetHeight);
+  ctx.drawImage(imgOrVideo, sx, sy, sw, sh, 0, 0, targetWidth, targetHeight);
 
   return photoCanvas.toDataURL('image/jpeg', quality);
 }
+
+function applyUploadAspectCrop(targetAspect, maxDim, docChoice = null) {
+  if (!originalUploadDataUrl) return;
+  const img = new Image();
+  img.onload = () => {
+    selectedFileBase64 = downscaleImage(img, maxDim, 0.92, targetAspect);
+    filePreview.src = selectedFileBase64;
+    if (docChoice) applyDocumentFrameMode(docChoice);
+  };
+  img.src = originalUploadDataUrl;
+}
+
+if (btnCropUploadId) btnCropUploadId.addEventListener('click', () => applyUploadAspectCrop(85.6 / 53.98, 1800, 'nid'));
+if (btnCropUploadA4) btnCropUploadA4.addEventListener('click', () => applyUploadAspectCrop(210 / 297, 2200, 'birth_certificate'));
+if (btnResetUpload) btnResetUpload.addEventListener('click', () => applyUploadAspectCrop(null, currentFrameMode === 'a4' ? 2200 : 1800));
 
 // File picker / Gallery handling
 fileInput.addEventListener('change', (e) => {
@@ -989,14 +1113,16 @@ fileInput.addEventListener('change', (e) => {
 
   const reader = new FileReader();
   reader.onload = (event) => {
+    originalUploadDataUrl = event.target.result;
     const img = new Image();
     img.onload = () => {
-      selectedFileBase64 = downscaleImage(img, 1800, 0.90);
+      const maxDim = currentFrameMode === 'a4' ? 2200 : 1800;
+      selectedFileBase64 = downscaleImage(img, maxDim, 0.92);
       filePreview.src = selectedFileBase64;
       filePreviewContainer.style.display = 'block';
       dropZone.style.display = 'none';
     };
-    img.src = event.target.result;
+    img.src = originalUploadDataUrl;
   };
   reader.readAsDataURL(file);
 });
@@ -1010,7 +1136,7 @@ btnCapture.addEventListener('click', async () => {
       alert('ক্যামেরা চালু নেই। অনুগ্রহ করে পারমিশন দিন বা ফাইল মোড বেছে নিন।');
       return;
     }
-    base64Data = downscaleImage(videoElement, 1800, 0.90);
+    base64Data = captureCroppedCameraFrame(videoElement, elCameraCropFrame, currentFrameMode, 0.92);
   } else {
     if (!selectedFileBase64) {
       alert('অনুগ্রহ করে এনআইডি বা জন্ম নিবন্ধনের একটি ছবি নির্বাচন করুন।');
@@ -1026,9 +1152,9 @@ btnCapture.addEventListener('click', async () => {
   const deepseekApiKey = elDeepSeekKey ? elDeepSeekKey.value.trim() : '';
   const aiProvider = elProvider ? elProvider.value : 'economy';
   const defaultKeySlot = elDefaultKeySlot ? elDefaultKeySlot.value : 'auto';
-  const geminiModel = elGeminiModel ? elGeminiModel.value : 'gemini-3.1-flash-lite';
+  const geminiModel = elGeminiModel ? elGeminiModel.value : DEFAULT_GEMINI_MODEL;
   const deepseekModel = elDeepSeekModel ? elDeepSeekModel.value : 'deepseek-flash';
-  const docType = document.getElementById('docType')?.value || 'auto';
+  const docType = elDocType?.value || 'auto';
   const maritalStatus = document.getElementById('maritalStatus')?.value || 'বিবাহিত';
   const religion = document.getElementById('religion')?.value || 'ইসলাম';
   const mobileNumber = normalizeDigits(document.getElementById('mobileNumber')?.value?.trim() || '');

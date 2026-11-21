@@ -54,12 +54,22 @@
       .trim();
   }
 
+  const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash-lite';
+  const INTERACTIONS_API_MODELS = new Set(['gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-4-argon']);
+  if (!localStorage.getItem('fc_model_default_v2')) {
+    const prevGem = localStorage.getItem('fc_gemini_model');
+    if (!prevGem || prevGem === 'gemini-3.1-flash-lite') {
+      localStorage.setItem('fc_gemini_model', DEFAULT_GEMINI_MODEL);
+    }
+    localStorage.setItem('fc_model_default_v2', '1');
+  }
+
   let lastExtractedData = null;
   let savedApiKey = localStorage.getItem('fc_gemini_api_key') || '';
   let savedDeepSeekKey = localStorage.getItem('fc_deepseek_api_key') || '';
   let savedAiProvider = localStorage.getItem('fc_ai_provider') || 'economy';
   let savedDefaultKeySlot = localStorage.getItem('fc_default_key_slot') || 'auto';
-  let savedGeminiModel = localStorage.getItem('fc_gemini_model') || 'gemini-3.1-flash-lite';
+  let savedGeminiModel = localStorage.getItem('fc_gemini_model') || DEFAULT_GEMINI_MODEL;
   let savedDeepSeekModel = localStorage.getItem('fc_deepseek_model') || 'deepseek-flash';
   let activeMediaStream = null;
   let savedPostcode = localStorage.getItem('fc_default_postcode') || '7721';
@@ -74,6 +84,7 @@
     'gemini-3.1-flash-lite': { id: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash-Lite', provider: 'gemini', inputPer1M: 0.25, outputPer1M: 1.50, cacheReadPer1M: 0.025, rpm: '4K', rpd: '150K', estPer1kUsd: 0.78 },
     'gemini-3.5-flash-lite': { id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash-Lite', provider: 'gemini', inputPer1M: 0.30, outputPer1M: 2.50, cacheReadPer1M: 0.03, rpm: '4K', rpd: '150K', estPer1kUsd: 1.11 },
     'gemini-3.8-flash': { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash', provider: 'gemini', inputPer1M: 0.75, outputPer1M: 3.75, cacheReadPer1M: 0.075, stdInputPer1M: 1.50, stdOutputPer1M: 7.50, stdCacheReadPer1M: 0.15, introUntilUtcMs: Date.UTC(2027, 0, 1), rpm: '1K', rpd: '10K', estPer1kUsd: 2.53 },
+    'gemini-4-argon': { id: 'gemini-4-argon', label: 'Gemini 4 Argon', provider: 'gemini', inputPer1M: 2.00, outputPer1M: 10.00, cacheReadPer1M: 0.10, stdInputPer1M: 4.00, stdOutputPer1M: 20.00, stdCacheReadPer1M: 0.20, introUntilUtcMs: Date.UTC(2026, 11, 1), rpm: '500', rpd: '5K', estPer1kUsd: 6.50 },
     'deepseek-flash': { id: 'deepseek-flash', label: 'DeepSeek Flash', provider: 'deepseek', offPeakInPer1M: 0.15, offPeakOutPer1M: 0.60, offPeakCachePer1M: 0.003, peakInPer1M: 0.30, peakOutPer1M: 1.20, peakCachePer1M: 0.006, rpm: 'Uncapped', rpd: 'Balance', estPer1kUsd: 0.38 }
   };
 
@@ -88,14 +99,15 @@
   function normalizeModelId(modelId) {
     const raw = String(modelId || '').toLowerCase();
     if (raw.includes('deepseek')) return 'deepseek-flash';
-    if (raw.includes('3.5-flash-lite') || raw.includes('3.5')) return 'gemini-3.5-flash-lite';
+    if (raw.includes('4-argon') || raw.includes('argon')) return 'gemini-4-argon';
     if (raw.includes('3.8-flash') || raw.includes('3.8')) return 'gemini-3.8-flash';
-    return 'gemini-3.1-flash-lite';
+    if (raw.includes('3.1-flash-lite') || raw.includes('3.1')) return 'gemini-3.1-flash-lite';
+    return DEFAULT_GEMINI_MODEL;
   }
 
   function computeScanUsageAndCost(modelId, rawApiRes = {}, nowMs = Date.now()) {
     const key = normalizeModelId(modelId);
-    const spec = AI_MODEL_CATALOG[key] || AI_MODEL_CATALOG['gemini-3.1-flash-lite'];
+    const spec = AI_MODEL_CATALOG[key] || AI_MODEL_CATALOG[DEFAULT_GEMINI_MODEL];
     let inputTokens = 0, cachedTokens = 0, outputTokens = 0, estimated = false;
 
     if (spec.provider === 'deepseek') {
@@ -141,15 +153,16 @@
       outputTokens = 250;
     }
 
-    const isIntro38 = key === 'gemini-3.8-flash' && spec.introUntilUtcMs && nowMs < spec.introUntilUtcMs;
-    const inRate = key === 'gemini-3.8-flash' ? (isIntro38 ? spec.inputPer1M : spec.stdInputPer1M) : spec.inputPer1M;
-    const outRate = key === 'gemini-3.8-flash' ? (isIntro38 ? spec.outputPer1M : spec.stdOutputPer1M) : spec.outputPer1M;
-    const cacheRate = key === 'gemini-3.8-flash' ? (isIntro38 ? spec.cacheReadPer1M : spec.stdCacheReadPer1M) : spec.cacheReadPer1M;
+    const hasStdRates = Boolean(spec.introUntilUtcMs && spec.stdInputPer1M);
+    const isIntro = hasStdRates && nowMs < spec.introUntilUtcMs;
+    const inRate = hasStdRates ? (isIntro ? spec.inputPer1M : spec.stdInputPer1M) : spec.inputPer1M;
+    const outRate = hasStdRates ? (isIntro ? spec.outputPer1M : spec.stdOutputPer1M) : spec.outputPer1M;
+    const cacheRate = hasStdRates ? (isIntro ? spec.cacheReadPer1M : spec.stdCacheReadPer1M) : spec.cacheReadPer1M;
     const uncachedIn = Math.max(0, inputTokens - cachedTokens);
     const costUsd = (uncachedIn * inRate + cachedTokens * cacheRate + outputTokens * outRate) / 1e6;
     return {
       model: key, label: spec.label, provider: 'gemini',
-      tierWindow: key === 'gemini-3.8-flash' ? (isIntro38 ? 'intro_2026' : 'standard') : 'tier1',
+      tierWindow: hasStdRates ? (isIntro ? 'intro_2026' : 'standard') : 'tier1',
       inputTokens, cachedTokens, uncachedInputTokens: uncachedIn, outputTokens,
       totalTokens: inputTokens + outputTokens, estimated,
       inputRatePer1M: inRate, outputRatePer1M: outRate, cacheRatePer1M: cacheRate,
@@ -271,69 +284,73 @@
       marital_status_suggestion: { type: 'string' },
       confidence: { type: 'string', enum: ['high', 'medium', 'low'] }
     },
-    required: ['doc_type', 'doc_number', 'name_bn', 'name_en', 'dob', 'gender']
+    required: ['doc_type', 'doc_number', 'nid_number', 'birth_reg_no', 'name_bn', 'name_en', 'dob', 'gender']
   };
 
   function buildGeminiPrompt(docTypeHint = 'auto') {
     const hintLine = docTypeHint === 'nid'
-      ? 'HINT: User selected NID Card. Extract NID carefully.'
+      ? 'HINT: User selected Bangladeshi NID Card (ID Card Size). Focus carefully on extracting ALL fields including the 10, 13, or 17-digit NID number.'
       : docTypeHint === 'birth_certificate'
-        ? 'HINT: User selected Digital Birth Registration Certificate (জন্ম নিবন্ধন সনদপত্র).'
+        ? 'HINT: User selected Bangladeshi Digital Birth Registration Certificate (A4 Paper / জন্ম নিবন্ধন সনদপত্র). Focus carefully on the 17-digit Birth Registration Number, Date of Birth (NOT Registration Date), and parent names.'
         : 'Detect automatically whether this is an NID Card or Birth Registration Certificate.';
     return `
 You are an expert OCR and document understanding system specializing in Bangladeshi identity documents:
 1. Bangladeshi National Identity (NID) Cards (both Smart NID cards and Old Paper/Laminated NID cards).
-2. Bangladeshi Birth Registration Certificates (ডিজিটাল জন্ম নিবন্ধন সনদপত্র / BRC - Online printed or laminated copy with 17-digit registration number).
+2. Bangladeshi Birth Registration Certificates (ডিজিটাল জন্ম নিবন্ধন সনদপত্র / BRC - A4 printed copy with 17-digit registration number).
 
 ${hintLine}
 
-Analyze the provided image carefully and extract all available data into a valid JSON object.
+Analyze the provided image carefully and extract ALL visible data into a single valid JSON object.
 
-RULES FOR CLASSIFICATION & EXTRACTION:
+RULES FOR CLASSIFICATION & EXTRACTION (VERIFY EVERY DIGIT):
 
 A. "doc_type":
 - Strictly "nid" or "birth_certificate".
 
-B. "doc_number":
+B. "doc_number" & "nid_number" & "birth_reg_no":
 - If "nid":
-  - Extract 10 digits (Smart Card), 13 digits (Old Laminated NID), or 17 digits.
-  - CRITICAL: If 13-digit number, extract those 13 digits or prepend the 4-digit birth year from Date of Birth to make 17 digits. Copy digits to "nid_number".
+  - Smart NID prints 10 digits under "NID No." / "জাতীয় পরিচয় নং".
+  - Old Laminated NID prints 13 or 17 digits at bottom under "ID NO:" (small font — read every digit carefully!). If 13 digits, extract those 13 digits or prepend 4-digit birth year from Date of Birth to make 17 digits.
+  - Copy exact digits into BOTH "doc_number" and "nid_number", and set "birth_reg_no": "".
 - If "birth_certificate":
-  - Extract the exact 17-digit Birth Registration Number (জন্ম নিবন্ধন নম্বর / Personal Identification Number). Copy digits to "birth_reg_no".
-- Remove spaces and hyphens. Convert Bengali numerals (০-৯) to English (0-9).
+  - Extract the exact 17-digit Birth Registration Number (জন্ম নিবন্ধন নম্বর / Birth Registration Number / Personal Identification Number).
+  - CRITICAL: NEVER confuse Father's NID, Mother's NID, or Certificate/Book Serial Number with the 17-digit Birth Registration Number!
+  - Copy exact 17 digits into BOTH "doc_number" and "birth_reg_no", and set "nid_number": "".
+- Strip all spaces, hyphens, and punctuation. Convert ALL Bengali numerals (০-৯) to English (0-9).
 
-C. "name_bn":
-- Complete Bengali name as printed (e.g. "মোসাঃ খাদিজা বেগম").
-
-D. "name_en":
-- Complete English name in ALL CAPITAL LETTERS (transliterate from Bengali if not printed on classic certificate).
-
-E. "dob":
-- Date of Birth formatted strictly as DD/MM/YYYY with English digits (e.g. "12/05/1990"). Convert English/Bengali months accurately.
-
-F. "gender":
-- Strictly "পুরুষ" (Male), "নারী" (Female), or "হিজড়া" (Third Gender). Infer from Sex/লিঙ্গ/নাম/ছবি.
-
+C. "name_bn": Complete Bengali name as printed (under "নাম:" or "নিবন্ধিত ব্যক্তির নাম").
+D. "name_en": Complete English name in ALL CAPITAL LETTERS (transliterate from Bengali if not printed on classic certificate/NID).
+E. "dob": Date of Birth strictly DD/MM/YYYY with English digits (e.g. "12/05/1990"). On Birth Certificates, use "জন্ম তারিখ / Date of Birth", NOT Registration or Issuance Date.
+F. "gender": Strictly "পুরুষ" (Male), "নারী" (Female), or "হিজড়া" (Third Gender). Infer accurately from Sex/লিঙ্গ/স্বামী:/ছবি if not printed.
 G. "father_name_bn" & "father_name_en":
 - Extract ONLY from "পিতা:" / "পিতার নাম:" / "Father's Name".
 - CRITICAL FOR MARRIED WOMEN'S OLD LAMINATED NID: Old laminated NIDs for married women often print "স্বামী:" (Husband) instead of "পিতা:" (Father). NEVER put "স্বামী:" into "father_name_bn" or "father_name_en"! Leave father fields "" if "পিতা:" is absent, and put husband's name into "spouse_name_bn" / "spouse_name_en".
+H. "mother_name_bn" & "mother_name_en": Mother's Bengali name & ALL CAPITAL English transliteration.
+I. "spouse_name_bn" & "spouse_name_en": Husband/Wife name from "স্বামী:" or "স্ত্রী:" if printed; otherwise "".
+J. "relation_suggestion": One of ("স্বামী", "স্ত্রী", "পুত্র", "কন্যা", "পিতা", "মাতা", "ভাই", "বোন", "অন্যান্য"). If old NID prints "স্বামী:", suggest "স্ত্রী".
+K. "marital_status_suggestion": One of ("বিবাহিত", "অবিবাহিত", "বিধবা", "বিপত্নীক", "তালাকপ্রাপ্ত"). If old NID prints "স্বামী:", suggest "বিবাহিত". If child/minor, suggest "অবিবাহিত".
+L. "confidence": "low" if blurry/glare/cropped/uncertain digits; "medium" if minor uncertainty; "high" if crystal clear.
 
-H. "mother_name_bn" & "mother_name_en":
-- Mother's Bengali name & ALL CAPITAL English transliteration.
-
-I. "spouse_name_bn" & "spouse_name_en":
-- Husband/Wife name from "স্বামী:" or "স্ত্রী:" if printed on old NID; otherwise "".
-
-J. "relation_suggestion":
-- One of ("স্বামী", "স্ত্রী", "পুত্র", "কন্যা", "পিতা", "মাতা", "ভাই", "বোন", "অন্যান্য"). If old NID prints "স্বামী:", suggest "স্ত্রী".
-
-K. "marital_status_suggestion":
-- One of ("বিবাহিত", "অবিবাহিত", "বিধবা", "বিপত্নীক", "তালাকপ্রাপ্ত"). If old NID prints "স্বামী:", suggest "বিবাহিত". If child/minor, suggest "অবিবাহিত".
-
-L. "confidence":
-- "low" if blurry/glare/cropped/uncertain digits; "medium" if minor uncertainty; "high" if crystal clear.
-
-Return ONLY a single valid JSON object with those keys.
+Return ONLY a single valid JSON object with these keys:
+{
+  "doc_type": "nid",
+  "doc_number": "...",
+  "nid_number": "...",
+  "birth_reg_no": "...",
+  "name_bn": "...",
+  "name_en": "...",
+  "dob": "DD/MM/YYYY",
+  "gender": "...",
+  "father_name_bn": "...",
+  "father_name_en": "...",
+  "mother_name_bn": "...",
+  "mother_name_en": "...",
+  "spouse_name_bn": "...",
+  "spouse_name_en": "...",
+  "relation_suggestion": "...",
+  "marital_status_suggestion": "...",
+  "confidence": "high"
+}
 `;
   }
 
@@ -425,18 +442,45 @@ Return ONLY a single valid JSON object with those keys.
     .fc-bm-body {
       padding: 14px; display: flex; flex-direction: column; gap: 10px; max-height: 85vh; overflow-y: auto;
     }
+    .fc-bm-doc-pills {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
+    }
+    .fc-bm-frame-pill {
+      padding: 6px 6px; border: 1.5px solid #cbd5e1; border-radius: 8px; background: #f8fafc;
+      color: #334155; font-size: 11.5px; font-weight: 700; cursor: pointer; text-align: center;
+      transition: all 0.15s ease;
+    }
+    .fc-bm-frame-pill.active {
+      background: #eff6ff; border-color: #2563eb; color: #1d4ed8; box-shadow: 0 1px 4px rgba(37,99,235,0.2);
+    }
     .fc-bm-cam-box {
-      width: 100%; aspect-ratio: 16/10; background: #000; border-radius: 10px; overflow: hidden;
-      display: flex; align-items: center; justify-content: center; position: relative;
+      width: 100%; aspect-ratio: 10/7; max-height: min(46vh, 330px); background: #000; border-radius: 10px;
+      overflow: hidden; display: flex; align-items: center; justify-content: center; position: relative; margin: 0 auto;
     }
-    .fc-bm-cam-box video { width: 100%; height: 100%; object-fit: cover; }
+    .fc-bm-cam-box.mode-a4 {
+      max-width: 340px; aspect-ratio: 3/4; max-height: min(56vh, 410px);
+    }
+    .fc-bm-cam-box video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 1; }
+    .fc-bm-crop-frame {
+      position: relative; width: 88%; height: auto; aspect-ratio: 85.6 / 53.98;
+      border: 2px dashed rgba(56,189,248,0.88); border-radius: 8px; pointer-events: none;
+      display: flex; align-items: flex-end; justify-content: center; padding-bottom: 6px;
+      box-shadow: 0 0 0 9999px rgba(2,6,23,0.64); z-index: 2;
+    }
+    .fc-bm-cam-box.mode-a4 .fc-bm-crop-frame {
+      height: 88%; width: auto; max-width: 90%; aspect-ratio: 210 / 297;
+    }
+    .fc-bm-crop-hint {
+      background: rgba(2,6,23,0.78); color: #f8fafc; padding: 3px 8px; border-radius: 10px;
+      font-size: 10.5px; font-weight: 600; text-align: center;
+    }
     .fc-bm-cam-bracket {
-      position: absolute; width: 24px; height: 24px; border-color: #38bdf8; border-style: solid; pointer-events: none;
+      position: absolute; width: 20px; height: 20px; border-color: #38bdf8; border-style: solid; pointer-events: none;
     }
-    .tl { top: 10px; left: 10px; border-width: 3px 0 0 3px; }
-    .tr { top: 10px; right: 10px; border-width: 3px 3px 0 0; }
-    .bl { bottom: 10px; left: 10px; border-width: 0 0 3px 3px; }
-    .br { bottom: 10px; right: 10px; border-width: 0 3px 3px 0; }
+    .tl { top: -2px; left: -2px; border-width: 3px 0 0 3px; }
+    .tr { top: -2px; right: -2px; border-width: 3px 3px 0 0; }
+    .bl { bottom: -2px; left: -2px; border-width: 0 0 3px 3px; }
+    .br { bottom: -2px; right: -2px; border-width: 0 3px 3px 0; }
     .fc-bm-btn-group { display: flex; gap: 8px; }
     .fc-bm-cam-btn {
       flex: 1; background: linear-gradient(135deg, #1976d2, #0284c7); color: #fff; border: none; padding: 12px;
@@ -607,13 +651,13 @@ Return ONLY a single valid JSON object with those keys.
   modal.innerHTML = `
     <div class="fc-bm-card">
       <div class="fc-bm-hdr">
-        <h3>🪪 NID ও জন্ম নিবন্ধন AI সহকারী (v1.8.1)</h3>
+        <h3>🪪 NID ও জন্ম নিবন্ধন AI সহকারী (v1.9.0)</h3>
         <button type="button" id="fc-bm-hdr-chat" style="background:rgba(255,255,255,0.22); border:1px solid rgba(255,255,255,0.45); color:#fff; border-radius:6px; padding:3px 8px; font-size:11px; font-weight:700; cursor:pointer; margin-left:auto; margin-right:8px;">💬 রুম মেসেজ</button>
         <span id="fc-bm-close">&times;</span>
       </div>
       <div class="fc-bm-body">
         <!-- Target Selector: Applicant vs Family Member -->
-        <div style="display: flex; gap: 6px; margin-bottom: 10px; background: #f1f5f9; padding: 4px; border-radius: 8px;">
+        <div style="display: flex; gap: 6px; margin-bottom: 4px; background: #f1f5f9; padding: 4px; border-radius: 8px;">
           <button type="button" id="fc-bm-target-self-btn" style="flex: 1; padding: 6px 10px; border: none; border-radius: 6px; font-weight: 700; font-size: 11.5px; cursor: pointer; background: #0284c7; color: #fff;">
             👤 প্রধান আবেদনকারী
           </button>
@@ -622,8 +666,15 @@ Return ONLY a single valid JSON object with those keys.
           </button>
         </div>
 
+        <!-- Document & Camera Frame Size Bar (Works for Applicant + Member) -->
+        <div id="fc-bm-doc-frame-bar" class="fc-bm-doc-pills">
+          <button type="button" class="fc-bm-frame-pill active" data-doc-choice="nid" data-frame-mode="id">🪪 NID (ID কার্ড)</button>
+          <button type="button" class="fc-bm-frame-pill" data-doc-choice="birth_certificate" data-frame-mode="a4">📄 জন্ম নিবন্ধন (A4)</button>
+          <button type="button" class="fc-bm-frame-pill" data-doc-choice="auto">🤖 অটো</button>
+        </div>
+
         <!-- Family Member Sub-panel (Shown when member target selected) -->
-        <div id="fc-bm-member-settings" style="display: none; background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 10px; padding: 10px; margin-bottom: 10px; flex-direction: column; gap: 8px;">
+        <div id="fc-bm-member-settings" style="display: none; background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 10px; padding: 10px; margin-bottom: 4px; flex-direction: column; gap: 8px;">
           <div style="font-weight: 700; color: #166534; font-size: 12px; display: flex; justify-content: space-between; align-items: center;">
             <span>👨‍👩‍👧‍👦 সদস্য স্ক্যান কনফিগারেশন</span>
             <span id="fc-bm-member-badge" style="font-size: 10.5px; color: #0f766e; font-weight: bold; background: #ccfbf1; padding: 2px 6px; border-radius: 4px;">সদস্য নির্বাচন করুন</span>
@@ -639,7 +690,7 @@ Return ONLY a single valid JSON object with those keys.
               <label for="fc-bm-doc-type">📄 সনদের ধরন*</label>
               <select id="fc-bm-doc-type" style="padding: 4px 6px; border-radius: 6px; border: 1px solid #86efac; font-weight: 600;">
                 <option value="auto">অটো-ডিটেক্ট (NID বা জন্ম সনদ)</option>
-                <option value="nid">জাতীয় পরিচিতি নম্বর (NID)</option>
+                <option value="nid" selected>জাতীয় পরিচিতি নম্বর (NID)</option>
                 <option value="birth_certificate">জন্ম নিবন্ধন সনদ (BRC)</option>
               </select>
             </div>
@@ -671,16 +722,19 @@ Return ONLY a single valid JSON object with those keys.
 
         <input type="file" id="fc-bm-file-input" accept="image/*" capture="environment" style="display: none;">
         
-        <div id="fc-bm-viewfinder" class="fc-bm-cam-box" style="display: none;">
+        <div id="fc-bm-viewfinder" class="fc-bm-cam-box mode-id" style="display: none;">
           <video id="fc-bm-video" playsinline autoplay muted></video>
-          <div class="fc-bm-cam-bracket tl"></div>
-          <div class="fc-bm-cam-bracket tr"></div>
-          <div class="fc-bm-cam-bracket bl"></div>
-          <div class="fc-bm-cam-bracket br"></div>
+          <div id="fc-bm-crop-frame" class="fc-bm-crop-frame">
+            <div class="fc-bm-cam-bracket tl"></div>
+            <div class="fc-bm-cam-bracket tr"></div>
+            <div class="fc-bm-cam-bracket bl"></div>
+            <div class="fc-bm-cam-bracket br"></div>
+            <div id="fc-bm-cam-hint" class="fc-bm-crop-hint">NID কার্ডটি নীল ফ্রেমের ভেতর রাখুন (বাইরের অংশ ক্রপ হবে)</div>
+          </div>
         </div>
 
-        <div id="fc-bm-img-wrap" class="fc-bm-cam-box" style="display: none; background: #f8fafc;">
-          <img id="fc-bm-img" style="max-width: 100%; max-height: 100%; object-fit: contain;">
+        <div id="fc-bm-img-wrap" style="display: none; width: 100%; max-height: 240px; border-radius: 10px; overflow: hidden; background: #f8fafc; border: 1px solid #cbd5e1; align-items: center; justify-content: center; flex-direction: column; gap: 6px; padding: 6px; box-sizing: border-box;">
+          <img id="fc-bm-img" style="max-width: 100%; max-height: 195px; object-fit: contain; border-radius: 6px;">
         </div>
 
         <div class="fc-bm-btn-group">
@@ -758,9 +812,9 @@ Return ONLY a single valid JSON object with those keys.
             <div class="fc-bm-col">
               <label for="fc-bm-ai-provider">🧠 AI কৌশল:</label>
               <select id="fc-bm-ai-provider">
-                <option value="economy" ${savedAiProvider === 'economy' ? 'selected' : ''}>💸 সাশ্রয়ী অটো (Lite → প্রয়োজনে 3.8)</option>
+                <option value="economy" ${savedAiProvider === 'economy' ? 'selected' : ''}>💸 সাশ্রয়ী অটো (3.5 Lite → প্রয়োজনে 3.8)</option>
                 <option value="deepseek" ${savedAiProvider === 'deepseek' ? 'selected' : ''}>🐋 DeepSeek Flash (~$0.38/1K Off-Peak)</option>
-                <option value="gemini_lite" ${savedAiProvider === 'gemini_lite' ? 'selected' : ''}>⚡ Gemini Flash-Lite (~$0.78/1K)</option>
+                <option value="gemini_lite" ${savedAiProvider === 'gemini_lite' ? 'selected' : ''}>⚡ Gemini Flash-Lite (~$0.78–$1.11/1K)</option>
                 <option value="auto" ${savedAiProvider === 'auto' ? 'selected' : ''}>⚖️ ডুয়াল-AI (ডিফল্ট কী → ব্যাকআপ)</option>
                 <option value="gemini" ${savedAiProvider === 'gemini' ? 'selected' : ''}>💎 Gemini শুধুমাত্র (ডিফল্ট মডেল)</option>
               </select>
@@ -778,9 +832,10 @@ Return ONLY a single valid JSON object with those keys.
             <div class="fc-bm-col">
               <label for="fc-bm-gemini-model">✨ Gemini মডেল:</label>
               <select id="fc-bm-gemini-model">
-                <option value="gemini-3.1-flash-lite" ${savedGeminiModel === 'gemini-3.1-flash-lite' ? 'selected' : ''}>3.1 Lite ($0.25/$1.50)</option>
                 <option value="gemini-3.5-flash-lite" ${savedGeminiModel === 'gemini-3.5-flash-lite' ? 'selected' : ''}>3.5 Lite ($0.30/$2.50)</option>
                 <option value="gemini-3.8-flash" ${savedGeminiModel === 'gemini-3.8-flash' ? 'selected' : ''}>3.8 Flash ($0.75/$3.75)</option>
+                <option value="gemini-4-argon" ${savedGeminiModel === 'gemini-4-argon' ? 'selected' : ''}>4 Argon ($2.00/$10.00)</option>
+                <option value="gemini-3.1-flash-lite" ${savedGeminiModel === 'gemini-3.1-flash-lite' ? 'selected' : ''}>3.1 Lite ($0.25/$1.50)</option>
               </select>
             </div>
             <div class="fc-bm-col">
@@ -832,7 +887,7 @@ Return ONLY a single valid JSON object with those keys.
     const strategy = selectAiProvider ? selectAiProvider.value : savedAiProvider;
     const keySlot = selectDefaultKey ? selectDefaultKey.value : savedDefaultKeySlot;
     const gemId = selectGeminiModel ? selectGeminiModel.value : savedGeminiModel;
-    const gemSpec = AI_MODEL_CATALOG[gemId] || AI_MODEL_CATALOG['gemini-3.1-flash-lite'];
+    const gemSpec = AI_MODEL_CATALOG[gemId] || AI_MODEL_CATALOG[DEFAULT_GEMINI_MODEL];
     const peak = isDeepSeekPeakUtc();
     const ds1k = peak ? 0.76 : 0.38;
     const dsIn = peak ? 0.30 : 0.15;
@@ -852,7 +907,51 @@ Return ONLY a single valid JSON object with those keys.
   const imgWrap = document.getElementById('fc-bm-img-wrap');
   const imgPreview = document.getElementById('fc-bm-img');
   const viewFinder = document.getElementById('fc-bm-viewfinder');
+  const cropFrameElem = document.getElementById('fc-bm-crop-frame');
+  const camHintElem = document.getElementById('fc-bm-cam-hint');
   const videoElem = document.getElementById('fc-bm-video');
+  const selectMemberDocType = document.getElementById('fc-bm-doc-type');
+  const docFramePills = Array.from(document.querySelectorAll('#fc-bm-doc-frame-bar .fc-bm-frame-pill'));
+  let selectedDocChoice = 'nid';
+  let currentBmFrameMode = 'id';
+
+  function applyBmDocumentFrameMode(docChoice, explicitFrameMode = null) {
+    selectedDocChoice = docChoice || 'nid';
+    if (selectMemberDocType && selectMemberDocType.value !== selectedDocChoice) {
+      selectMemberDocType.value = selectedDocChoice;
+    }
+    if (explicitFrameMode) {
+      currentBmFrameMode = explicitFrameMode;
+    } else if (selectedDocChoice === 'birth_certificate') {
+      currentBmFrameMode = 'a4';
+    } else if (selectedDocChoice === 'nid') {
+      currentBmFrameMode = 'id';
+    }
+    if (viewFinder) {
+      viewFinder.classList.toggle('mode-a4', currentBmFrameMode === 'a4');
+      viewFinder.classList.toggle('mode-id', currentBmFrameMode !== 'a4');
+    }
+    if (camHintElem) {
+      camHintElem.textContent = currentBmFrameMode === 'a4'
+        ? 'A4 জন্ম নিবন্ধন সনদ নীল ফ্রেমে রাখুন (বাইরের অংশ ক্রপ হবে)'
+        : 'NID কার্ডটি নীল ফ্রেমের ভেতর রাখুন (বাইরের অংশ ক্রপ হবে)';
+    }
+    docFramePills.forEach((p) => {
+      p.classList.toggle('active', p.dataset.docChoice === selectedDocChoice);
+    });
+  }
+
+  docFramePills.forEach((pill) => {
+    pill.addEventListener('click', () => {
+      const choice = pill.dataset.docChoice || 'nid';
+      const nextFrame = pill.dataset.frameMode || (choice === 'birth_certificate' ? 'a4' : (choice === 'nid' ? 'id' : currentBmFrameMode));
+      applyBmDocumentFrameMode(choice, nextFrame);
+    });
+  });
+  if (selectMemberDocType) {
+    selectMemberDocType.addEventListener('change', () => applyBmDocumentFrameMode(selectMemberDocType.value));
+  }
+  applyBmDocumentFrameMode('nid', 'id');
   const inputPostcode = document.getElementById('fc-bm-postcode');
   const selectVillage = document.getElementById('fc-bm-village');
   const inputNewVillage = document.getElementById('fc-bm-new-village');
@@ -1047,12 +1146,23 @@ Return ONLY a single valid JSON object with those keys.
 
     try {
       if (activeMediaStream) stopLiveCamera();
-      const constraints = {
-        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
-        audio: false
-      };
-      activeMediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+      const candidates = [
+        { video: { facingMode: { ideal: 'environment' }, width: { ideal: 2560 }, height: { ideal: 1920 } }, audio: false },
+        { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false },
+        { video: { facingMode: 'environment' }, audio: false },
+        { video: true, audio: false }
+      ];
+      let stream = null;
+      for (const c of candidates) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia(c);
+          if (stream) break;
+        } catch (_) {}
+      }
+      if (!stream) throw new Error('No camera stream available');
+      activeMediaStream = stream;
       videoElem.srcObject = activeMediaStream;
+      applyBmDocumentFrameMode(selectedDocChoice, currentBmFrameMode);
       viewFinder.style.display = 'flex';
       imgWrap.style.display = 'none';
       btnCam.style.display = 'none';
@@ -1063,26 +1173,51 @@ Return ONLY a single valid JSON object with those keys.
     }
   });
 
-  // Snap from live WebRTC video
+  function captureCroppedBmCameraFrame(videoEl, frameEl, frameMode = 'id', quality = 0.92) {
+    const natW = videoEl.videoWidth;
+    const natH = videoEl.videoHeight;
+    if (!natW || !natH) return null;
+
+    const vRect = videoEl.getBoundingClientRect();
+    const fRect = frameEl ? frameEl.getBoundingClientRect() : null;
+    let sx = 0, sy = 0, sw = natW, sh = natH;
+
+    if (fRect && vRect.width > 0 && vRect.height > 0 && fRect.width > 0 && fRect.height > 0) {
+      const scale = Math.max(vRect.width / natW, vRect.height / natH);
+      const offsetX = (natW * scale - vRect.width) / 2;
+      const offsetY = (natH * scale - vRect.height) / 2;
+      sx = Math.round((fRect.left - vRect.left + offsetX) / scale);
+      sy = Math.round((fRect.top - vRect.top + offsetY) / scale);
+      sw = Math.round(fRect.width / scale);
+      sh = Math.round(fRect.height / scale);
+      sx = Math.max(0, Math.min(natW - 1, sx));
+      sy = Math.max(0, Math.min(natH - 1, sy));
+      sw = Math.max(1, Math.min(natW - sx, sw));
+      sh = Math.max(1, Math.min(natH - sy, sh));
+    }
+
+    const maxDim = frameMode === 'a4' ? 2200 : 1800;
+    const downScale = Math.min(1, maxDim / Math.max(sw, sh));
+    const outW = Math.max(1, Math.round(sw * downScale));
+    const outH = Math.max(1, Math.round(sh * downScale));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = outW;
+    canvas.height = outH;
+    const ctx = canvas.getContext('2d');
+    if ('filter' in ctx) ctx.filter = 'contrast(1.08) brightness(1.03)';
+    ctx.drawImage(videoEl, sx, sy, sw, sh, 0, 0, outW, outH);
+    return canvas.toDataURL('image/jpeg', quality);
+  }
+
+  // Snap from live WebRTC video (strictly cropped to inner NID / A4 guide frame)
   btnSnap.addEventListener('click', () => {
     if (!videoElem.videoWidth) {
       alert('ক্যামেরা প্রস্তুত নয়, অনুগ্রহ করে কিছুক্ষণ অপেক্ষা করুন।');
       return;
     }
-    const canvas = document.createElement('canvas');
-    let w = videoElem.videoWidth;
-    let h = videoElem.videoHeight;
-    const maxDim = 1800;
-    if (w > maxDim || h > maxDim) {
-      if (w > h) { h = Math.round((h * maxDim) / w); w = maxDim; }
-      else { w = Math.round((w * maxDim) / h); h = maxDim; }
-    }
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext('2d');
-    if ('filter' in ctx) ctx.filter = 'contrast(1.08) brightness(1.03)';
-    ctx.drawImage(videoElem, 0, 0, w, h);
-    const base64Data = canvas.toDataURL('image/jpeg', 0.90);
+    const base64Data = captureCroppedBmCameraFrame(videoElem, cropFrameElem, currentBmFrameMode, 0.92);
+    if (!base64Data) return;
 
     stopLiveCamera();
     imgPreview.src = base64Data;
@@ -1107,7 +1242,8 @@ Return ONLY a single valid JSON object with those keys.
     if (!file) return;
 
     try {
-      const base64Data = await compressImage(file, 1800, 0.90);
+      const maxDim = currentBmFrameMode === 'a4' ? 2200 : 1800;
+      const base64Data = await compressImage(file, maxDim, 0.92);
       imgPreview.src = base64Data;
       imgWrap.style.display = 'flex';
       viewFinder.style.display = 'none';
@@ -1180,49 +1316,161 @@ Return ONLY a single valid JSON object with those keys.
     return Array.isArray(parts) ? parts.map(p => p?.text || '').join('').trim() : '';
   }
 
-  function needsAccurateEscalation(parsed) {
+  const GENDER_ALIAS_MAP = {
+    'তৃতীয় লিঙ্গ': 'হিজড়া',
+    'তৃতীয় লিঙ্গ': 'হিজড়া',
+    'হিজড়া': 'হিজড়া',
+    'Male': 'পুরুষ',
+    'male': 'পুরুষ',
+    'Female': 'নারী',
+    'female': 'নারী'
+  };
+
+  function normalizeGenderValue(gender) {
+    const ng = normalizeBn(gender || '');
+    return GENDER_ALIAS_MAP[ng] || GENDER_ALIAS_MAP[String(gender || '').trim()] || ng;
+  }
+
+  function extractDigitCandidate(raw) {
+    return normalizeDigits(raw || '').replace(/[^0-9]/g, '');
+  }
+
+  function pickBestDocDigits(candidates, preferredLengths) {
+    const cleaned = candidates.map(extractDigitCandidate).filter(Boolean);
+    for (const len of preferredLengths) {
+      const match = cleaned.find((c) => c.length === len);
+      if (match) return match;
+    }
+    return cleaned[0] || '';
+  }
+
+  function isDocDigitsValidForType(docType, parsed) {
+    if (!parsed || typeof parsed !== 'object') return false;
+    if (docType === 'birth_certificate') {
+      return pickBestDocDigits([parsed.birth_reg_no, parsed.doc_number, parsed.nid_number], [17]).length === 17;
+    }
+    const d = pickBestDocDigits([parsed.nid_number, parsed.doc_number, parsed.birth_reg_no], [10, 17, 13]);
+    return d.length === 10 || d.length === 13 || d.length === 17;
+  }
+
+  function needsAccurateEscalation(parsed, docTypeHint = 'auto') {
     if (!parsed || typeof parsed !== 'object') return true;
     if (parsed.confidence === 'low') return true;
     if (!String(parsed.name_bn || '').trim() || !String(parsed.name_en || '').trim()) return true;
     if (!/^\d{2}\/\d{2}\/\d{4}$/.test(standardizeDate(parsed.dob || ''))) return true;
-    const rawNum = parsed.doc_number || (parsed.doc_type === 'birth_certificate' ? parsed.birth_reg_no : parsed.nid_number) || parsed.nid_number || parsed.birth_reg_no || '';
-    const digits = normalizeDigits(rawNum).replace(/[^0-9]/g, '');
-    if (parsed.doc_type === 'birth_certificate') return digits.length !== 17;
-    return digits.length !== 10 && digits.length !== 13 && digits.length !== 17;
+    const effectiveType = (docTypeHint && docTypeHint !== 'auto') ? docTypeHint : (parsed.doc_type || 'nid');
+    if (!isDocDigitsValidForType(effectiveType, parsed)) return true;
+    const normGender = normalizeGenderValue(parsed.gender);
+    if (!['পুরুষ', 'নারী', 'হিজড়া'].includes(normGender)) return true;
+    if (!String(parsed.mother_name_bn || '').trim() && !String(parsed.mother_name_en || '').trim()) return true;
+    const hasFatherOrSpouse =
+      String(parsed.father_name_bn || '').trim() ||
+      String(parsed.father_name_en || '').trim() ||
+      String(parsed.spouse_name_bn || '').trim() ||
+      String(parsed.spouse_name_en || '').trim();
+    if (!hasFatherOrSpouse) return true;
+    return false;
   }
 
-  function getOrderedGeminiModels(profile = 'accurate', preferredGeminiModel = 'gemini-3.1-flash-lite') {
+  function mergeOcrResults(primary, escalated, docTypeHint = 'auto') {
+    if (!primary) return escalated;
+    if (!escalated) return primary;
+
+    const effectiveType = (docTypeHint && docTypeHint !== 'auto')
+      ? docTypeHint
+      : (escalated.doc_type && escalated.doc_type !== 'auto' ? escalated.doc_type : (primary.doc_type || 'nid'));
+
+    const merged = { ...primary, ...escalated, doc_type: effectiveType };
+    const stringFields = [
+      'name_bn', 'name_en',
+      'father_name_bn', 'father_name_en',
+      'mother_name_bn', 'mother_name_en',
+      'spouse_name_bn', 'spouse_name_en',
+      'relation_suggestion', 'marital_status_suggestion'
+    ];
+    for (const f of stringFields) {
+      merged[f] = String(escalated[f] || '').trim() || String(primary[f] || '').trim();
+    }
+
+    const escDob = standardizeDate(escalated.dob || '');
+    const priDob = standardizeDate(primary.dob || '');
+    merged.dob = /^\d{2}\/\d{2}\/\d{4}$/.test(escDob)
+      ? escDob
+      : (/^\d{2}\/\d{2}\/\d{4}$/.test(priDob) ? priDob : (escDob || priDob));
+
+    const escG = normalizeGenderValue(escalated.gender);
+    const priG = normalizeGenderValue(primary.gender);
+    merged.gender = ['পুরুষ', 'নারী', 'হিজড়া'].includes(escG)
+      ? escG
+      : (['পুরুষ', 'নারী', 'হিজড়া'].includes(priG) ? priG : (escG || priG));
+
+    if (!isDocDigitsValidForType(effectiveType, escalated) && isDocDigitsValidForType(effectiveType, primary)) {
+      merged.doc_number = primary.doc_number || '';
+      merged.nid_number = primary.nid_number || '';
+      merged.birth_reg_no = primary.birth_reg_no || '';
+    } else {
+      merged.doc_number = escalated.doc_number || primary.doc_number || '';
+      merged.nid_number = escalated.nid_number || primary.nid_number || '';
+      merged.birth_reg_no = escalated.birth_reg_no || primary.birth_reg_no || '';
+    }
+
+    if (primary.ocr_model_used && escalated.ocr_model_used && escalated.ocr_model_used !== primary.ocr_model_used) {
+      merged.ocr_model_used = `${escalated.ocr_model_used} + ${primary.ocr_model_used}`;
+    }
+    if (primary.ocr_usage && escalated.ocr_usage) {
+      merged.ocr_usage = {
+        ...escalated.ocr_usage,
+        inputTokens: (primary.ocr_usage.inputTokens || 0) + (escalated.ocr_usage.inputTokens || 0),
+        outputTokens: (primary.ocr_usage.outputTokens || 0) + (escalated.ocr_usage.outputTokens || 0),
+        totalTokens: (primary.ocr_usage.totalTokens || 0) + (escalated.ocr_usage.totalTokens || 0),
+        costUsd: Number(((primary.ocr_usage.costUsd || 0) + (escalated.ocr_usage.costUsd || 0)).toFixed(6)),
+        costBdt: Number(((primary.ocr_usage.costBdt || 0) + (escalated.ocr_usage.costBdt || 0)).toFixed(4))
+      };
+    }
+    return merged;
+  }
+
+  function getOrderedGeminiModels(profile = 'accurate', preferredGeminiModel = DEFAULT_GEMINI_MODEL) {
     const pref = normalizeModelId(preferredGeminiModel);
-    const validPref = pref.startsWith('gemini-') ? pref : 'gemini-3.1-flash-lite';
+    const validPref = pref.startsWith('gemini-') ? pref : DEFAULT_GEMINI_MODEL;
     let base;
     if (profile === 'flash38_only') {
       base = ['gemini-3.8-flash'];
     } else if (profile === 'lite_only') {
-      base = validPref === 'gemini-3.5-flash-lite'
-        ? ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite']
-        : ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite'];
+      base = validPref === 'gemini-3.1-flash-lite'
+        ? ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite']
+        : ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'];
     } else if (profile === 'preferred') {
-      base = [validPref, 'gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini-3.8-flash'];
+      base = [validPref, 'gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-3.1-flash-lite'];
     } else {
-      base = ['gemini-3.8-flash', validPref, 'gemini-3.1-flash-lite', 'gemini-3.5-flash-lite'];
+      base = validPref === 'gemini-4-argon'
+        ? ['gemini-4-argon', 'gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite']
+        : ['gemini-3.8-flash', validPref, 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'];
     }
     return Array.from(new Set(base));
   }
 
-  function buildGeminiAttemptsForModels(models, apiKey, rawBase64, detectedMime, promptText) {
+  function buildGeminiAttemptsForModels(models, apiKey, rawBase64, detectedMime, promptText, opts = {}) {
+    const { docType = 'auto', isEscalation = false } = opts;
     const attempts = [];
     for (const model of models) {
-      if (model === 'gemini-3.8-flash' || model === 'gemini-3.5-flash-lite') {
+      if (INTERACTIONS_API_MODELS.has(model)) {
+        const useUltraHigh = (model === 'gemini-3.8-flash' || model === 'gemini-4-argon') && (docType === 'birth_certificate' || isEscalation);
+        const imageResolution = useUltraHigh ? 'ultra_high' : 'high';
         const body = {
           model,
-          input: [{ type: 'text', text: promptText }, { type: 'image', data: rawBase64, mime_type: detectedMime }],
+          input: [
+            { type: 'text', text: promptText },
+            { type: 'image', data: rawBase64, mime_type: detectedMime, resolution: imageResolution }
+          ],
           response_format: { type: 'text', mime_type: 'application/json', schema: OCR_RESPONSE_SCHEMA },
+          generation_config: { thinking_level: isEscalation ? 'medium' : 'low' },
           store: false
         };
-        if (model === 'gemini-3.8-flash') body.generation_config = { thinking_level: 'low' };
         attempts.push({
           model,
-          label: `${model} (interactions)`,
+          timeoutMs: useUltraHigh || isEscalation ? 35000 : 28000,
+          label: `${model} (interactions/${imageResolution})`,
           url: 'https://generativelanguage.googleapis.com/v1beta/interactions',
           headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey, 'Api-Revision': '2026-05-20' },
           body
@@ -1230,26 +1478,27 @@ Return ONLY a single valid JSON object with those keys.
       }
       attempts.push({
         model,
+        timeoutMs: isEscalation ? 35000 : 28000,
         label: `${model} (generateContent)`,
         url: `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
         body: {
           contents: [{ parts: [{ text: promptText }, { inline_data: { mime_type: detectedMime, data: rawBase64 } }] }],
-          generationConfig: { response_mime_type: 'application/json' }
+          generationConfig: { response_mime_type: 'application/json', responseSchema: OCR_RESPONSE_SCHEMA }
         }
       });
     }
     return attempts;
   }
 
-  async function callGeminiResilientOCR(apiKey, rawBase64, detectedMime, promptText, profile = 'accurate', preferredGeminiModel = 'gemini-3.1-flash-lite') {
+  async function callGeminiResilientOCR(apiKey, rawBase64, detectedMime, promptText, profile = 'accurate', preferredGeminiModel = DEFAULT_GEMINI_MODEL, attemptOpts = {}) {
     const modelsOrder = getOrderedGeminiModels(profile, preferredGeminiModel);
-    const attempts = buildGeminiAttemptsForModels(modelsOrder, apiKey, rawBase64, detectedMime, promptText);
+    const attempts = buildGeminiAttemptsForModels(modelsOrder, apiKey, rawBase64, detectedMime, promptText, attemptOpts);
 
     let lastErr = 'Gemini থেকে উত্তর পাওয়া যায়নি।';
     for (const attempt of attempts) {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 28000);
+      const timer = setTimeout(() => controller.abort(), attempt.timeoutMs || 28000);
       try {
         const res = await fetch(attempt.url, {
           method: 'POST',
@@ -1311,7 +1560,7 @@ Return ONLY a single valid JSON object with those keys.
               role: 'user',
               content: [
                 { type: 'text', text: promptText },
-                { type: 'image_url', image_url: { url: `data:${detectedMime};base64,${rawBase64}` } }
+                { type: 'image_url', image_url: { url: `data:${detectedMime};base64,${rawBase64}`, detail: 'high' } }
               ]
             }
           ],
@@ -1369,13 +1618,14 @@ Return ONLY a single valid JSON object with those keys.
   async function runMultiProviderOCR({
     aiProvider = 'economy',
     defaultKeySlot = 'auto',
-    geminiModel = 'gemini-3.1-flash-lite',
+    geminiModel = DEFAULT_GEMINI_MODEL,
     deepseekModel = 'deepseek-flash',
     geminiKey = '',
     deepseekKey = '',
     rawBase64,
     detectedMime,
-    promptText
+    promptText,
+    docType = 'auto'
   }) {
     let gKey = String(geminiKey || '').trim();
     let dKey = String(deepseekKey || '').trim();
@@ -1386,7 +1636,7 @@ Return ONLY a single valid JSON object with those keys.
     const mode = ['economy', 'auto', 'gemini', 'gemini_lite', 'deepseek'].includes(aiProvider) ? aiProvider : 'economy';
     const keySlot = ['auto', 'gemini', 'deepseek'].includes(defaultKeySlot) ? defaultKeySlot : 'auto';
     const prefGemRaw = normalizeModelId(geminiModel);
-    const prefGemModel = prefGemRaw.startsWith('gemini-') ? prefGemRaw : 'gemini-3.1-flash-lite';
+    const prefGemModel = prefGemRaw.startsWith('gemini-') ? prefGemRaw : DEFAULT_GEMINI_MODEL;
 
     if (mode === 'deepseek') {
       if (!dKey) throw new Error('DeepSeek API Key দেওয়া হয়নি!');
@@ -1394,20 +1644,21 @@ Return ONLY a single valid JSON object with those keys.
     }
     if (mode === 'gemini_lite') {
       if (!gKey) throw new Error('Gemini API Key দেওয়া হয়নি!');
-      return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'lite_only', prefGemModel);
+      return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'lite_only', prefGemModel, { docType });
     }
     if (mode === 'gemini') {
       if (!gKey) throw new Error('Gemini API Key দেওয়া হয়নি!');
-      return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'preferred', prefGemModel);
+      return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'preferred', prefGemModel, { docType });
     }
 
     const errors = [];
     if (keySlot === 'deepseek' && dKey) {
       try {
         const dsRes = await callDeepSeekVisionOCR(dKey, rawBase64, detectedMime, promptText, deepseekModel);
-        if (mode === 'auto' || !needsAccurateEscalation(dsRes) || !gKey) return dsRes;
+        if (mode === 'auto' || !needsAccurateEscalation(dsRes, docType) || !gKey) return dsRes;
         try {
-          return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'preferred', prefGemModel);
+          const escRes = await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'preferred', prefGemModel, { docType, isEscalation: true });
+          return mergeOcrResults(dsRes, escRes, docType);
         } catch (_) {
           return dsRes;
         }
@@ -1416,7 +1667,7 @@ Return ONLY a single valid JSON object with those keys.
       }
       if (gKey) {
         try {
-          return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'preferred', prefGemModel);
+          return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'preferred', prefGemModel, { docType });
         } catch (err) {
           errors.push(`Gemini: ${err.message}`);
         }
@@ -1427,14 +1678,19 @@ Return ONLY a single valid JSON object with those keys.
     if (mode === 'economy') {
       if (gKey) {
         try {
-          const firstProfile = prefGemModel === 'gemini-3.8-flash' ? 'accurate' : 'lite_only';
-          const primaryRes = await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, firstProfile, prefGemModel);
-          if (!needsAccurateEscalation(primaryRes) || prefGemModel === 'gemini-3.8-flash') return primaryRes;
+          const isFlagship = prefGemModel === 'gemini-3.8-flash' || prefGemModel === 'gemini-4-argon';
+          const firstProfile = isFlagship ? 'preferred' : 'lite_only';
+          const primaryRes = await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, firstProfile, prefGemModel, { docType });
+          if (!needsAccurateEscalation(primaryRes, docType) || prefGemModel === 'gemini-3.8-flash') return primaryRes;
           try {
-            return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'flash38_only', prefGemModel);
+            const escRes = await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'flash38_only', prefGemModel, { docType, isEscalation: true });
+            return mergeOcrResults(primaryRes, escRes, docType);
           } catch (_) {
             if (dKey) {
-              try { return await callDeepSeekVisionOCR(dKey, rawBase64, detectedMime, promptText, deepseekModel); } catch (__) {}
+              try {
+                const dsEsc = await callDeepSeekVisionOCR(dKey, rawBase64, detectedMime, promptText, deepseekModel);
+                return mergeOcrResults(primaryRes, dsEsc, docType);
+              } catch (__) {}
             }
             return primaryRes;
           }
@@ -1454,7 +1710,7 @@ Return ONLY a single valid JSON object with those keys.
 
     if (gKey) {
       try {
-        return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'accurate', prefGemModel);
+        return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'accurate', prefGemModel, { docType, isEscalation: docType === 'birth_certificate' });
       } catch (err) {
         errors.push(`Gemini: ${err.message}`);
       }
@@ -1473,16 +1729,17 @@ Return ONLY a single valid JSON object with those keys.
     const warnings = [];
     if (docTypeChoice && docTypeChoice !== 'auto') {
       data.doc_type = docTypeChoice;
+    } else if (
+      data.doc_type !== 'birth_certificate' &&
+      !extractDigitCandidate(data.nid_number) &&
+      extractDigitCandidate(data.birth_reg_no).length === 17
+    ) {
+      data.doc_type = 'birth_certificate';
     }
     if (data.dob) data.dob = standardizeDate(data.dob);
 
-    const genderMap = {
-      'তৃতীয় লিঙ্গ': 'হিজড়া', 'তৃতীয় লিঙ্গ': 'হিজড়া', 'হিজড়া': 'হিজড়া',
-      'Male': 'পুরুষ', 'male': 'পুরুষ', 'Female': 'নারী', 'female': 'নারী'
-    };
     if (data.gender) {
-      const ng = normalizeBn(data.gender);
-      data.gender = genderMap[ng] || genderMap[String(data.gender).trim()] || ng;
+      data.gender = normalizeGenderValue(data.gender);
     }
     const relMap = { 'ছেলে': 'পুত্র', 'মেয়ে': 'কন্যা', 'মেয়ে': 'কন্যা', 'বাবা': 'পিতা', 'মা': 'মাতা' };
     if (data.relation_suggestion) {
@@ -1501,16 +1758,16 @@ Return ONLY a single valid JSON object with those keys.
       if (!data.relation_suggestion) data.relation_suggestion = 'স্ত্রী';
     }
 
-    const rawNum = data.doc_number || (data.doc_type === 'birth_certificate' ? data.birth_reg_no : data.nid_number) || data.nid_number || data.birth_reg_no || '';
-    let num = normalizeDigits(rawNum).replace(/[^0-9]/g, '');
-
     if (data.doc_type === 'birth_certificate') {
+      const num = pickBestDocDigits([data.birth_reg_no, data.doc_number, data.nid_number], [17]);
       data.doc_number = num;
       data.birth_reg_no = num;
+      data.nid_number = '';
       if (num.length !== 17) {
         warnings.push(`জন্ম নিবন্ধন নম্বরটি ${num.length || 0} সংখ্যার (অবশ্যই ১৭ সংখ্যা প্রয়োজন) — যাচাই করুন।`);
       }
     } else {
+      let num = pickBestDocDigits([data.nid_number, data.doc_number, data.birth_reg_no], [10, 17, 13]);
       if (num.length === 13) {
         const ym = String(data.dob || '').match(/\b(19\d{2}|20\d{2})\b/);
         if (ym) {
@@ -1523,6 +1780,7 @@ Return ONLY a single valid JSON object with those keys.
       data.doc_type = data.doc_type || 'nid';
       data.doc_number = num;
       data.nid_number = num;
+      data.birth_reg_no = '';
       if (num.length !== 10 && num.length !== 17) {
         warnings.push(`NID নম্বরটি ${num.length || 0} সংখ্যার (১০ বা ১৭ সংখ্যা প্রয়োজন) — যাচাই করুন।`);
       }
@@ -1532,6 +1790,12 @@ Return ONLY a single valid JSON object with those keys.
     if (!String(data.name_en || '').trim()) warnings.push('ইংরেজি নাম পড়া যায়নি।');
     if (!/^\d{2}\/\d{2}\/\d{4}$/.test(String(data.dob || ''))) {
       warnings.push('জন্ম তারিখ (DD/MM/YYYY) স্পষ্ট নয় — মিলিয়ে নিন।');
+    }
+    if (!['পুরুষ', 'নারী', 'হিজড়া'].includes(String(data.gender || '').trim())) {
+      warnings.push('লিঙ্গ স্পষ্ট নয় — নির্বাচন যাচাই করুন।');
+    }
+    if (!String(data.mother_name_bn || '').trim() && !String(data.mother_name_en || '').trim()) {
+      warnings.push('মাতার নাম পড়া যায়নি — প্রয়োজনে হাতে লিখুন।');
     }
     if (data.confidence === 'low') {
       warnings.push('ছবিটি কিছুটা ঝাপসা/অস্পষ্ট মনে হচ্ছে — সাবমিটের আগে সব তথ্য যাচাই করুন।');
@@ -1583,9 +1847,7 @@ Return ONLY a single valid JSON object with those keys.
         rawBase64 = uriMatch[2];
       }
 
-      const docTypeChoice = activeScanTarget.type === 'member'
-        ? (document.getElementById('fc-bm-doc-type')?.value || 'auto')
-        : 'auto';
+      const docTypeChoice = selectedDocChoice || (selectMemberDocType ? selectMemberDocType.value : 'auto') || 'auto';
 
       const data = await runMultiProviderOCR({
         aiProvider: savedAiProvider,
@@ -1596,7 +1858,8 @@ Return ONLY a single valid JSON object with those keys.
         deepseekKey: savedDeepSeekKey,
         rawBase64,
         detectedMime,
-        promptText: buildGeminiPrompt(docTypeChoice)
+        promptText: buildGeminiPrompt(docTypeChoice),
+        docType: docTypeChoice
       });
       validateAndNormalizeOcrData(data, docTypeChoice);
 
@@ -1781,26 +2044,70 @@ Return ONLY a single valid JSON object with those keys.
     return false;
   }
 
+  function isElementVisible(el) {
+    if (!el) return false;
+    if (el.style && el.style.display === 'none') return false;
+    try {
+      const cs = window.getComputedStyle ? window.getComputedStyle(el) : null;
+      if (cs && (cs.display === 'none' || cs.visibility === 'hidden')) return false;
+    } catch (_) {}
+    return true;
+  }
+
+  function resolveDocNumberAndType(data) {
+    if (!data || typeof data !== 'object') return { docType: 'nid', docNumber: '' };
+    const rawBrc = extractDigitCandidate(data.birth_reg_no);
+    const rawNid = extractDigitCandidate(data.nid_number);
+    const rawDoc = extractDigitCandidate(data.doc_number);
+    const isBrc = data.doc_type === 'birth_certificate' || (!rawNid && rawBrc.length === 17);
+    const docType = isBrc ? 'birth_certificate' : 'nid';
+    let docNumber = isBrc
+      ? pickBestDocDigits([rawBrc, rawDoc, rawNid], [17])
+      : pickBestDocDigits([rawNid, rawDoc, rawBrc], [10, 17, 13]);
+    if (!isBrc && docNumber.length === 13 && data.dob) {
+      const ym = String(standardizeDate(data.dob)).match(/\b(19\d{2}|20\d{2})\b/);
+      if (ym) docNumber = ym[1] + docNumber;
+    }
+    return { docType, docNumber };
+  }
+
+  function isRadioSelected(radioWrap) {
+    if (!radioWrap) return false;
+    const inp = radioWrap.querySelector('input[type="radio"]');
+    return Boolean((inp && (inp.checked || inp.getAttribute('aria-checked') === 'true')) || radioWrap.classList.contains('v-item--active'));
+  }
+
+  async function ensureVerificationRadio(scope, isBirthReg) {
+    if (!scope) return false;
+    const radios = Array.from(scope.querySelectorAll('.v-radio'));
+    if (!radios.length) return false;
+    const target = radios.find((rl) => {
+      const txt = normalizeBn(rl.textContent || '');
+      return isBirthReg
+        ? (txt.includes('জন্ম নিবন্ধন') || txt.includes('নিবন্ধন'))
+        : (txt.includes('জাতীয় পরিচিতি') || txt.includes('জাতীয় পরিচিতি') || txt.includes('এনআইডি') || txt.includes('NID'));
+    });
+    if (!target) return false;
+    if (!isRadioSelected(target)) {
+      const inp = target.querySelector('input[type="radio"]');
+      const label = target.querySelector('label');
+      if (label) label.click();
+      else if (inp) inp.click();
+      else target.click();
+      await new Promise((r) => setTimeout(r, 260));
+      return true;
+    }
+    return false;
+  }
+
   async function fillMemberCard(card, data) {
     if (!card || !data) return;
 
-    // 1. Verification Type Radio (NID vs Birth Certificate) — scoped strictly to .v-radio
-    const isBirthReg = data.doc_type === 'birth_certificate';
-    const radios = Array.from(card.querySelectorAll('.v-radio'));
-    for (const rl of radios) {
-      const txt = normalizeBn(rl.textContent || '');
-      if (isBirthReg && (txt.includes('জন্ম নিবন্ধন') || txt.includes('নিবন্ধন'))) {
-        const r = rl.querySelector('input[type="radio"]');
-        if (r) r.click(); else rl.click();
-        break;
-      } else if (!isBirthReg && (txt.includes('জাতীয় পরিচিতি') || txt.includes('এনআইডি') || txt.includes('NID'))) {
-        const r = rl.querySelector('input[type="radio"]');
-        if (r) r.click(); else rl.click();
-        break;
-      }
-    }
+    const { docType, docNumber } = resolveDocNumberAndType(data);
+    const isBirthReg = docType === 'birth_certificate';
 
-    await new Promise(r => setTimeout(r, 220));
+    // 1. Verification Type Radio (NID vs Birth Certificate) — scoped strictly to .v-radio
+    await ensureVerificationRadio(card, isBirthReg);
 
     function findCardInput(keywords) {
       return findInputByLabel(keywords, card);
@@ -1811,10 +2118,10 @@ Return ONLY a single valid JSON object with those keys.
       const labels = Array.from(card.querySelectorAll('label'));
       let container = null;
       for (const label of labels) {
-        if (label.closest('.v-radio')) continue;
+        if (label.closest('.v-radio, .v-checkbox, .v-input--selection-controls, [role="radiogroup"]')) continue;
         const text = normalizeBn(label.textContent || '');
         if (normKeys.some(k => text.includes(k))) {
-          container = label.closest('.col, [class*="col-"], span, div');
+          container = label.closest('.col, [class*="col-"], .v-input') || label.parentElement;
           break;
         }
       }
@@ -1822,11 +2129,17 @@ Return ONLY a single valid JSON object with those keys.
       await selectSingleVuetifyOption(container, candidates);
     }
 
-    // 2. Identification number
-    const num = data.doc_number || data.nid_number || '';
-    if (num) {
-      const idInp = findCardInput(['জাতীয় পরিচিতি নম্বর', 'এনআইডি', 'জন্ম নিবন্ধন নম্বর', 'নিবন্ধন']);
-      if (idInp) setReactiveValue(idInp, num);
+    // 2. Identification number (poll briefly if Vuetify swaps field after radio switch)
+    if (docNumber) {
+      const numKeys = isBirthReg
+        ? ['জন্ম নিবন্ধন নম্বর', 'নিবন্ধন নম্বর', 'জন্ম নিবন্ধন']
+        : ['জাতীয় পরিচিতি নম্বর', 'জাতীয় পরিচিতি নম্বর', 'এনআইডি', 'পরিচিতি নম্বর'];
+      let idInp = findCardInput(numKeys);
+      for (let t = 0; !idInp && t < 5; t++) {
+        await new Promise(r => setTimeout(r, 100));
+        idInp = findCardInput(numKeys);
+      }
+      if (idInp) setReactiveValue(idInp, docNumber);
     }
 
     // 3. Date of birth
@@ -2000,6 +2313,15 @@ Return ONLY a single valid JSON object with those keys.
     input.dispatchEvent(new Event('change', { bubbles: true }));
     input.dispatchEvent(new Event('blur', { bubbles: true }));
 
+    // Dismiss Vuetify date-picker menu if focusing a DOB field opened it
+    if (/DD\/MM/i.test(input.placeholder || '') || input.getAttribute('aria-haspopup') === 'true') {
+      setTimeout(() => {
+        if (document.querySelector('.v-menu__content.menuable__content__active .v-picker--date')) {
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        }
+      }, 60);
+    }
+
     const container = input.closest('.v-input') || input;
     container.style.transition = 'background-color 0.4s ease';
     const oldBg = container.style.backgroundColor;
@@ -2008,25 +2330,66 @@ Return ONLY a single valid JSON object with those keys.
     return true;
   }
 
+  function isFillableTextInput(inp) {
+    if (!inp || inp.disabled) return false;
+    const t = String(inp.type || 'text').toLowerCase();
+    if (['hidden', 'radio', 'checkbox', 'file', 'button', 'submit', 'reset', 'image'].includes(t)) return false;
+    if (inp.closest('.v-radio, .v-checkbox, .v-input--selection-controls, [role="radiogroup"]')) return false;
+    if (inp.readOnly && inp.closest('.v-select') && !inp.closest('.v-autocomplete') && !/DD\/MM/i.test(inp.placeholder || '')) return false;
+    return true;
+  }
+
   function findInputByLabel(keywords, rootEl = null) {
     const scope = rootEl || document;
     const normKeys = keywords.map(k => normalizeBn(k));
     const labels = Array.from(scope.querySelectorAll('label'));
     for (const label of labels) {
+      if (label.closest('.v-radio, .v-checkbox, .v-input--selection-controls, [role="radiogroup"]')) continue;
       const text = normalizeBn(label.textContent || '');
-      if (normKeys.some(k => text.includes(k))) {
-        if (label.htmlFor) {
-          const inp = document.getElementById(label.htmlFor);
-          if (inp && !inp.disabled && (!rootEl || rootEl.contains(inp))) return inp;
-        }
-        const parent = label.closest('.col, [class*="col-"], span, div');
-        if (parent) {
-          const inp = parent.querySelector('input:not([type="hidden"]):not([disabled])');
-          if (inp) return inp;
-        }
+      if (!normKeys.some(k => text.includes(k))) continue;
+      if (label.htmlFor) {
+        const inp = document.getElementById(label.htmlFor);
+        if (isFillableTextInput(inp) && (!rootEl || rootEl.contains(inp))) return inp;
+      }
+      const vInput = label.closest('.v-input');
+      if (vInput) {
+        const cand = Array.from(vInput.querySelectorAll('input, textarea')).find(isFillableTextInput);
+        if (cand) return cand;
+      }
+      let cur = label.parentElement;
+      for (let depth = 0; cur && cur !== scope && depth < 5; depth++, cur = cur.parentElement) {
+        if (cur.matches('.v-radio, .v-checkbox, [role="radiogroup"]')) continue;
+        const cand = Array.from(cur.querySelectorAll('input, textarea')).find(isFillableTextInput);
+        if (cand) return cand;
+        if (cur.matches('.col, [class*="col-"]')) break;
       }
     }
     return null;
+  }
+
+  function findStep0DocNumberInput(tab0, isBirthReg) {
+    const numKeys = isBirthReg
+      ? ['জন্ম নিবন্ধন নম্বর', 'নিবন্ধন নম্বর', 'জন্ম নিবন্ধন']
+      : ['জাতীয় পরিচিতি নম্বর (এনআইডি)', 'জাতীয় পরিচিতি নম্বর', 'জাতীয় পরিচিতি নম্বর', 'জাতীয় পরিচয়পত্র নম্বর', 'এনআইডি নম্বর', 'পরিচিতি নম্বর'];
+    const byLabel = findInputByLabel(numKeys, tab0);
+    if (byLabel) return byLabel;
+
+    const scope = tab0 || document;
+    const candidates = Array.from(scope.querySelectorAll('input')).filter(isFillableTextInput);
+    const nonDob = candidates.filter((inp) => !/DD\/MM|YYYY/i.test(inp.placeholder || ''));
+    const byContext = nonDob.find((inp) => {
+      const box = inp.closest('.col, [class*="col-"], .v-input, .row');
+      const txt = normalizeBn(box?.textContent || '');
+      return isBirthReg
+        ? (txt.includes('নিবন্ধন') || txt.includes('birth'))
+        : (txt.includes('পরিচিতি') || txt.includes('এনআইডি') || txt.includes('nid'));
+    });
+    if (byContext) return byContext;
+
+    if (tab0 && nonDob.length >= 3) {
+      return nonDob[2];
+    }
+    return document.getElementById('input-594') || document.getElementById('input-215');
   }
 
   // Sequential Awaitable Vuetify Dropdown Selector scoped by aria-owns / active menu
@@ -2039,9 +2402,15 @@ Return ONLY a single valid JSON object with those keys.
       const labels = Array.from(scope.querySelectorAll('label'));
       let container = null;
       for (const l of labels) {
+        if (l.closest('.v-radio, .v-checkbox, .v-input--selection-controls, [role="radiogroup"]')) continue;
         if (normKeys.some(k => normalizeBn(l.textContent || '').includes(k))) {
-          container = l.closest('.col, [class*="col-"], span, div');
-          break;
+          let cur = l.parentElement;
+          for (let d = 0; cur && cur !== scope && d < 5; d++, cur = cur.parentElement) {
+            if (cur.querySelector('.v-input__slot')) { container = cur; break; }
+            if (cur.matches('.col, [class*="col-"]')) break;
+          }
+          if (!container) container = l.closest('.col, [class*="col-"], .v-input') || l.parentElement;
+          if (container) break;
         }
       }
       if (!container) return resolve(false);
@@ -2094,31 +2463,68 @@ Return ONLY a single valid JSON object with those keys.
     try {
       const tab0 = document.querySelector('[data-family-card-tab="0"]');
       const tab1 = document.querySelector('[data-family-card-tab="1"]');
+      const { docType, docNumber } = resolveDocNumberAndType(data);
+      const isBirthReg = docType === 'birth_certificate';
 
-      // Step 0: NID Verification
-      if (data.name_bn) setReactiveValue(findInputByLabel(['সম্পূর্ণ নাম (বাংলা)'], tab0) || findInputByLabel(['সম্পূর্ণ নাম (বাংলা)']) || document.getElementById('input-211'), data.name_bn);
-      if (data.name_en) setReactiveValue(findInputByLabel(['সম্পূর্ণ নাম (ইংরেজি)'], tab0) || findInputByLabel(['সম্পূর্ণ নাম (ইংরেজি)']) || document.getElementById('input-213'), data.name_en);
-      if (data.nid_number) setReactiveValue(findInputByLabel(['জাতীয় পরিচিতি নম্বর (এনআইডি)', 'জাতীয় পরিচিতি নম্বর'], tab0) || findInputByLabel(['জাতীয় পরিচিতি নম্বর']) || document.getElementById('input-215'), data.nid_number);
-      if (data.dob) setReactiveValue(findInputByLabel(['জন্ম তারিখ'], tab0) || findInputByLabel(['জন্ম তারিখ']) || document.getElementById('input-221'), data.dob);
-      if (data.gender) await selectDropdown(['লিঙ্গ'], data.gender, tab0 || document);
+      // Step 0: Verification & Basic Identity (fill when tab0 is visible or no tab wrapper exists)
+      if (!tab0 || isElementVisible(tab0)) {
+        const scope0 = tab0 || document;
+        await ensureVerificationRadio(scope0, isBirthReg);
 
-      // Step 1: Personal Details
-      if (data.father_name_bn) setReactiveValue(findInputByLabel(['পিতার নাম (বাংলা)'], tab1) || findInputByLabel(['পিতার নাম (বাংলা)']) || document.getElementById('input-1286') || document.getElementById('input-242'), data.father_name_bn);
-      if (data.father_name_en) setReactiveValue(findInputByLabel(['পিতার নাম (ইংরেজি)'], tab1) || findInputByLabel(['পিতার নাম (ইংরেজি)']) || document.getElementById('input-1288') || document.getElementById('input-244'), data.father_name_en);
-      if (data.mother_name_bn) setReactiveValue(findInputByLabel(['মাতার নাম (বাংলা)'], tab1) || findInputByLabel(['মাতার নাম (বাংলা)']) || document.getElementById('input-1290') || document.getElementById('input-246'), data.mother_name_bn);
-      if (data.mother_name_en) setReactiveValue(findInputByLabel(['মাতার নাম (ইংরেজি)'], tab1) || findInputByLabel(['মাতার নাম (ইংরেজি)']) || document.getElementById('input-1292') || document.getElementById('input-248'), data.mother_name_en);
-      if (data.marital_status) await selectDropdown(['বৈবাহিক অবস্থা'], data.marital_status, tab1 || document);
-      if (data.religion) await selectDropdown(['ধর্ম'], data.religion, tab1 || document);
+        if (data.name_bn) {
+          setReactiveValue(
+            findInputByLabel(['সম্পূর্ণ নাম (বাংলা)', 'পূর্ণ নাম (বাংলা)', 'নাম (বাংলা)'], tab0) || findInputByLabel(['সম্পূর্ণ নাম (বাংলা)']) || document.getElementById('input-211'),
+            data.name_bn
+          );
+        }
+        if (data.name_en) {
+          setReactiveValue(
+            findInputByLabel(['সম্পূর্ণ নাম (ইংরেজি)', 'পূর্ণ নাম (ইংরেজি)', 'নাম (ইংরেজি)'], tab0) || findInputByLabel(['সম্পূর্ণ নাম (ইংরেজি)']) || document.getElementById('input-213'),
+            String(data.name_en).toUpperCase().trim()
+          );
+        }
+        if (docNumber) {
+          let idInp = findStep0DocNumberInput(tab0, isBirthReg);
+          for (let t = 0; !idInp && t < 5; t++) {
+            await new Promise(r => setTimeout(r, 100));
+            idInp = findStep0DocNumberInput(tab0, isBirthReg);
+          }
+          if (idInp) setReactiveValue(idInp, docNumber);
+        }
+        if (data.dob) {
+          setReactiveValue(
+            findInputByLabel(['জন্ম তারিখ'], tab0) || findInputByLabel(['জন্ম তারিখ']) || scope0.querySelector('input[placeholder*="DD/MM"]') || document.getElementById('input-221'),
+            standardizeDate(data.dob)
+          );
+        }
+        if (data.gender) {
+          await selectDropdown(['লিঙ্গ'], normalizeGenderValue(data.gender), scope0);
+        }
+      }
 
-      // Mobile number
-      if (data.mobile_number) {
-        setReactiveValue(findInputByLabel(['মোবাইল নম্বর'], tab1) || findInputByLabel(['মোবাইল নম্বর']) || document.getElementById('input-1294') || document.getElementById('input-250'), data.mobile_number);
+      // Step 1: Personal Details (fill ONLY when tab1 is visible, or no tab1 container exists)
+      if (!tab1 || isElementVisible(tab1)) {
+        const scope1 = tab1 || document;
+        if (data.father_name_bn) setReactiveValue(findInputByLabel(['পিতার নাম (বাংলা)'], tab1) || findInputByLabel(['পিতার নাম (বাংলা)']) || document.getElementById('input-1286') || document.getElementById('input-242'), data.father_name_bn);
+        if (data.father_name_en) setReactiveValue(findInputByLabel(['পিতার নাম (ইংরেজি)'], tab1) || findInputByLabel(['পিতার নাম (ইংরেজি)']) || document.getElementById('input-1288') || document.getElementById('input-244'), String(data.father_name_en).toUpperCase().trim());
+        if (data.mother_name_bn) setReactiveValue(findInputByLabel(['মাতার নাম (বাংলা)'], tab1) || findInputByLabel(['মাতার নাম (বাংলা)']) || document.getElementById('input-1290') || document.getElementById('input-246'), data.mother_name_bn);
+        if (data.mother_name_en) setReactiveValue(findInputByLabel(['মাতার নাম (ইংরেজি)'], tab1) || findInputByLabel(['মাতার নাম (ইংরেজি)']) || document.getElementById('input-1292') || document.getElementById('input-248'), String(data.mother_name_en).toUpperCase().trim());
+        if (data.marital_status) await selectDropdown(['বৈবাহিক অবস্থা'], data.marital_status, scope1);
+        if (data.religion) await selectDropdown(['ধর্ম'], data.religion, scope1);
+
+        if (data.mobile_number) {
+          setReactiveValue(findInputByLabel(['মোবাইল নম্বর'], tab1) || findInputByLabel(['মোবাইল নম্বর']) || document.getElementById('input-1294') || document.getElementById('input-250'), data.mobile_number);
+        }
+        if (tab1) {
+          const stepSig = `${scrapeFamilyId() || ''}_${docNumber || ''}`;
+          window.__fcStep1FilledKey = stepSig;
+        }
       }
 
       // Step 4: Collection Address Auto-fill
       handleSection4Address();
     } finally {
-      setTimeout(() => { isFillingPortalFields = false; }, 200);
+      isFillingPortalFields = false;
     }
   }
 
@@ -4392,7 +4798,7 @@ Return ONLY a single valid JSON object with those keys.
     if (!col) return '';
     const sel = col.querySelector('.v-select__selection');
     if (sel && sel.textContent.trim()) return sel.textContent.trim();
-    const inp = col.querySelector('input:not([type="hidden"])');
+    const inp = Array.from(col.querySelectorAll('input, textarea')).find(isFillableTextInput);
     return inp ? String(inp.value || '').trim() : '';
   }
 
@@ -4401,11 +4807,19 @@ Return ONLY a single valid JSON object with those keys.
     const normKeys = keys.map(k => normalizeBn(k));
     const labels = Array.from(scope.querySelectorAll('label'));
     for (const l of labels) {
+      if (l.closest('.v-radio, .v-checkbox, .v-input--selection-controls, [role="radiogroup"]')) continue;
       const t = normalizeBn(l.textContent || '');
       if (normKeys.some(k => t.includes(k))) {
-        const col = l.closest('.col, [class*="col-"]');
-        const v = readColVal(col);
-        if (v) return v;
+        if (l.htmlFor) {
+          const inp = document.getElementById(l.htmlFor);
+          if (isFillableTextInput(inp) && String(inp.value || '').trim()) return String(inp.value || '').trim();
+        }
+        let cur = l.parentElement;
+        for (let d = 0; cur && cur !== scope && d < 5; d++, cur = cur.parentElement) {
+          const v = readColVal(cur);
+          if (v) return v;
+          if (cur.matches('.col, [class*="col-"]')) break;
+        }
       }
     }
     return '';
@@ -5581,15 +5995,17 @@ Return ONLY a single valid JSON object with those keys.
 
   function runPortalAutomations() {
     if (document.hidden || activeMediaStream) return;
-    if (lastExtractedData) {
-      const stepSig = `${scrapeFamilyId() || ''}_${lastExtractedData.nid_number || lastExtractedData.doc_number || ''}`;
+    if (lastExtractedData && !isFillingPortalFields) {
+      const { docNumber } = resolveDocNumberAndType(lastExtractedData);
+      const stepSig = `${scrapeFamilyId() || ''}_${docNumber || ''}`;
       const tab1 = document.querySelector('[data-family-card-tab="1"]');
-      const isTab1Visible = !tab1 || tab1.style.display !== 'none';
-      const fatherInp = findInputByLabel(['পিতার নাম (বাংলা)'], tab1) || findInputByLabel(['পিতার নাম (বাংলা)']) || document.getElementById('input-1286');
-      if (isTab1Visible && fatherInp && !fatherInp.value && window.__fcStep1FilledKey !== stepSig) {
-        window.__fcStep1FilledKey = stepSig;
-        fillPortalFields(lastExtractedData);
-        showToast('✅ পিতা-মাতা, বৈবাহিক অবস্থা ও ধর্ম অটো-ফিল সম্পন্ন!');
+      const isTab1Visible = tab1 && isElementVisible(tab1);
+      if (isTab1Visible && window.__fcStep1FilledKey !== stepSig) {
+        fillPortalFields(lastExtractedData).then(() => {
+          if (window.__fcStep1FilledKey === stepSig) {
+            showToast('✅ পিতা-মাতা, বৈবাহিক অবস্থা ও ধর্ম অটো-ফিল সম্পন্ন!');
+          }
+        });
       }
     }
     traceSection3Media();
@@ -5628,5 +6044,5 @@ Return ONLY a single valid JSON object with those keys.
     setTimeout(() => { t.remove(); }, 4000);
   }
 
-  showToast('🚀 Family Card সহকারী (v1.8.1) প্রস্তুত! স্ক্যান, রুম মেসেজ বা সারসংক্ষেপ চাপুন।');
+  showToast('🚀 Family Card সহকারী (v1.9.0) প্রস্তুত! স্ক্যান, রুম মেসেজ বা সারসংক্ষেপ চাপুন।');
 })();

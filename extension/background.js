@@ -1,21 +1,9 @@
 // Background Service Worker for Family Card NID Auto-Filler
-// Handles direct Gemini (3.1/3.5 Flash-Lite, 3.8 Flash) & DeepSeek Flash Vision OCR calls with cost tracking.
+// Handles direct Gemini (3.5 Flash-Lite, 3.8 Flash, 4 Argon, 3.1 Flash-Lite) & DeepSeek Flash Vision OCR calls with cost tracking.
 
 const BDT_PER_USD = 122;
 
 const AI_MODEL_CATALOG = {
-  'gemini-3.1-flash-lite': {
-    id: 'gemini-3.1-flash-lite',
-    label: 'Gemini 3.1 Flash-Lite',
-    provider: 'gemini',
-    inputPer1M: 0.25,
-    outputPer1M: 1.50,
-    cacheReadPer1M: 0.025,
-    rpm: '4K',
-    tpm: '4M',
-    rpd: '150K',
-    estPer1kUsd: 0.78
-  },
   'gemini-3.5-flash-lite': {
     id: 'gemini-3.5-flash-lite',
     label: 'Gemini 3.5 Flash-Lite',
@@ -27,6 +15,18 @@ const AI_MODEL_CATALOG = {
     tpm: '4M',
     rpd: '150K',
     estPer1kUsd: 1.11
+  },
+  'gemini-3.1-flash-lite': {
+    id: 'gemini-3.1-flash-lite',
+    label: 'Gemini 3.1 Flash-Lite',
+    provider: 'gemini',
+    inputPer1M: 0.25,
+    outputPer1M: 1.50,
+    cacheReadPer1M: 0.025,
+    rpm: '4K',
+    tpm: '4M',
+    rpd: '150K',
+    estPer1kUsd: 0.78
   },
   'gemini-3.8-flash': {
     id: 'gemini-3.8-flash',
@@ -43,6 +43,22 @@ const AI_MODEL_CATALOG = {
     tpm: '2M',
     rpd: '10K',
     estPer1kUsd: 2.53
+  },
+  'gemini-4-argon': {
+    id: 'gemini-4-argon',
+    label: 'Gemini 4 Argon',
+    provider: 'gemini',
+    inputPer1M: 2.00,
+    outputPer1M: 10.00,
+    cacheReadPer1M: 0.10,
+    stdInputPer1M: 4.00,
+    stdOutputPer1M: 20.00,
+    stdCacheReadPer1M: 0.20,
+    introUntilUtcMs: Date.UTC(2026, 11, 1),
+    rpm: '500',
+    tpm: '2M',
+    rpd: '5K',
+    estPer1kUsd: 6.50
   },
   'deepseek-flash': {
     id: 'deepseek-flash',
@@ -72,14 +88,15 @@ function isDeepSeekPeakUtc(nowMs = Date.now()) {
 function normalizeModelId(modelId) {
   const raw = String(modelId || '').toLowerCase();
   if (raw.includes('deepseek')) return 'deepseek-flash';
-  if (raw.includes('3.5-flash-lite') || raw.includes('3.5')) return 'gemini-3.5-flash-lite';
+  if (raw.includes('4-argon') || raw.includes('argon')) return 'gemini-4-argon';
   if (raw.includes('3.8-flash') || raw.includes('3.8')) return 'gemini-3.8-flash';
-  return 'gemini-3.1-flash-lite';
+  if (raw.includes('3.1-flash-lite') || raw.includes('3.1')) return 'gemini-3.1-flash-lite';
+  return 'gemini-3.5-flash-lite';
 }
 
 function computeScanUsageAndCost(modelId, rawApiRes = {}, nowMs = Date.now()) {
   const key = normalizeModelId(modelId);
-  const spec = AI_MODEL_CATALOG[key] || AI_MODEL_CATALOG['gemini-3.1-flash-lite'];
+  const spec = AI_MODEL_CATALOG[key] || AI_MODEL_CATALOG['gemini-3.5-flash-lite'];
   let inputTokens = 0;
   let cachedTokens = 0;
   let outputTokens = 0;
@@ -138,10 +155,11 @@ function computeScanUsageAndCost(modelId, rawApiRes = {}, nowMs = Date.now()) {
     outputTokens = 250;
   }
 
-  const isIntro38 = key === 'gemini-3.8-flash' && spec.introUntilUtcMs && nowMs < spec.introUntilUtcMs;
-  const inRate = key === 'gemini-3.8-flash' ? (isIntro38 ? spec.inputPer1M : spec.stdInputPer1M) : spec.inputPer1M;
-  const outRate = key === 'gemini-3.8-flash' ? (isIntro38 ? spec.outputPer1M : spec.stdOutputPer1M) : spec.outputPer1M;
-  const cacheRate = key === 'gemini-3.8-flash' ? (isIntro38 ? spec.cacheReadPer1M : spec.stdCacheReadPer1M) : spec.cacheReadPer1M;
+  const hasIntro = Boolean(spec.introUntilUtcMs && spec.stdInputPer1M != null);
+  const inIntro = hasIntro && nowMs < spec.introUntilUtcMs;
+  const inRate = hasIntro ? (inIntro ? spec.inputPer1M : spec.stdInputPer1M) : spec.inputPer1M;
+  const outRate = hasIntro ? (inIntro ? spec.outputPer1M : spec.stdOutputPer1M) : spec.outputPer1M;
+  const cacheRate = hasIntro ? (inIntro ? spec.cacheReadPer1M : spec.stdCacheReadPer1M) : spec.cacheReadPer1M;
   const uncachedIn = Math.max(0, inputTokens - cachedTokens);
   const costUsd = (uncachedIn * inRate + cachedTokens * cacheRate + outputTokens * outRate) / 1e6;
 
@@ -149,7 +167,7 @@ function computeScanUsageAndCost(modelId, rawApiRes = {}, nowMs = Date.now()) {
     model: key,
     label: spec.label,
     provider: 'gemini',
-    tierWindow: key === 'gemini-3.8-flash' ? (isIntro38 ? 'intro_2026' : 'standard') : 'tier1',
+    tierWindow: hasIntro ? (inIntro ? 'intro_2026' : 'standard') : 'tier1',
     inputTokens,
     cachedTokens,
     uncachedInputTokens: uncachedIn,
@@ -186,43 +204,48 @@ const OCR_RESPONSE_SCHEMA = {
     marital_status_suggestion: { type: 'string' },
     confidence: { type: 'string', enum: ['high', 'medium', 'low'] }
   },
-  required: ['doc_type', 'doc_number', 'name_bn', 'name_en', 'dob', 'gender']
+  required: ['doc_type', 'doc_number', 'nid_number', 'birth_reg_no', 'name_bn', 'name_en', 'dob', 'gender']
 };
 
 function buildGeminiPrompt(docTypeHint = 'auto') {
   const hintLine = docTypeHint === 'nid'
-    ? 'HINT: User indicated this document is a Bangladeshi NID Card.'
+    ? 'HINT: User selected Bangladeshi NID Card (ID Card Size). Focus carefully on extracting ALL fields including the 10, 13, or 17-digit NID number.'
     : docTypeHint === 'birth_certificate'
-      ? 'HINT: User indicated this document is a Bangladeshi Birth Registration Certificate (জন্ম নিবন্ধন সনদপত্র).'
+      ? 'HINT: User selected Bangladeshi Digital Birth Registration Certificate (A4 Paper / জন্ম নিবন্ধন সনদপত্র). Focus carefully on the 17-digit Birth Registration Number, Date of Birth (NOT Registration Date), and parent names.'
       : 'Detect automatically whether this is a Bangladeshi NID Card or a Birth Registration Certificate.';
 
   return `
 You are an expert OCR and document understanding system specializing in Bangladeshi identity documents:
-1. Bangladeshi National Identity (NID) Cards (Smart Cards and laminated classic paper NID cards).
-2. Bangladeshi Digital Birth Registration Certificates (ডিজিটাল জন্ম নিবন্ধন সনদপত্র / BRC).
+1. Bangladeshi National Identity (NID) Cards (Smart Cards and classic laminated paper NID cards).
+2. Bangladeshi Digital Birth Registration Certificates (ডিজিটাল জন্ম নিবন্ধন সনদপত্র / BRC, A4 printed).
 
 ${hintLine}
 
-Analyze the provided image carefully and extract exact information into valid JSON format.
+Analyze the provided image carefully and extract ALL visible fields into a single valid JSON object.
 
 DOCUMENT CLASSIFICATION:
 - "doc_type": Strictly "nid" or "birth_certificate".
   - If NID Card (Smart Card or classic laminated paper NID), set "doc_type": "nid".
   - If Birth Registration Certificate (জন্ম নিবন্ধন সনদপত্র / Office of the Registrar General, Birth & Death), set "doc_type": "birth_certificate".
 
-EXTRACTION RULES:
-1. "doc_number":
-   - For NID: Extract the National ID number. Smart NID has 10 digits; classic NID has 13 or 17 digits.
-     If classic 13-digit NID, extract the 13 digits or prepend the 4-digit birth year to make 17 digits. Copy digits to "nid_number".
-   - For Birth Certificate: Extract the exact 17-digit Birth Registration Number (জন্ম নিবন্ধন নম্বর / Personal Identification Number). Copy digits to "birth_reg_no".
-   - Remove all spaces, hyphens, and non-numeric characters. Convert any Bengali digits (০-৯) to English digits (0-9).
+EXTRACTION RULES (VERIFY EVERY DIGIT):
+1. "doc_number" & "nid_number" & "birth_reg_no":
+   - For NID ("doc_type": "nid"):
+     - Smart NID prints 10 digits under "NID No." / "জাতীয় পরিচয় নং" (e.g. "123 456 7890" -> "1234567890").
+     - Classic Laminated NID prints 13 or 17 digits at the bottom under "ID NO:" (very small font — read every digit carefully!). If 13 digits, extract those 13 digits or prepend the 4-digit birth year from Date of Birth to make 17 digits.
+     - Copy the exact digits into BOTH "doc_number" and "nid_number", and set "birth_reg_no": "".
+   - For Birth Certificate ("doc_type": "birth_certificate"):
+     - Extract the exact 17-digit Birth Registration Number (জন্ম নিবন্ধন নম্বর / Birth Registration Number / Personal Identification Number), usually near the top-left/center and starting with birth year (e.g. 1998..., 2012...).
+     - CRITICAL: NEVER confuse Father's NID, Mother's NID, or Certificate/Book Serial Number with the 17-digit Birth Registration Number!
+     - Copy the exact 17 digits into BOTH "doc_number" and "birth_reg_no", and set "nid_number": "".
+   - Strip all spaces, hyphens, and punctuation. Convert ALL Bengali digits (০-৯) to English digits (0-9). NEVER leave "doc_number" empty when digits are visible.
 2. "name_bn": Full Bengali name exactly as printed (under "নাম:" or "নিবন্ধিত ব্যক্তির নাম").
-3. "name_en": Full English name in ALL UPPERCASE letters (transliterate from Bengali if not printed on old NID).
-4. "dob": Date of Birth in strict DD/MM/YYYY English digit format (e.g. "14/05/1988"). Convert Bengali digits/months accurately.
+3. "name_en": Full English name in ALL UPPERCASE letters (transliterate from Bengali if not printed on classic NID).
+4. "dob": Date of Birth in strict DD/MM/YYYY English digit format (e.g. "14/05/1988"). On Birth Certificates, use "জন্ম তারিখ / Date of Birth", NOT "নিবন্ধনের তারিখ / Date of Registration" or "সনদ প্রদানের তারিখ / Date of Issuance".
 5. "gender": Strictly "পুরুষ" (Male), "নারী" (Female), or "হিজড়া" (Third Gender / Hijra). Infer accurately if not explicitly written on classic NID.
 6. "father_name_bn" & "father_name_en": Extract ONLY from "পিতা:" / "পিতার নাম:" / "Father's Name".
    CRITICAL FOR MARRIED WOMEN'S OLD LAMINATED NID: Many classic laminated NIDs for women print "স্বামী:" (Husband) instead of "পিতা:" (Father).
-   NEVER put "স্বামী:" (Husband) into "father_name_bn" or "father_name_en"! Leave father fields empty "" if "পিতা:" is absent, and put husband's name in "spouse_name_bn" / "spouse_name_en".
+   NEVER put "স্বামী:" (Husband) into "father_name_bn" or "father_name_en"! Leave father fields "" if "পিতা:" is absent, and put husband's name in "spouse_name_bn" / "spouse_name_en".
 7. "mother_name_bn" & "mother_name_en": Extract from "মাতা:" / "মাতার নাম:" / "Mother's Name". Transliterate to ALL UPPERCASE English if needed.
 8. "spouse_name_bn" & "spouse_name_en": Extract from "স্বামী:" or "স্ত্রী:" if printed; otherwise "". Transliterate to ALL UPPERCASE English if present.
 9. "relation_suggestion": If scanning a family member, suggest relation to household head strictly from ("স্বামী", "স্ত্রী", "পুত্র", "কন্যা", "পিতা", "মাতা", "ভাই", "বোন", "অন্যান্য"). If classic NID shows "স্বামী:", suggest "স্ত্রী".
@@ -338,25 +361,65 @@ function parseOcrJsonText(textOutput) {
   return JSON.parse(cleanText);
 }
 
+const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash-lite';
+const INTERACTIONS_API_MODELS = new Set(['gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-4-argon']);
+const GENDER_ALIAS_MAP = {
+  'তৃতীয় লিঙ্গ': 'হিজড়া',
+  'তৃতীয় লিঙ্গ': 'হিজড়া',
+  'হিজড়া': 'হিজড়া',
+  'Male': 'পুরুষ',
+  'male': 'পুরুষ',
+  'Female': 'নারী',
+  'female': 'নারী'
+};
+
+function normalizeGenderValue(gender) {
+  const g = String(gender || '').trim();
+  return GENDER_ALIAS_MAP[g] || g;
+}
+
+function extractDigitCandidate(raw) {
+  return normalizeDigits(raw || '').replace(/[^0-9]/g, '');
+}
+
+function pickBestDocDigits(candidates, preferredLengths) {
+  const cleaned = candidates.map(extractDigitCandidate).filter(Boolean);
+  for (const len of preferredLengths) {
+    const match = cleaned.find((c) => c.length === len);
+    if (match) return match;
+  }
+  return cleaned[0] || '';
+}
+
+function isDocDigitsValidForType(docType, parsed) {
+  if (!parsed || typeof parsed !== 'object') return false;
+  if (docType === 'birth_certificate') {
+    return pickBestDocDigits([parsed.birth_reg_no, parsed.doc_number, parsed.nid_number], [17]).length === 17;
+  }
+  const d = pickBestDocDigits([parsed.nid_number, parsed.doc_number, parsed.birth_reg_no], [10, 17, 13]);
+  return d.length === 10 || d.length === 13 || d.length === 17;
+}
+
 function validateAndNormalizeOcrData(parsedData, opts = {}) {
   const { docType = 'auto', maritalStatus = 'বিবাহিত', religion = 'ইসলাম', mobileNumber = '' } = opts;
   const warnings = [];
 
   if (docType && docType !== 'auto') {
     parsedData.doc_type = docType;
+  } else if (
+    parsedData.doc_type !== 'birth_certificate' &&
+    !extractDigitCandidate(parsedData.nid_number) &&
+    extractDigitCandidate(parsedData.birth_reg_no).length === 17
+  ) {
+    parsedData.doc_type = 'birth_certificate';
   }
 
   if (parsedData.dob) {
     parsedData.dob = standardizeDate(parsedData.dob);
   }
 
-  const genderMap = {
-    'তৃতীয় লিঙ্গ': 'হিজড়া', 'তৃতীয় লিঙ্গ': 'হিজড়া', 'হিজড়া': 'হিজড়া',
-    'Male': 'পুরুষ', 'male': 'পুরুষ', 'Female': 'নারী', 'female': 'নারী'
-  };
   if (parsedData.gender) {
-    const g = String(parsedData.gender).trim();
-    parsedData.gender = genderMap[g] || g;
+    parsedData.gender = normalizeGenderValue(parsedData.gender);
   }
   const relMap = { 'ছেলে': 'পুত্র', 'মেয়ে': 'কন্যা', 'মেয়ে': 'কন্যা', 'বাবা': 'পিতা', 'মা': 'মাতা' };
   if (parsedData.relation_suggestion) {
@@ -376,16 +439,16 @@ function validateAndNormalizeOcrData(parsedData, opts = {}) {
     if (!parsedData.relation_suggestion) parsedData.relation_suggestion = 'স্ত্রী';
   }
 
-  const rawDocNum = parsedData.doc_number || (parsedData.doc_type === 'birth_certificate' ? parsedData.birth_reg_no : parsedData.nid_number) || parsedData.nid_number || parsedData.birth_reg_no || '';
-  let cleanDocNum = normalizeDigits(rawDocNum).replace(/[^0-9]/g, '');
-
   if (parsedData.doc_type === 'birth_certificate') {
+    const cleanDocNum = pickBestDocDigits([parsedData.birth_reg_no, parsedData.doc_number, parsedData.nid_number], [17]);
     parsedData.doc_number = cleanDocNum;
     parsedData.birth_reg_no = cleanDocNum;
+    parsedData.nid_number = '';
     if (cleanDocNum.length !== 17) {
       warnings.push(`জন্ম নিবন্ধন নম্বরটি ${cleanDocNum.length || 0} সংখ্যার (অবশ্যই ১৭ সংখ্যার হতে হবে) — নম্বরটি যাচাই করুন।`);
     }
   } else {
+    let cleanDocNum = pickBestDocDigits([parsedData.nid_number, parsedData.doc_number, parsedData.birth_reg_no], [10, 17, 13]);
     if (cleanDocNum.length === 13) {
       const yearMatch = String(parsedData.dob || '').match(/\b(19\d{2}|20\d{2})\b/);
       if (yearMatch) {
@@ -398,6 +461,7 @@ function validateAndNormalizeOcrData(parsedData, opts = {}) {
     parsedData.doc_type = parsedData.doc_type || 'nid';
     parsedData.doc_number = cleanDocNum;
     parsedData.nid_number = cleanDocNum;
+    parsedData.birth_reg_no = '';
     if (cleanDocNum.length !== 10 && cleanDocNum.length !== 17) {
       warnings.push(`NID নম্বরটি ${cleanDocNum.length || 0} সংখ্যার (১০ বা ১৭ সংখ্যার হতে হবে) — নম্বরটি যাচাই করুন।`);
     }
@@ -407,6 +471,12 @@ function validateAndNormalizeOcrData(parsedData, opts = {}) {
   if (!String(parsedData.name_en || '').trim()) warnings.push('ইংরেজি নাম পড়া যায়নি।');
   if (!/^\d{2}\/\d{2}\/\d{4}$/.test(String(parsedData.dob || ''))) {
     warnings.push('জন্ম তারিখ (DD/MM/YYYY) স্পষ্ট নয় — হাতে মিলিয়ে নিন।');
+  }
+  if (!['পুরুষ', 'নারী', 'হিজড়া'].includes(String(parsedData.gender || '').trim())) {
+    warnings.push('লিঙ্গ স্পষ্ট নয় — নির্বাচন যাচাই করুন।');
+  }
+  if (!String(parsedData.mother_name_bn || '').trim() && !String(parsedData.mother_name_en || '').trim()) {
+    warnings.push('মাতার নাম পড়া যায়নি — প্রয়োজনে হাতে লিখুন।');
   }
   if (parsedData.confidence === 'low') {
     warnings.push('ছবিটি কিছুটা ঝাপসা/অস্পষ্ট মনে হচ্ছে — সাবমিটের আগে সব তথ্য মিলিয়ে নিন।');
@@ -429,56 +499,136 @@ function validateAndNormalizeOcrData(parsedData, opts = {}) {
   return parsedData;
 }
 
-function needsAccurateEscalation(parsed) {
+function needsAccurateEscalation(parsed, docTypeHint = 'auto') {
   if (!parsed || typeof parsed !== 'object') return true;
   if (parsed.confidence === 'low') return true;
   if (!String(parsed.name_bn || '').trim() || !String(parsed.name_en || '').trim()) return true;
   if (!/^\d{2}\/\d{2}\/\d{4}$/.test(standardizeDate(parsed.dob || ''))) return true;
-  const rawNum = parsed.doc_number || (parsed.doc_type === 'birth_certificate' ? parsed.birth_reg_no : parsed.nid_number) || parsed.nid_number || parsed.birth_reg_no || '';
-  const digits = normalizeDigits(rawNum).replace(/[^0-9]/g, '');
-  if (parsed.doc_type === 'birth_certificate') return digits.length !== 17;
-  return digits.length !== 10 && digits.length !== 13 && digits.length !== 17;
+  const effectiveType = (docTypeHint && docTypeHint !== 'auto') ? docTypeHint : (parsed.doc_type || 'nid');
+  if (!isDocDigitsValidForType(effectiveType, parsed)) return true;
+  const normGender = normalizeGenderValue(parsed.gender);
+  if (!['পুরুষ', 'নারী', 'হিজড়া'].includes(normGender)) return true;
+  if (!String(parsed.mother_name_bn || '').trim() && !String(parsed.mother_name_en || '').trim()) return true;
+  const hasFatherOrSpouse =
+    String(parsed.father_name_bn || '').trim() ||
+    String(parsed.father_name_en || '').trim() ||
+    String(parsed.spouse_name_bn || '').trim() ||
+    String(parsed.spouse_name_en || '').trim();
+  if (!hasFatherOrSpouse) return true;
+  return false;
 }
 
-function getOrderedGeminiModels(profile = 'accurate', preferredGeminiModel = 'gemini-3.1-flash-lite') {
+function mergeOcrResults(primary, escalated, docTypeHint = 'auto') {
+  if (!primary) return escalated;
+  if (!escalated) return primary;
+
+  const effectiveType = (docTypeHint && docTypeHint !== 'auto')
+    ? docTypeHint
+    : (escalated.doc_type && escalated.doc_type !== 'auto' ? escalated.doc_type : (primary.doc_type || 'nid'));
+
+  const merged = { ...primary, ...escalated };
+  merged.doc_type = effectiveType;
+
+  const stringFields = [
+    'name_bn', 'name_en',
+    'father_name_bn', 'father_name_en',
+    'mother_name_bn', 'mother_name_en',
+    'spouse_name_bn', 'spouse_name_en',
+    'relation_suggestion', 'marital_status_suggestion'
+  ];
+  for (const field of stringFields) {
+    const escVal = String(escalated[field] || '').trim();
+    const priVal = String(primary[field] || '').trim();
+    merged[field] = escVal || priVal;
+  }
+
+  const escDob = standardizeDate(escalated.dob || '');
+  const priDob = standardizeDate(primary.dob || '');
+  merged.dob = /^\d{2}\/\d{2}\/\d{4}$/.test(escDob)
+    ? escDob
+    : (/^\d{2}\/\d{2}\/\d{4}$/.test(priDob) ? priDob : (escDob || priDob));
+
+  const escGender = normalizeGenderValue(escalated.gender);
+  const priGender = normalizeGenderValue(primary.gender);
+  merged.gender = ['পুরুষ', 'নারী', 'হিজড়া'].includes(escGender)
+    ? escGender
+    : (['পুরুষ', 'নারী', 'হিজড়া'].includes(priGender) ? priGender : (escGender || priGender));
+
+  const escValidNum = isDocDigitsValidForType(effectiveType, escalated);
+  const priValidNum = isDocDigitsValidForType(effectiveType, primary);
+  if (!escValidNum && priValidNum) {
+    merged.doc_number = primary.doc_number || '';
+    merged.nid_number = primary.nid_number || '';
+    merged.birth_reg_no = primary.birth_reg_no || '';
+  } else {
+    merged.doc_number = escalated.doc_number || primary.doc_number || '';
+    merged.nid_number = escalated.nid_number || primary.nid_number || '';
+    merged.birth_reg_no = escalated.birth_reg_no || primary.birth_reg_no || '';
+  }
+
+  if (primary.ocr_model_used && escalated.ocr_model_used && escalated.ocr_model_used !== primary.ocr_model_used) {
+    merged.ocr_model_used = `${escalated.ocr_model_used} + ${primary.ocr_model_used}`;
+  }
+  if (primary.ocr_usage && escalated.ocr_usage) {
+    merged.ocr_usage = {
+      ...escalated.ocr_usage,
+      inputTokens: (primary.ocr_usage.inputTokens || 0) + (escalated.ocr_usage.inputTokens || 0),
+      outputTokens: (primary.ocr_usage.outputTokens || 0) + (escalated.ocr_usage.outputTokens || 0),
+      totalTokens: (primary.ocr_usage.totalTokens || 0) + (escalated.ocr_usage.totalTokens || 0),
+      costUsd: Number(((primary.ocr_usage.costUsd || 0) + (escalated.ocr_usage.costUsd || 0)).toFixed(6)),
+      costBdt: Number(((primary.ocr_usage.costBdt || 0) + (escalated.ocr_usage.costBdt || 0)).toFixed(4))
+    };
+  }
+  return merged;
+}
+
+function getOrderedGeminiModels(profile = 'accurate', preferredGeminiModel = DEFAULT_GEMINI_MODEL) {
   const pref = normalizeModelId(preferredGeminiModel);
-  const validPref = pref.startsWith('gemini-') ? pref : 'gemini-3.1-flash-lite';
+  const validPref = pref.startsWith('gemini-') ? pref : DEFAULT_GEMINI_MODEL;
   let base;
   if (profile === 'flash38_only') {
     base = ['gemini-3.8-flash'];
   } else if (profile === 'lite_only') {
-    base = validPref === 'gemini-3.5-flash-lite'
-      ? ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite']
-      : ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite'];
+    base = validPref === 'gemini-3.1-flash-lite'
+      ? ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite']
+      : ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'];
   } else if (profile === 'preferred') {
-    base = [validPref, 'gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini-3.8-flash'];
+    base = [validPref, 'gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-3.1-flash-lite'];
   } else {
-    base = ['gemini-3.8-flash', validPref, 'gemini-3.1-flash-lite', 'gemini-3.5-flash-lite'];
+    base = validPref === 'gemini-4-argon'
+      ? ['gemini-4-argon', 'gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite']
+      : ['gemini-3.8-flash', validPref, 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'];
   }
   return Array.from(new Set(base));
 }
 
-function buildGeminiAttemptsForModels(models, apiKey, rawBase64, detectedMime, promptText) {
+function buildGeminiAttemptsForModels(models, apiKey, rawBase64, detectedMime, promptText, opts = {}) {
+  const { docType = 'auto', isEscalation = false } = opts;
   const attempts = [];
   for (const model of models) {
-    if (model === 'gemini-3.8-flash' || model === 'gemini-3.5-flash-lite') {
+    if (INTERACTIONS_API_MODELS.has(model)) {
+      const useUltraHigh = (model === 'gemini-3.8-flash' || model === 'gemini-4-argon') && (docType === 'birth_certificate' || isEscalation);
+      const imageResolution = useUltraHigh ? 'ultra_high' : 'high';
       const body = {
         model,
         input: [
           { type: 'text', text: promptText },
-          { type: 'image', data: rawBase64, mime_type: detectedMime }
+          { type: 'image', data: rawBase64, mime_type: detectedMime, resolution: imageResolution }
         ],
         response_format: {
           type: 'text',
           mime_type: 'application/json',
           schema: OCR_RESPONSE_SCHEMA
         },
+        generation_config: {
+          thinking_level: isEscalation ? 'medium' : 'low'
+        },
         store: false
       };
-      if (model === 'gemini-3.8-flash') body.generation_config = { thinking_level: 'low' };
       attempts.push({
         model,
-        label: `${model} (interactions)`,
+        timeoutMs: useUltraHigh || isEscalation ? 35000 : 28000,
+        label: `${model} (interactions/${imageResolution})`,
         url: 'https://generativelanguage.googleapis.com/v1beta/interactions',
         headers: {
           'Content-Type': 'application/json',
@@ -490,6 +640,7 @@ function buildGeminiAttemptsForModels(models, apiKey, rawBase64, detectedMime, p
     }
     attempts.push({
       model,
+      timeoutMs: isEscalation ? 35000 : 28000,
       label: `${model} (generateContent)`,
       url: `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
       headers: {
@@ -505,22 +656,25 @@ function buildGeminiAttemptsForModels(models, apiKey, rawBase64, detectedMime, p
             ]
           }
         ],
-        generationConfig: { response_mime_type: 'application/json' }
+        generationConfig: {
+          response_mime_type: 'application/json',
+          responseSchema: OCR_RESPONSE_SCHEMA
+        }
       }
     });
   }
   return attempts;
 }
 
-async function callGeminiResilientOCR(apiKey, rawBase64, detectedMime, promptText, profile = 'accurate', preferredGeminiModel = 'gemini-3.1-flash-lite') {
+async function callGeminiResilientOCR(apiKey, rawBase64, detectedMime, promptText, profile = 'accurate', preferredGeminiModel = DEFAULT_GEMINI_MODEL, attemptOpts = {}) {
   const modelsOrder = getOrderedGeminiModels(profile, preferredGeminiModel);
-  const attempts = buildGeminiAttemptsForModels(modelsOrder, apiKey, rawBase64, detectedMime, promptText);
+  const attempts = buildGeminiAttemptsForModels(modelsOrder, apiKey, rawBase64, detectedMime, promptText, attemptOpts);
 
   let lastErrorMsg = 'Gemini API থেকে কোনো ফলাফল পাওয়া যায়নি।';
 
   for (const attempt of attempts) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 28000);
+    const timer = setTimeout(() => controller.abort(), attempt.timeoutMs || 28000);
     try {
       const response = await fetch(attempt.url, {
         method: 'POST',
@@ -589,7 +743,7 @@ async function callDeepSeekVisionOCR(deepseekKey, rawBase64, detectedMime, promp
               { type: 'text', text: promptText },
               {
                 type: 'image_url',
-                image_url: { url: `data:${detectedMime};base64,${rawBase64}` }
+                image_url: { url: `data:${detectedMime};base64,${rawBase64}`, detail: 'high' }
               }
             ]
           }
@@ -634,13 +788,14 @@ async function callDeepSeekVisionOCR(deepseekKey, rawBase64, detectedMime, promp
 async function runMultiProviderOCR({
   aiProvider = 'economy',
   defaultKeySlot = 'auto',
-  geminiModel = 'gemini-3.1-flash-lite',
+  geminiModel = DEFAULT_GEMINI_MODEL,
   deepseekModel = 'deepseek-flash',
   geminiKey = '',
   deepseekKey = '',
   rawBase64,
   detectedMime,
-  promptText
+  promptText,
+  docType = 'auto'
 }) {
   let gKey = String(geminiKey || '').trim();
   let dKey = String(deepseekKey || '').trim();
@@ -651,7 +806,8 @@ async function runMultiProviderOCR({
 
   const mode = ['economy', 'auto', 'gemini', 'gemini_lite', 'deepseek'].includes(aiProvider) ? aiProvider : 'economy';
   const keySlot = ['auto', 'gemini', 'deepseek'].includes(defaultKeySlot) ? defaultKeySlot : 'auto';
-  const prefGemModel = normalizeModelId(geminiModel).startsWith('gemini-') ? normalizeModelId(geminiModel) : 'gemini-3.1-flash-lite';
+  const normModel = normalizeModelId(geminiModel);
+  const prefGemModel = normModel.startsWith('gemini-') ? normModel : DEFAULT_GEMINI_MODEL;
 
   if (mode === 'deepseek') {
     if (!dKey) throw new Error('DeepSeek API Key সেট করা নেই। সেটিংসে গিয়ে sk-... Key দিন।');
@@ -660,12 +816,12 @@ async function runMultiProviderOCR({
 
   if (mode === 'gemini_lite') {
     if (!gKey) throw new Error('Gemini API Key সেট করা নেই।');
-    return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'lite_only', prefGemModel);
+    return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'lite_only', prefGemModel, { docType });
   }
 
   if (mode === 'gemini') {
     if (!gKey) throw new Error('Gemini API Key সেট করা নেই।');
-    return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'preferred', prefGemModel);
+    return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'preferred', prefGemModel, { docType });
   }
 
   const errors = [];
@@ -674,9 +830,10 @@ async function runMultiProviderOCR({
   if (preferDeepSeekFirst) {
     try {
       const dsRes = await callDeepSeekVisionOCR(dKey, rawBase64, detectedMime, promptText, deepseekModel);
-      if (mode === 'auto' || !needsAccurateEscalation(dsRes) || !gKey) return dsRes;
+      if (mode === 'auto' || !needsAccurateEscalation(dsRes, docType) || !gKey) return dsRes;
       try {
-        return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'preferred', prefGemModel);
+        const escRes = await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'preferred', prefGemModel, { docType, isEscalation: true });
+        return mergeOcrResults(dsRes, escRes, docType);
       } catch (_) {
         return dsRes;
       }
@@ -686,7 +843,7 @@ async function runMultiProviderOCR({
     if (gKey) {
       try {
         const gProfile = mode === 'economy' ? 'preferred' : 'accurate';
-        return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, gProfile, prefGemModel);
+        return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, gProfile, prefGemModel, { docType });
       } catch (err) {
         errors.push(`Gemini: ${err.message}`);
       }
@@ -694,18 +851,23 @@ async function runMultiProviderOCR({
     throw new Error(errors.length ? errors.join(' | ') : 'Gemini বা DeepSeek API Key সেট করা নেই।');
   }
 
-  // Economy mode: selected default Gemini model (or Flash-Lite) first, auto-escalates only if blurry/incomplete
+  // Economy mode: selected default Gemini model (3.5 Flash-Lite) first, auto-escalates & merges when blurry/incomplete
   if (mode === 'economy') {
     if (gKey) {
       try {
-        const firstProfile = prefGemModel === 'gemini-3.8-flash' ? 'accurate' : 'lite_only';
-        const primaryRes = await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, firstProfile, prefGemModel);
-        if (!needsAccurateEscalation(primaryRes) || prefGemModel === 'gemini-3.8-flash') return primaryRes;
+        const isFlagship = prefGemModel === 'gemini-3.8-flash' || prefGemModel === 'gemini-4-argon';
+        const firstProfile = isFlagship ? 'preferred' : 'lite_only';
+        const primaryRes = await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, firstProfile, prefGemModel, { docType });
+        if (!needsAccurateEscalation(primaryRes, docType) || prefGemModel === 'gemini-3.8-flash') return primaryRes;
         try {
-          return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'flash38_only', prefGemModel);
+          const escRes = await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'flash38_only', prefGemModel, { docType, isEscalation: true });
+          return mergeOcrResults(primaryRes, escRes, docType);
         } catch (escErr) {
           if (dKey) {
-            try { return await callDeepSeekVisionOCR(dKey, rawBase64, detectedMime, promptText, deepseekModel); } catch (_) {}
+            try {
+              const dsEsc = await callDeepSeekVisionOCR(dKey, rawBase64, detectedMime, promptText, deepseekModel);
+              return mergeOcrResults(primaryRes, dsEsc, docType);
+            } catch (_) {}
           }
           return primaryRes;
         }
@@ -723,10 +885,10 @@ async function runMultiProviderOCR({
     throw new Error(errors.length ? errors.join(' | ') : 'Gemini বা DeepSeek API Key সেট করা নেই।');
   }
 
-  // Balanced auto mode: Gemini 3.8 Flash primary -> selected model/Lite fallback -> DeepSeek failover
+  // Balanced auto mode: Gemini 3.8 Flash (or 4 Argon) primary -> selected model/Lite fallback -> DeepSeek failover
   if (gKey) {
     try {
-      return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'accurate', prefGemModel);
+      return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'accurate', prefGemModel, { docType, isEscalation: docType === 'birth_certificate' });
     } catch (err) {
       errors.push(`Gemini: ${err.message}`);
     }
@@ -756,7 +918,7 @@ async function handleDirectOCR(req) {
 
   const stored = await chrome.storage.sync.get(['aiProvider', 'geminiModel', 'deepseekModel', 'defaultKeySlot', 'geminiApiKey', 'deepseekApiKey', 'serverUrl']);
   const aiProvider = req.aiProvider || stored.aiProvider || 'economy';
-  const geminiModel = req.geminiModel || stored.geminiModel || 'gemini-3.1-flash-lite';
+  const geminiModel = req.geminiModel || stored.geminiModel || DEFAULT_GEMINI_MODEL;
   const deepseekModel = req.deepseekModel || stored.deepseekModel || 'deepseek-flash';
   const defaultKeySlot = req.defaultKeySlot || stored.defaultKeySlot || 'auto';
   const apiKey = req.apiKey || stored.geminiApiKey || '';
@@ -788,7 +950,8 @@ async function handleDirectOCR(req) {
     deepseekKey: deepseekApiKey,
     rawBase64,
     detectedMime,
-    promptText
+    promptText,
+    docType
   });
   validateAndNormalizeOcrData(parsedData, { docType, maritalStatus, religion, mobileNumber });
 
@@ -799,7 +962,7 @@ async function handleDirectOCR(req) {
 }
 
 // Forward to backend server if user has a server configured
-async function forwardToServer(serverUrl, imageBase64, mimeType, maritalStatus, religion, mobileNumber, docType = 'auto', aiProvider = 'economy', deepseekApiKey = '', geminiModel = 'gemini-3.1-flash-lite', deepseekModel = 'deepseek-flash', defaultKeySlot = 'auto') {
+async function forwardToServer(serverUrl, imageBase64, mimeType, maritalStatus, religion, mobileNumber, docType = 'auto', aiProvider = 'economy', deepseekApiKey = '', geminiModel = DEFAULT_GEMINI_MODEL, deepseekModel = 'deepseek-flash', defaultKeySlot = 'auto') {
   const url = `${serverUrl.replace(/\/+$/, '')}/api/extract-nid`;
   const response = await fetch(url, {
     method: 'POST',

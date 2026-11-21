@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>NID Scanner - Family Card Assistant</title>
-  <link rel="stylesheet" href="style.css?v=1.8.1">
+  <link rel="stylesheet" href="style.css?v=1.9.0">
 </head>
 <body>
   <div class="app-container">
@@ -55,7 +55,7 @@
         <div class="settings-body">
           <label for="aiProvider">AI কৌশল (Strategy):</label>
           <select id="aiProvider" class="select-input" style="margin-bottom: 8px;">
-            <option value="economy" selected>💸 সাশ্রয়ী অটো (ডিফল্ট মডেল → অস্পষ্ট হলে 3.8)</option>
+            <option value="economy" selected>💸 সাশ্রয়ী অটো (3.5 Lite → অস্পষ্ট হলে 3.8)</option>
             <option value="deepseek">🐋 DeepSeek Flash (~$0.38/1K Off-Peak)</option>
             <option value="gemini_lite">⚡ Gemini Flash-Lite (~$0.78–$1.11/1K)</option>
             <option value="auto">⚖️ ডুয়াল-AI (ডিফল্ট কী → ব্যাকআপ ফলব্যাক)</option>
@@ -71,9 +71,10 @@
             <div class="form-group flex-1">
               <label for="geminiModel">Gemini ডিফল্ট মডেল:</label>
               <select id="geminiModel" class="select-input">
-                <option value="gemini-3.1-flash-lite" selected>3.1 Flash-Lite ($0.25/$1.50)</option>
-                <option value="gemini-3.5-flash-lite">3.5 Flash-Lite ($0.30/$2.50)</option>
+                <option value="gemini-3.5-flash-lite" selected>3.5 Flash-Lite ($0.30/$2.50)</option>
                 <option value="gemini-3.8-flash">3.8 Flash ($0.75/$3.75)</option>
+                <option value="gemini-4-argon">4 Argon ($2.00/$10.00)</option>
+                <option value="gemini-3.1-flash-lite">3.1 Flash-Lite ($0.25/$1.50)</option>
               </select>
             </div>
             <div class="form-group flex-1">
@@ -104,15 +105,22 @@
         <button id="tabGallery" class="tab-btn">📁 গ্যালারি / ফাইল</button>
       </div>
 
+      <!-- Document & Camera Frame Size Bar -->
+      <div class="doc-frame-bar" role="group" aria-label="ডকুমেন্ট ও ক্যামেরা ফ্রেম সাইজ">
+        <button type="button" class="frame-pill active" data-doc-choice="nid" data-frame-mode="id">🪪 NID (ID কার্ড)</button>
+        <button type="button" class="frame-pill" data-doc-choice="birth_certificate" data-frame-mode="a4">📄 জন্ম নিবন্ধন (A4)</button>
+        <button type="button" class="frame-pill" data-doc-choice="auto">🤖 অটো</button>
+      </div>
+
       <!-- Live Camera View -->
-      <div id="cameraContainer" class="camera-container">
+      <div id="cameraContainer" class="camera-container mode-id">
         <video id="videoElement" playsinline autoplay muted></video>
-        <div class="card-overlay">
+        <div id="cameraCropFrame" class="crop-frame">
           <div class="overlay-bracket tl"></div>
           <div class="overlay-bracket tr"></div>
           <div class="overlay-bracket bl"></div>
           <div class="overlay-bracket br"></div>
-          <div class="overlay-hint">এনআইডি কার্ডটি ফ্রেমের মধ্যে রাখুন</div>
+          <div id="cameraOverlayHint" class="overlay-hint">NID কার্ডটি নীল ফ্রেমের ভেতর রাখুন (বাইরের অংশ ক্রপ হবে)</div>
         </div>
       </div>
 
@@ -131,6 +139,11 @@
         </div>
         <div id="filePreviewContainer" style="display: none;">
           <img id="filePreview" alt="NID Preview">
+          <div style="display:flex; gap:6px; justify-content:center; margin-top:8px; flex-wrap:wrap;">
+            <button type="button" id="btnCropUploadId" class="btn btn-outline" style="font-size:0.76rem; padding:5px 9px;">✂️ ID কার্ড ক্রপ</button>
+            <button type="button" id="btnCropUploadA4" class="btn btn-outline" style="font-size:0.76rem; padding:5px 9px;">✂️ A4 ক্রপ</button>
+            <button type="button" id="btnResetUpload" class="btn btn-outline" style="font-size:0.76rem; padding:5px 9px;">↩️ পূর্ণ ছবি</button>
+          </div>
         </div>
       </div>
 
@@ -139,9 +152,9 @@
         <div class="form-group" style="margin-bottom: 10px;">
           <label for="docType">🪪 ডকুমেন্টের ধরন</label>
           <select id="docType" class="select-input">
-            <option value="auto" selected>অটো-ডিটেক্ট (NID / জন্ম নিবন্ধন)</option>
-            <option value="nid">জাতীয় পরিচয়পত্র (NID - ১০/১৩/১৭ ডিজিট)</option>
-            <option value="birth_certificate">ডিজিটাল জন্ম নিবন্ধন সনদ (১৭ ডিজিট BRC)</option>
+            <option value="auto">অটো-ডিটেক্ট (NID / জন্ম নিবন্ধন)</option>
+            <option value="nid" selected>জাতীয় পরিচয়পত্র (NID - ID কার্ড সাইজ • ১০/১৩/১৭ ডিজিট)</option>
+            <option value="birth_certificate">ডিজিটাল জন্ম নিবন্ধন সনদ (A4 সাইজ • ১৭ ডিজিট BRC)</option>
           </select>
         </div>
         <div class="form-row">
@@ -288,6 +301,6 @@
     </footer>
   </div>
 
-  <script src="app.js?v=1.8.1"></script>
+  <script src="app.js?v=1.9.0"></script>
 </body>
 </html>

@@ -275,7 +275,9 @@
   padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
+  max-height: 85vh;
+  overflow-y: auto;
 }
 
 .fc-camera-trigger-btn {
@@ -645,10 +647,34 @@
   background: #fee2e2;
   color: #b91c1c;
 }
+.fc-modal-doc-pills {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+.fc-modal-frame-pill {
+  padding: 6px 6px;
+  border: 1.5px solid #cbd5e1;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.15s ease;
+}
+.fc-modal-frame-pill.active {
+  background: #eff6ff;
+  border-color: #2563eb;
+  color: #1d4ed8;
+  box-shadow: 0 1px 4px rgba(37, 99, 235, 0.2);
+}
 .fc-modal-cam-box {
   position: relative;
   width: 100%;
-  height: 220px;
+  aspect-ratio: 10 / 7;
+  max-height: min(46vh, 330px);
   background: #0f172a;
   border-radius: 10px;
   overflow: hidden;
@@ -656,24 +682,62 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 10px;
+  margin: 0 auto 10px auto;
+}
+.fc-modal-cam-box.mode-a4 {
+  max-width: 340px;
+  aspect-ratio: 3 / 4;
+  max-height: min(56vh, 410px);
 }
 .fc-modal-cam-box video {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
+  z-index: 1;
+}
+.fc-modal-crop-frame {
+  position: relative;
+  width: 88%;
+  height: auto;
+  aspect-ratio: 85.6 / 53.98;
+  border: 2px dashed rgba(56, 189, 248, 0.88);
+  border-radius: 8px;
+  pointer-events: none;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 6px;
+  box-shadow: 0 0 0 9999px rgba(2, 6, 23, 0.64);
+  z-index: 2;
+}
+.fc-modal-cam-box.mode-a4 .fc-modal-crop-frame {
+  height: 88%;
+  width: auto;
+  max-width: 90%;
+  aspect-ratio: 210 / 297;
+}
+.fc-modal-crop-hint {
+  background: rgba(2, 6, 23, 0.78);
+  color: #f8fafc;
+  padding: 3px 8px;
+  border-radius: 10px;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-align: center;
 }
 .fc-modal-cam-bracket {
   position: absolute;
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   border: 3px solid #38bdf8;
   pointer-events: none;
 }
-.fc-modal-cam-bracket.tl { top: 14px; left: 14px; border-right: none; border-bottom: none; }
-.fc-modal-cam-bracket.tr { top: 14px; right: 14px; border-left: none; border-bottom: none; }
-.fc-modal-cam-bracket.bl { bottom: 14px; left: 14px; border-right: none; border-top: none; }
-.fc-modal-cam-bracket.br { bottom: 14px; right: 14px; border-left: none; border-top: none; }
+.fc-modal-cam-bracket.tl { top: -2px; left: -2px; border-right: none; border-bottom: none; }
+.fc-modal-cam-bracket.tr { top: -2px; right: -2px; border-left: none; border-bottom: none; }
+.fc-modal-cam-bracket.bl { bottom: -2px; left: -2px; border-right: none; border-top: none; }
+.fc-modal-cam-bracket.br { bottom: -2px; right: -2px; border-left: none; border-top: none; }
 .fc-modal-btn-row {
   display: flex;
   gap: 8px;

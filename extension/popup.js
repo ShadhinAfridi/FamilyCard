@@ -1,7 +1,9 @@
+const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash-lite';
 const MODEL_RATES = {
-  'gemini-3.1-flash-lite': { label: 'Gemini 3.1 Flash-Lite', inM: 0.25, outM: 1.50, est1k: 0.78, rpm: '4K RPM / 150K RPD' },
   'gemini-3.5-flash-lite': { label: 'Gemini 3.5 Flash-Lite', inM: 0.30, outM: 2.50, est1k: 1.11, rpm: '4K RPM / 150K RPD' },
   'gemini-3.8-flash': { label: 'Gemini 3.8 Flash', inM: 0.75, outM: 3.75, est1k: 2.53, rpm: '1K RPM / 10K RPD' },
+  'gemini-4-argon': { label: 'Gemini 4 Argon', inM: 2.00, outM: 10.00, est1k: 6.50, rpm: '500 RPM / 5K RPD' },
+  'gemini-3.1-flash-lite': { label: 'Gemini 3.1 Flash-Lite', inM: 0.25, outM: 1.50, est1k: 0.78, rpm: '4K RPM / 150K RPD' },
   'deepseek-flash': { label: 'DeepSeek Flash', offIn: 0.15, offOut: 0.60, peakIn: 0.30, peakOut: 1.20 }
 };
 
@@ -31,8 +33,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!elCostCard) return;
     const strategy = elProvider ? elProvider.value : 'economy';
     const keySlot = elDefaultKeySlot ? elDefaultKeySlot.value : 'auto';
-    const gemId = elGeminiModel ? elGeminiModel.value : 'gemini-3.1-flash-lite';
-    const gem = MODEL_RATES[gemId] || MODEL_RATES['gemini-3.1-flash-lite'];
+    const gemId = elGeminiModel ? elGeminiModel.value : DEFAULT_GEMINI_MODEL;
+    const gem = MODEL_RATES[gemId] || MODEL_RATES[DEFAULT_GEMINI_MODEL];
     const peak = isDeepSeekPeakNow();
     const dsIn = peak ? 0.30 : 0.15;
     const dsOut = peak ? 1.20 : 0.60;
@@ -50,10 +52,17 @@ document.addEventListener('DOMContentLoaded', () => {
     elCostCard.innerHTML = `${primaryLine}${spendLine}`;
   }
 
-  chrome.storage.sync.get(['aiProvider', 'defaultKeySlot', 'geminiModel', 'deepseekModel', 'geminiApiKey', 'deepseekApiKey', 'serverUrl', 'roomCode', 'deviceName'], (res) => {
+  chrome.storage.sync.get(['aiProvider', 'defaultKeySlot', 'geminiModel', 'deepseekModel', 'geminiApiKey', 'deepseekApiKey', 'serverUrl', 'roomCode', 'deviceName', 'fc_model_default_v2'], (res) => {
     if (res.aiProvider && elProvider) elProvider.value = res.aiProvider;
     if (res.defaultKeySlot && elDefaultKeySlot) elDefaultKeySlot.value = res.defaultKeySlot;
-    if (res.geminiModel && elGeminiModel) elGeminiModel.value = res.geminiModel;
+    let resolvedGemModel = res.geminiModel || DEFAULT_GEMINI_MODEL;
+    if (!res.fc_model_default_v2) {
+      if (!res.geminiModel || res.geminiModel === 'gemini-3.1-flash-lite') {
+        resolvedGemModel = DEFAULT_GEMINI_MODEL;
+      }
+      chrome.storage.sync.set({ geminiModel: resolvedGemModel, fc_model_default_v2: '1' });
+    }
+    if (elGeminiModel) elGeminiModel.value = MODEL_RATES[resolvedGemModel] ? resolvedGemModel : DEFAULT_GEMINI_MODEL;
     if (res.deepseekModel && elDeepSeekModel) elDeepSeekModel.value = res.deepseekModel;
     if (res.geminiApiKey) elApiKey.value = res.geminiApiKey;
     if (res.deepseekApiKey && elDeepSeekKey) elDeepSeekKey.value = res.deepseekApiKey;
@@ -86,7 +95,7 @@ document.addEventListener('DOMContentLoaded', () => {
   btnSave.addEventListener('click', () => {
     const aiProvider = elProvider ? elProvider.value : 'economy';
     const defaultKeySlot = elDefaultKeySlot ? elDefaultKeySlot.value : 'auto';
-    const geminiModel = elGeminiModel ? elGeminiModel.value : 'gemini-3.1-flash-lite';
+    const geminiModel = elGeminiModel ? elGeminiModel.value : DEFAULT_GEMINI_MODEL;
     const deepseekModel = elDeepSeekModel ? elDeepSeekModel.value : 'deepseek-flash';
     const geminiApiKey = elApiKey.value.trim();
     const deepseekApiKey = elDeepSeekKey ? elDeepSeekKey.value.trim() : '';

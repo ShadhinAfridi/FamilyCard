@@ -186,12 +186,12 @@ export default {
           dKey = gKey;
           gKey = '';
         }
-        const aiProvider = ['gemini', 'deepseek', 'auto'].includes(body.aiProvider) ? body.aiProvider : 'auto';
+        const aiProvider = ['economy', 'gemini', 'gemini_lite', 'deepseek', 'auto'].includes(body.aiProvider) ? body.aiProvider : 'economy';
 
         if (aiProvider === 'deepseek' && !dKey) {
           return Response.json({ success: false, error: 'DeepSeek API Key প্রয়োজন।' }, { status: 400, headers: CORS_HEADERS });
         }
-        if (aiProvider === 'gemini' && !gKey) {
+        if ((aiProvider === 'gemini' || aiProvider === 'gemini_lite') && !gKey) {
           return Response.json({ success: false, error: 'Gemini API Key প্রয়োজন।' }, { status: 400, headers: CORS_HEADERS });
         }
         if (!gKey && !dKey) {
@@ -213,8 +213,19 @@ export default {
 
         const promptText = buildGeminiPrompt(body.docType || 'auto');
 
-        async function runWorkerGemini() {
-          const attempts = [
+        function needsWorkerEscalation(p) {
+          if (!p || typeof p !== 'object') return true;
+          if (p.confidence === 'low') return true;
+          if (!String(p.name_bn || '').trim() || !String(p.name_en || '').trim()) return true;
+          if (!/^\d{2}\/\d{2}\/\d{4}$/.test(standardizeDate(p.dob || ''))) return true;
+          const rawNum = p.doc_number || (p.doc_type === 'birth_certificate' ? p.birth_reg_no : p.nid_number) || p.nid_number || p.birth_reg_no || '';
+          const d = normalizeDigits(rawNum).replace(/[^0-9]/g, '');
+          if (p.doc_type === 'birth_certificate') return d.length !== 17;
+          return d.length !== 10 && d.length !== 13 && d.length !== 17;
+        }
+
+        async function runWorkerGemini(profile = 'accurate') {
+          const flash38 = [
             {
               label: 'gemini-3.8-flash (interactions)',
               url: 'https://generativelanguage.googleapis.com/v1beta/interactions',
@@ -230,6 +241,17 @@ export default {
             {
               label: 'gemini-3.8-flash (generateContent)',
               url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent',
+              headers: { 'Content-Type': 'application/json', 'x-goog-api-key': gKey },
+              body: {
+                contents: [{ parts: [{ text: promptText }, { inline_data: { mime_type: mimeType, data: rawBase64 } }] }],
+                generationConfig: { response_mime_type: 'application/json' }
+              }
+            }
+          ];
+          const lite = [
+            {
+              label: 'gemini-3.1-flash-lite (generateContent)',
+              url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent',
               headers: { 'Content-Type': 'application/json', 'x-goog-api-key': gKey },
               body: {
                 contents: [{ parts: [{ text: promptText }, { inline_data: { mime_type: mimeType, data: rawBase64 } }] }],
@@ -257,6 +279,7 @@ export default {
               }
             }
           ];
+          const attempts = profile === 'lite_only' ? lite : (profile === 'flash38_only' ? flash38 : [...flash38, ...lite]);
           let lastErr = 'Gemini OCR থেকে উত্তর পাওয়া যায়নি।';
           for (const attempt of attempts) {
             const controller = new AbortController();
@@ -355,12 +378,41 @@ export default {
         let parsed = null;
         if (aiProvider === 'deepseek') {
           parsed = await runWorkerDeepSeek();
+        } else if (aiProvider === 'gemini_lite') {
+          parsed = await runWorkerGemini('lite_only');
         } else if (aiProvider === 'gemini') {
-          parsed = await runWorkerGemini();
+          parsed = await runWorkerGemini('accurate');
+        } else if (aiProvider === 'economy') {
+          const errs = [];
+          if (gKey) {
+            try {
+              const liteRes = await runWorkerGemini('lite_only');
+              if (!needsWorkerEscalation(liteRes)) {
+                parsed = liteRes;
+              } else {
+                try {
+                  parsed = await runWorkerGemini('flash38_only');
+                } catch (_) {
+                  if (dKey) {
+                    try { parsed = await runWorkerDeepSeek(); } catch (__) {}
+                  }
+                  if (!parsed) parsed = liteRes;
+                }
+              }
+            } catch (e) {
+              if (e.statusCode === 400 && !dKey) throw e;
+              errs.push(e.message);
+            }
+          }
+          if (!parsed && dKey) {
+            try { parsed = await runWorkerDeepSeek(); }
+            catch (e) { errs.push(e.message); }
+          }
+          if (!parsed) throw new Error(errs.join(' | '));
         } else {
           const errs = [];
           if (gKey) {
-            try { parsed = await runWorkerGemini(); }
+            try { parsed = await runWorkerGemini('accurate'); }
             catch (e) { if (e.statusCode === 400 && !dKey) throw e; errs.push(e.message); }
           }
           if (!parsed && dKey) {
@@ -379,7 +431,7 @@ export default {
 
     // Health check endpoint
     if (path === '/api/info') {
-      return Response.json({ status: 'online', edge: 'cloudflare-worker', providers: ['gemini', 'deepseek'], upstream: ORIGIN_BASE }, { headers: CORS_HEADERS });
+      return Response.json({ status: 'online', edge: 'cloudflare-worker', providers: ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini-3.8-flash', 'deepseek-flash'], upstream: ORIGIN_BASE }, { headers: CORS_HEADERS });
     }
 
     // Static & Bookmarklet Assets via global Firebase CDN upstream with full CORS

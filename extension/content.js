@@ -38,7 +38,7 @@
   let roomCode = 'FC-101';
   let geminiApiKey = '';
   let deepseekApiKey = '';
-  let aiProvider = localStorage.getItem('fc_ai_provider') || 'auto';
+  let aiProvider = localStorage.getItem('fc_ai_provider') || 'economy';
   let lastExtractedData = null;
   let activeScanTarget = { type: 'applicant', card: null, index: 'self' };
   let activeMediaStream = null;
@@ -369,9 +369,11 @@
           <div class="fc-modal-field" style="margin-bottom: 6px;">
             <label for="fc-modal-ai-provider">🧠 AI ইঞ্জিন (প্রোভাইডার):</label>
             <select id="fc-modal-ai-provider">
-              <option value="auto" ${aiProvider === 'auto' ? 'selected' : ''}>অটো (Gemini + DeepSeek ব্যাকআপ)</option>
-              <option value="gemini" ${aiProvider === 'gemini' ? 'selected' : ''}>Google Gemini (3.8 Flash)</option>
-              <option value="deepseek" ${aiProvider === 'deepseek' ? 'selected' : ''}>DeepSeek Vision (deepseek-flash)</option>
+              <option value="economy" ${aiProvider === 'economy' ? 'selected' : ''}>💸 সাশ্রয়ী অটো (3.1 Lite → 3.8 / DeepSeek)</option>
+              <option value="deepseek" ${aiProvider === 'deepseek' ? 'selected' : ''}>🐋 DeepSeek Flash (~$0.33/1K সবচেয়ে সস্তা)</option>
+              <option value="gemini_lite" ${aiProvider === 'gemini_lite' ? 'selected' : ''}>⚡ Gemini 3.1/3.5 Lite (150K RPD)</option>
+              <option value="auto" ${aiProvider === 'auto' ? 'selected' : ''}>⚖️ ব্যালেন্সড (Gemini 3.8 + DeepSeek)</option>
+              <option value="gemini" ${aiProvider === 'gemini' ? 'selected' : ''}>💎 Gemini 3.8 Flash (সর্বোচ্চ নির্ভুলতা)</option>
             </select>
           </div>
 

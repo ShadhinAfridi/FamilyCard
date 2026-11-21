@@ -15,7 +15,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   btnSave.addEventListener('click', () => {
-    const aiProvider = elProvider ? elProvider.value : 'auto';
+    const aiProvider = elProvider ? elProvider.value : 'economy';
     const geminiApiKey = elApiKey.value.trim();
     const deepseekApiKey = elDeepSeekKey ? elDeepSeekKey.value.trim() : '';
     const serverUrl = elServerUrl.value.trim() || 'http://localhost:3000';

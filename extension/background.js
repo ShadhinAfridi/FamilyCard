@@ -265,8 +265,19 @@ function validateAndNormalizeOcrData(parsedData, opts = {}) {
   return parsedData;
 }
 
-async function callGeminiResilientOCR(apiKey, rawBase64, detectedMime, promptText) {
-  const attempts = [
+function needsAccurateEscalation(parsed) {
+  if (!parsed || typeof parsed !== 'object') return true;
+  if (parsed.confidence === 'low') return true;
+  if (!String(parsed.name_bn || '').trim() || !String(parsed.name_en || '').trim()) return true;
+  if (!/^\d{2}\/\d{2}\/\d{4}$/.test(standardizeDate(parsed.dob || ''))) return true;
+  const rawNum = parsed.doc_number || (parsed.doc_type === 'birth_certificate' ? parsed.birth_reg_no : parsed.nid_number) || parsed.nid_number || parsed.birth_reg_no || '';
+  const digits = normalizeDigits(rawNum).replace(/[^0-9]/g, '');
+  if (parsed.doc_type === 'birth_certificate') return digits.length !== 17;
+  return digits.length !== 10 && digits.length !== 13 && digits.length !== 17;
+}
+
+async function callGeminiResilientOCR(apiKey, rawBase64, detectedMime, promptText, profile = 'accurate') {
+  const flash38Attempts = [
     {
       label: 'gemini-3.8-flash (interactions)',
       url: 'https://generativelanguage.googleapis.com/v1beta/interactions',
@@ -293,6 +304,28 @@ async function callGeminiResilientOCR(apiKey, rawBase64, detectedMime, promptTex
     {
       label: 'gemini-3.8-flash (generateContent)',
       url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey
+      },
+      body: {
+        contents: [
+          {
+            parts: [
+              { text: promptText },
+              { inline_data: { mime_type: detectedMime, data: rawBase64 } }
+            ]
+          }
+        ],
+        generationConfig: { response_mime_type: 'application/json' }
+      }
+    }
+  ];
+
+  const liteAttempts = [
+    {
+      label: 'gemini-3.1-flash-lite (generateContent)',
+      url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent',
       headers: {
         'Content-Type': 'application/json',
         'x-goog-api-key': apiKey
@@ -351,6 +384,12 @@ async function callGeminiResilientOCR(apiKey, rawBase64, detectedMime, promptTex
       }
     }
   ];
+
+  const attempts = profile === 'lite_only'
+    ? liteAttempts
+    : profile === 'flash38_only'
+      ? flash38Attempts
+      : [...flash38Attempts, ...liteAttempts];
 
   let lastErrorMsg = 'Gemini API থেকে কোনো ফলাফল পাওয়া যায়নি।';
 
@@ -464,7 +503,7 @@ async function callDeepSeekVisionOCR(deepseekKey, rawBase64, detectedMime, promp
   }
 }
 
-async function runMultiProviderOCR({ aiProvider = 'auto', geminiKey = '', deepseekKey = '', rawBase64, detectedMime, promptText }) {
+async function runMultiProviderOCR({ aiProvider = 'economy', geminiKey = '', deepseekKey = '', rawBase64, detectedMime, promptText }) {
   let gKey = String(geminiKey || '').trim();
   let dKey = String(deepseekKey || '').trim();
   if (!dKey && /^sk-/i.test(gKey)) {
@@ -472,23 +511,57 @@ async function runMultiProviderOCR({ aiProvider = 'auto', geminiKey = '', deepse
     gKey = '';
   }
 
-  const mode = ['gemini', 'deepseek', 'auto'].includes(aiProvider) ? aiProvider : 'auto';
+  const mode = ['economy', 'auto', 'gemini', 'gemini_lite', 'deepseek'].includes(aiProvider) ? aiProvider : 'economy';
 
   if (mode === 'deepseek') {
     if (!dKey) throw new Error('DeepSeek API Key সেট করা নেই। সেটিংসে গিয়ে sk-... Key দিন।');
     return await callDeepSeekVisionOCR(dKey, rawBase64, detectedMime, promptText);
   }
 
-  if (mode === 'gemini') {
+  if (mode === 'gemini_lite') {
     if (!gKey) throw new Error('Gemini API Key সেট করা নেই।');
-    return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText);
+    return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'lite_only');
   }
 
-  // auto mode: Gemini primary -> automatic DeepSeek failover (or DeepSeek directly if only DeepSeek key exists)
+  if (mode === 'gemini') {
+    if (!gKey) throw new Error('Gemini API Key সেট করা নেই।');
+    return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'accurate');
+  }
+
   const errors = [];
+
+  // Economy mode: cheap & fast 3.1/3.5 Flash-Lite first (~$0.78/1K scans), auto-escalates only if blurry/incomplete
+  if (mode === 'economy') {
+    if (gKey) {
+      try {
+        const liteRes = await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'lite_only');
+        if (!needsAccurateEscalation(liteRes)) return liteRes;
+        try {
+          return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'flash38_only');
+        } catch (escErr) {
+          if (dKey) {
+            try { return await callDeepSeekVisionOCR(dKey, rawBase64, detectedMime, promptText); } catch (_) {}
+          }
+          return liteRes;
+        }
+      } catch (err) {
+        errors.push(`Gemini: ${err.message}`);
+      }
+    }
+    if (dKey) {
+      try {
+        return await callDeepSeekVisionOCR(dKey, rawBase64, detectedMime, promptText);
+      } catch (err) {
+        errors.push(`DeepSeek: ${err.message}`);
+      }
+    }
+    throw new Error(errors.length ? errors.join(' | ') : 'Gemini বা DeepSeek API Key সেট করা নেই।');
+  }
+
+  // Balanced auto mode: Gemini 3.8 Flash primary -> Lite fallback -> DeepSeek failover
   if (gKey) {
     try {
-      return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText);
+      return await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'accurate');
     } catch (err) {
       errors.push(`Gemini: ${err.message}`);
     }
@@ -517,7 +590,7 @@ async function handleDirectOCR(req) {
   const { imageBase64, mimeType = 'image/jpeg', maritalStatus = 'বিবাহিত', religion = 'ইসলাম', mobileNumber = '', docType = 'auto' } = req;
 
   const stored = await chrome.storage.sync.get(['aiProvider', 'geminiApiKey', 'deepseekApiKey', 'serverUrl']);
-  const aiProvider = req.aiProvider || stored.aiProvider || 'auto';
+  const aiProvider = req.aiProvider || stored.aiProvider || 'economy';
   const apiKey = req.apiKey || stored.geminiApiKey || '';
   const deepseekApiKey = req.deepseekApiKey || stored.deepseekApiKey || '';
 

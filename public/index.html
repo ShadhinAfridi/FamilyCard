@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>NID Scanner - Family Card Assistant</title>
   <link rel="stylesheet" href="style.css">
-  <script src="/socket.io/socket.io.js"></script>
 </head>
 <body>
   <div class="app-container">
@@ -47,7 +46,9 @@
       <div class="form-row" style="margin-top:8px;">
         <button id="btnConnect" class="btn btn-secondary" style="flex:1;">🔗 রুম কানেক্ট করুন</button>
         <button id="btnCopyRoomLink" type="button" class="btn btn-outline" style="flex:1;">📋 রুম লিংক কপি</button>
+        <button id="btnJumpChat" type="button" class="btn btn-outline" style="flex:0 0 auto; padding-left:10px; padding-right:10px;" title="রুম চ্যাটে যান">💬 চ্যাট</button>
       </div>
+      <div id="roomPeersStatus" style="margin-top:8px; font-size:0.76rem; color:#475569; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:6px 10px;">⏳ রুম সংযোগ ও সক্রিয় ডিভাইস যাচাই হচ্ছে...</div>
 
       <details class="settings-details">
         <summary>⚙️ AI মডেল, ডিফল্ট কী ও খরচ (Gemini + DeepSeek)</summary>
@@ -255,6 +256,7 @@
         <h3>
           💬 রুম মেসেজ ও ডাটা শেয়ার
           <span id="chatRoomLabel" style="font-size:0.75rem; background:#e0e7ff; color:#3730a3; padding:2px 7px; border-radius:10px;">FC-101</span>
+          <span id="chatPeersPill" style="font-size:0.7rem; background:#ecfdf5; color:#047857; padding:2px 7px; border-radius:10px; font-weight:700;">⏳</span>
           <span id="chatUnreadBadge" class="room-unread-pill" style="display:none;">0</span>
         </h3>
         <div style="display:flex; gap:6px;">

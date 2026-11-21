@@ -37,14 +37,14 @@ async function build() {
   // 2. Full inline bookmarklet (for desktop drag & drop)
   const bookmarkletCode = 'javascript:' + encodeURI(rawMinCode).replace(/#/g, '%23');
 
-  // 3. Tiny 1-line Mobile Chrome Loader Bookmarklet (~500 chars: 0ms re-open + localStorage instant boot + Cloudflare/Firebase dual-CDN fallback)
-  const mobileLoaderCode = "javascript:!function(){if(window.__fcOpenModal)return void window.__fcOpenModal();var k='fc_app_v15',c=localStorage.getItem(k),u='https://binary-ict.web.app/bookmarklet/app.min.js',b='https://familycard.afridi.app/bookmarklet/app.min.js';if(c)try{(0,eval)(c)}catch(e){c=0}fetch(u+'?t='+Date.now()).then(function(r){if(!r.ok)throw 0;return r.text()}).catch(function(){return fetch(b+'?t='+Date.now()).then(function(r){return r.text()})}).then(function(t){if(t&&t.length>999){localStorage.setItem(k,t);if(!c)(0,eval)(t)}}).catch(function(){if(!c){var s=document.createElement('script');s.src=u;(document.head||document.documentElement).appendChild(s)}})}();";
+  // 3. Tiny 1-line Mobile Chrome Loader Bookmarklet (Network-first live fetch with 2.6s timeout + offline localStorage fallback)
+  const mobileLoaderCode = "javascript:!function(){if(window.__fcOpenModal)return void window.__fcOpenModal();var k='fc_app_v18',u='https://binary-ict.web.app/bookmarklet/app.min.js',b='https://familycard.afridi.app/bookmarklet/app.min.js',c=localStorage.getItem(k),ac=typeof AbortController!=='undefined'?new AbortController():null,tm=ac?setTimeout(function(){ac.abort()},2600):0,op=ac?{signal:ac.signal,cache:'no-store'}:{cache:'no-store'};fetch(u+'?t='+Date.now(),op).then(function(r){if(!r.ok)throw 0;return r.text()}).catch(function(){return fetch(b+'?t='+Date.now(),{cache:'no-store'}).then(function(r){if(!r.ok)throw 0;return r.text()})}).then(function(t){clearTimeout(tm);if(t&&t.length>999){try{localStorage.setItem(k,t);localStorage.setItem('fc_app_v15',t)}catch(e){}(0,eval)(t)}}).catch(function(){clearTimeout(tm);if(c)try{(0,eval)(c)}catch(e){c=0}if(!c){var s=document.createElement('script');s.src=u+'?t='+Date.now();(document.head||document.documentElement).appendChild(s)}})}();";
 
   // 4. Tampermonkey / Violentmonkey Userscript for automatic execution on mobile & desktop
   const userScriptHeader = `// ==UserScript==
 // @name         Family Card AI Assistant (NID & BRC Scanner + Auto-Fill + Room Chat)
 // @namespace    https://binary-ict.web.app/
-// @version      1.8.0
+// @version      1.8.1
 // @description  Automated NID/BRC OCR (Gemini + DeepSeek), Cost Tracker, Section 3-9 Smart Defaults & Cross-Device Room Messaging for fc.bhata.gov.bd
 // @author       Binary ICT
 // @match        https://fc.bhata.gov.bd/*

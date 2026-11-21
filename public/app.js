@@ -30,6 +30,9 @@ const elSaveDefaultsMsg = document.getElementById('saveDefaultsMsg');
 const btnConnect = document.getElementById('btnConnect');
 
 const elChatRoomLabel = document.getElementById('chatRoomLabel');
+const elChatPeersPill = document.getElementById('chatPeersPill');
+const elRoomPeersStatus = document.getElementById('roomPeersStatus');
+const elBtnJumpChat = document.getElementById('btnJumpChat');
 const elChatUnreadBadge = document.getElementById('chatUnreadBadge');
 const elRoomChatFeed = document.getElementById('roomChatFeed');
 const elChatMsgInput = document.getElementById('chatMsgInput');
@@ -44,8 +47,13 @@ const elBtnChatCancelReply = document.getElementById('btnChatCancelReply');
 
 const FIRESTORE_ROOMS_BASE = 'https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/room_channels';
 const EDGE_ROOM_API = 'https://familycard-10n.pages.dev/api/room-messages';
-const MY_CLIENT_ID = localStorage.getItem('fc_client_id') || (() => {
-  const id = 'web_' + Math.random().toString(36).slice(2, 10);
+const MY_CLIENT_ID = (() => {
+  const saved = String(localStorage.getItem('fc_client_id') || '').replace(/[^a-zA-Z0-9_]/g, '').slice(0, 24);
+  if (saved && saved.startsWith('web_')) {
+    if (saved !== localStorage.getItem('fc_client_id')) localStorage.setItem('fc_client_id', saved);
+    return saved;
+  }
+  const id = 'web_' + Math.random().toString(36).replace(/[^a-z0-9]/g, '').slice(0, 8).padEnd(6, '0');
   localStorage.setItem('fc_client_id', id);
   return id;
 })();
@@ -54,6 +62,8 @@ let lastExtractedNid = null;
 const roomMsgMap = new Map();
 let lastRoomMetaSig = '';
 let lastClearedAtMs = 0;
+let roomBootstrapped = false;
+let roomJoinDebounce = null;
 let pendingReplyMsg = null;
 let roomPollTimer = null;
 
@@ -283,17 +293,184 @@ function handleIncomingRoomMessage(rawMsg) {
   }
 }
 
+function extractActivePeersFromFields(mf = {}, nowMs = Date.now()) {
+  const peerFields = mf?.peers?.mapValue?.fields;
+  if (!peerFields || typeof peerFields !== 'object') return [];
+  const out = [];
+  for (const [id, val] of Object.entries(peerFields)) {
+    const pf = val?.mapValue?.fields;
+    if (!pf) continue;
+    const seenAt = Number(pf.seenAt?.integerValue || pf.seenAt?.doubleValue || 0);
+    if (nowMs - seenAt <= 45000) {
+      out.push({
+        id,
+        name: pf.name?.stringValue || 'ডিভাইস',
+        client: pf.client?.stringValue || '',
+        seenAt
+      });
+    }
+  }
+  return out.sort((a, b) => b.seenAt - a.seenAt);
+}
+
+function renderPeersStatus(peers = [], roomCode = normalizeRoomCode(elRoomCode.value)) {
+  const list = Array.isArray(peers) ? peers : [];
+  const hasSelf = list.some(p => p.id === MY_CLIENT_ID);
+  const totalCount = hasSelf ? list.length : (list.length + 1);
+  const others = list.filter(p => p.id !== MY_CLIENT_ID);
+
+  if (others.length > 0) {
+    const summaryNames = others.slice(0, 3).map((p) => {
+      const tag = p.client === 'bookmarklet' ? 'বুকমার্কলেট' : (p.client === 'extension' ? 'এক্সটেনশন' : (p.client || 'ওয়েব'));
+      return `${p.name || 'ডিভাইস'} (${tag})`;
+    }).join(', ');
+    const more = others.length > 3 ? ` +${others.length - 3}` : '';
+    if (elRoomPeersStatus) {
+      elRoomPeersStatus.style.background = '#ecfdf5';
+      elRoomPeersStatus.style.borderColor = '#6ee7b7';
+      elRoomPeersStatus.style.color = '#065f46';
+      elRoomPeersStatus.textContent = `🟢 রুম ${roomCode}: ${totalCount}টি ডিভাইস যুক্ত — ${summaryNames}${more}`;
+    }
+    if (elChatPeersPill) {
+      elChatPeersPill.style.background = '#dcfce7';
+      elChatPeersPill.style.color = '#166534';
+      elChatPeersPill.textContent = `🟢 ${totalCount} অনলাইন`;
+    }
+    updateStatus(true, socket && socket.connected ? `সার্ভার + রুম (${totalCount})` : `রুম সক্রিয় (${totalCount} ডিভাইস)`);
+  } else {
+    if (elRoomPeersStatus) {
+      elRoomPeersStatus.style.background = '#fffbeb';
+      elRoomPeersStatus.style.borderColor = '#fde68a';
+      elRoomPeersStatus.style.color = '#92400e';
+      elRoomPeersStatus.textContent = `🟡 রুম ${roomCode}-এ আপনি যুক্ত আছেন — বুকমার্কলেট/অন্য ব্রাউজারে একই রুম কোড লিখুন।`;
+    }
+    if (elChatPeersPill) {
+      elChatPeersPill.style.background = '#fef3c7';
+      elChatPeersPill.style.color = '#92400e';
+      elChatPeersPill.textContent = '🟡 ১ অনলাইন';
+    }
+    updateStatus(true, socket && socket.connected ? 'সার্ভার + ক্লাউড' : `ক্লাউড রুম: ${roomCode}`);
+  }
+}
+
+async function applyCloudMetaAndMaybeFetchMessages({ targetRoom, mf = null, metaObj = null, peers = null, forceFull = false, source = 'edge' }) {
+  const clearedAt = Number(metaObj?.cleared_at_ms ?? mf?.cleared_at_ms?.integerValue ?? 0);
+  const lastId = String(metaObj?.last_msg_id ?? mf?.last_msg_id?.stringValue ?? '');
+  const sig = `${targetRoom}|${lastId}|${clearedAt}`;
+  if (clearedAt > lastClearedAtMs) {
+    lastClearedAtMs = clearedAt;
+    for (const [k, v] of roomMsgMap.entries()) {
+      if (v.ts <= lastClearedAtMs) roomMsgMap.delete(k);
+    }
+    renderRoomChat();
+  }
+  const activePeers = Array.isArray(peers) ? peers : (mf ? extractActivePeersFromFields(mf, Date.now()) : []);
+  renderPeersStatus(activePeers, targetRoom);
+
+  const needMessages = forceFull || !roomBootstrapped || sig !== lastRoomMetaSig;
+  if (!needMessages) return true;
+
+  if (source === 'edge' && roomBootstrapped && !forceFull) {
+    const fullRes = await fetch(
+      `${EDGE_ROOM_API}?room=${encodeURIComponent(targetRoom)}&metaOnly=0&t=${Date.now()}`,
+      { cache: 'no-store' }
+    );
+    if (normalizeRoomCode(elRoomCode.value) !== targetRoom) return true;
+    if (fullRes.ok) {
+      const fullJson = await fullRes.json().catch(() => ({}));
+      if (Array.isArray(fullJson.messages)) {
+        fullJson.messages.forEach(handleIncomingRoomMessage);
+      }
+      if (Array.isArray(fullJson.peers)) {
+        renderPeersStatus(fullJson.peers, targetRoom);
+      }
+      lastRoomMetaSig = sig;
+      roomBootstrapped = true;
+      return true;
+    }
+  }
+  return false;
+}
+
 async function fetchCloudRoomMessages(forceFull = false) {
-  if (document.hidden) return;
-  const room = normalizeRoomCode(elRoomCode.value);
+  if (document.hidden && !forceFull) return;
+  const targetRoom = normalizeRoomCode(elRoomCode.value);
+  const peerName = getDeviceName();
+  const useMetaOnly = roomBootstrapped && !forceFull;
+
+  // 1. Primary: Cloudflare Edge API (zero 404s on brand-new rooms + atomic peer heartbeat)
   try {
-    const metaRes = await fetch(`${FIRESTORE_ROOMS_BASE}/${encodeURIComponent(room)}?t=${Date.now()}`);
+    const edgeUrl = `${EDGE_ROOM_API}?room=${encodeURIComponent(targetRoom)}&metaOnly=${useMetaOnly ? '1' : '0'}&peerId=${encodeURIComponent(MY_CLIENT_ID)}&peerName=${encodeURIComponent(peerName)}&peerClient=companion&t=${Date.now()}`;
+    const er = await fetch(edgeUrl, { cache: 'no-store' });
+    if (normalizeRoomCode(elRoomCode.value) !== targetRoom) return;
+    if (er.ok) {
+      const ej = await er.json().catch(() => ({}));
+      if (ej && ej.success) {
+        if (!useMetaOnly && Array.isArray(ej.messages)) {
+          ej.messages.forEach(handleIncomingRoomMessage);
+          roomBootstrapped = true;
+          const mCleared = Number(ej.meta?.cleared_at_ms || 0);
+          const mLast = String(ej.meta?.last_msg_id || '');
+          lastRoomMetaSig = `${targetRoom}|${mLast}|${mCleared}`;
+          if (mCleared > lastClearedAtMs) {
+            lastClearedAtMs = mCleared;
+            for (const [k, v] of roomMsgMap.entries()) {
+              if (v.ts <= lastClearedAtMs) roomMsgMap.delete(k);
+            }
+            renderRoomChat();
+          }
+          renderPeersStatus(ej.peers || [], targetRoom);
+          return;
+        }
+        const handled = await applyCloudMetaAndMaybeFetchMessages({
+          targetRoom,
+          metaObj: ej.meta || {},
+          peers: ej.peers || [],
+          forceFull,
+          source: 'edge'
+        });
+        if (handled) return;
+      }
+    }
+  } catch (_) {}
+
+  // 2. Fallback: Direct Firestore REST (atomic peer PATCH + cache-busted messages GET)
+  try {
+    const nowMs = Date.now();
+    const peerFields = {
+      room: { stringValue: targetRoom },
+      peers: {
+        mapValue: {
+          fields: {
+            [MY_CLIENT_ID]: {
+              mapValue: {
+                fields: {
+                  name: { stringValue: peerName.slice(0, 50) },
+                  client: { stringValue: 'companion' },
+                  seenAt: { integerValue: String(nowMs) }
+                }
+              }
+            }
+          }
+        }
+      }
+    };
+    const metaRes = await fetch(
+      `${FIRESTORE_ROOMS_BASE}/${encodeURIComponent(targetRoom)}?updateMask.fieldPaths=room&updateMask.fieldPaths=peers.${encodeURIComponent(MY_CLIENT_ID)}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields: peerFields }),
+        cache: 'no-store'
+      }
+    );
+    if (normalizeRoomCode(elRoomCode.value) !== targetRoom) return;
     if (metaRes.ok) {
       const metaJson = await metaRes.json().catch(() => ({}));
       const mf = metaJson?.fields || {};
       const clearedAt = Number(mf.cleared_at_ms?.integerValue || 0);
       const lastId = mf.last_msg_id?.stringValue || '';
-      const sig = `${room}|${lastId}|${clearedAt}`;
+      const sig = `${targetRoom}|${lastId}|${clearedAt}`;
       if (clearedAt > lastClearedAtMs) {
         lastClearedAtMs = clearedAt;
         for (const [k, v] of roomMsgMap.entries()) {
@@ -301,9 +478,14 @@ async function fetchCloudRoomMessages(forceFull = false) {
         }
         renderRoomChat();
       }
-      if (!forceFull && sig === lastRoomMetaSig) return;
+      renderPeersStatus(extractActivePeersFromFields(mf, nowMs), targetRoom);
+      if (!forceFull && roomBootstrapped && sig === lastRoomMetaSig) return;
       lastRoomMetaSig = sig;
-      const listRes = await fetch(`${FIRESTORE_ROOMS_BASE}/${encodeURIComponent(room)}/messages?pageSize=60`);
+      const listRes = await fetch(
+        `${FIRESTORE_ROOMS_BASE}/${encodeURIComponent(targetRoom)}/messages?pageSize=100&t=${Date.now()}`,
+        { cache: 'no-store' }
+      );
+      if (normalizeRoomCode(elRoomCode.value) !== targetRoom) return;
       if (listRes.ok) {
         const lj = await listRes.json().catch(() => ({}));
         const docs = Array.isArray(lj.documents) ? lj.documents : [];
@@ -320,7 +502,7 @@ async function fetchCloudRoomMessages(forceFull = false) {
           try { if (f.replyToJson?.stringValue) replyTo = JSON.parse(f.replyToJson.stringValue); } catch (_) {}
           roomMsgMap.set(id, {
             id,
-            room,
+            room: targetRoom,
             type: f.type?.stringValue || 'text',
             text: f.text?.stringValue || '',
             payload,
@@ -332,37 +514,39 @@ async function fetchCloudRoomMessages(forceFull = false) {
           });
           changed = true;
         });
+        roomBootstrapped = true;
         if (changed) renderRoomChat();
-        updateStatus(true, socket && socket.connected ? 'সার্ভার + ক্লাউড' : 'ক্লাউড রুম সক্রিয়');
         return;
       }
     }
   } catch (_) {}
-  try {
-    const er = await fetch(`${EDGE_ROOM_API}?room=${encodeURIComponent(room)}&t=${Date.now()}`);
-    if (er.ok) {
-      const ej = await er.json();
-      if (ej && Array.isArray(ej.messages)) {
-        ej.messages.forEach(handleIncomingRoomMessage);
-        updateStatus(true, 'এজ রুম সক্রিয়');
-      }
-    }
-  } catch (_) {}
+
+  if (elRoomPeersStatus) {
+    elRoomPeersStatus.style.background = '#fef2f2';
+    elRoomPeersStatus.style.borderColor = '#fecaca';
+    elRoomPeersStatus.style.color = '#991b1b';
+    elRoomPeersStatus.textContent = '⚠️ ক্লাউড রুমে সংযোগ করা যাচ্ছে না — ইন্টারনেট সংযোগ দেখুন।';
+  }
+  updateStatus(false, 'সংযোগ বিচ্ছিন্ন');
 }
 
 async function sendRoomMessage({ type = 'text', text = '', payload = null } = {}) {
   const room = normalizeRoomCode(elRoomCode.value);
   const ts = Date.now();
   const id = `m_${String(ts).padStart(14, '0')}_${Math.random().toString(36).slice(2, 7)}`;
+  const deviceName = getDeviceName();
   const msg = {
     id,
     room,
     type,
     text: String(text || '').trim(),
     payload,
-    senderName: getDeviceName(),
+    senderName: deviceName,
     senderClient: 'companion',
     senderId: MY_CLIENT_ID,
+    peerId: MY_CLIENT_ID,
+    peerName: deviceName,
+    peerClient: 'companion',
     replyTo: pendingReplyMsg,
     ts,
     createdAt: new Date(ts).toISOString()
@@ -374,54 +558,106 @@ async function sendRoomMessage({ type = 'text', text = '', payload = null } = {}
   if (socket && socket.connected) {
     socket.emit('room-message', msg);
   }
+
+  let delivered = false;
   try {
-    const fields = {
-      id: { stringValue: msg.id },
-      room: { stringValue: msg.room },
-      type: { stringValue: msg.type },
-      text: { stringValue: msg.text || '' },
-      payloadJson: { stringValue: msg.payload ? JSON.stringify(msg.payload) : '' },
-      senderName: { stringValue: msg.senderName },
-      senderClient: { stringValue: msg.senderClient },
-      senderId: { stringValue: msg.senderId },
-      replyToJson: { stringValue: msg.replyTo ? JSON.stringify(msg.replyTo) : '' },
-      ts: { integerValue: String(msg.ts) },
-      createdAt: { stringValue: msg.createdAt }
-    };
-    const r1 = await fetch(`${FIRESTORE_ROOMS_BASE}/${encodeURIComponent(msg.room)}/messages/${encodeURIComponent(msg.id)}`, {
-      method: 'PATCH',
+    const er = await fetch(EDGE_ROOM_API, {
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fields })
+      body: JSON.stringify(msg),
+      cache: 'no-store'
     });
-    const preview = (msg.text || (msg.payload?.name_bn || msg.payload?.doc_number || 'ডেটা')).slice(0, 120);
-    const metaFields = {
-      room: { stringValue: msg.room },
-      last_msg_id: { stringValue: msg.id },
-      last_sender: { stringValue: msg.senderName },
-      last_preview: { stringValue: preview },
-      updated_at: { timestampValue: new Date().toISOString() }
-    };
-    const mask = Object.keys(metaFields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
-    await fetch(`${FIRESTORE_ROOMS_BASE}/${encodeURIComponent(msg.room)}?${mask}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fields: metaFields })
-    });
-    if (r1.ok) return true;
+    if (er.ok) {
+      const ej = await er.json().catch(() => ({}));
+      if (ej && ej.success) {
+        delivered = true;
+        lastRoomMetaSig = `${room}|${msg.id}|${lastClearedAtMs}`;
+        roomBootstrapped = true;
+        if (Array.isArray(ej.peers)) renderPeersStatus(ej.peers, room);
+      }
+    }
   } catch (_) {}
 
-  await fetch(EDGE_ROOM_API, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(msg)
-  }).catch(() => {});
-  return true;
+  if (!delivered) {
+    try {
+      const fields = {
+        id: { stringValue: msg.id },
+        room: { stringValue: msg.room },
+        type: { stringValue: msg.type },
+        text: { stringValue: msg.text || '' },
+        payloadJson: { stringValue: msg.payload ? JSON.stringify(msg.payload) : '' },
+        senderName: { stringValue: msg.senderName },
+        senderClient: { stringValue: msg.senderClient },
+        senderId: { stringValue: msg.senderId },
+        replyToJson: { stringValue: msg.replyTo ? JSON.stringify(msg.replyTo) : '' },
+        ts: { integerValue: String(msg.ts) },
+        createdAt: { stringValue: msg.createdAt }
+      };
+      const r1 = await fetch(`${FIRESTORE_ROOMS_BASE}/${encodeURIComponent(msg.room)}/messages/${encodeURIComponent(msg.id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields }),
+        cache: 'no-store'
+      });
+      if (r1.ok) {
+        delivered = true;
+        const preview = (msg.text || (msg.payload?.name_bn || msg.payload?.doc_number || 'ডেটা')).slice(0, 120);
+        const metaFields = {
+          room: { stringValue: msg.room },
+          last_msg_id: { stringValue: msg.id },
+          last_sender: { stringValue: msg.senderName },
+          last_preview: { stringValue: preview },
+          updated_at: { timestampValue: new Date().toISOString() },
+          peers: {
+            mapValue: {
+              fields: {
+                [MY_CLIENT_ID]: {
+                  mapValue: {
+                    fields: {
+                      name: { stringValue: deviceName.slice(0, 50) },
+                      client: { stringValue: 'companion' },
+                      seenAt: { integerValue: String(ts) }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        };
+        const mask = ['room', 'last_msg_id', 'last_sender', 'last_preview', 'updated_at', `peers.${MY_CLIENT_ID}`]
+          .map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
+        await fetch(`${FIRESTORE_ROOMS_BASE}/${encodeURIComponent(msg.room)}?${mask}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fields: metaFields }),
+          cache: 'no-store'
+        }).catch(() => {});
+        lastRoomMetaSig = `${room}|${msg.id}|${lastClearedAtMs}`;
+        roomBootstrapped = true;
+      }
+    } catch (_) {}
+  }
+
+  if (!delivered) {
+    alert('❌ মেসেজটি ক্লাউড রুমে পাঠানো যায়নি! আপনার ইন্টারনেট বা রুম কোড পরীক্ষা করে আবার চেষ্টা করুন।');
+  }
+  return delivered;
 }
 
-// Initialize Socket.io connection when running under local Express relay (graceful no-op on HTTPS static CDNs)
+// Initialize Socket.io connection ONLY when running under local Express relay (no 404 on static CDNs)
 function initSocket() {
-  if (typeof io === 'undefined') {
+  const host = window.location.hostname;
+  const isLocalRelay = host === 'localhost' || host === '127.0.0.1' || /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host);
+  if (!isLocalRelay) {
     updateStatus(true, 'ক্লাউড রুম সক্রিয়');
+    return;
+  }
+  if (typeof io === 'undefined') {
+    const s = document.createElement('script');
+    s.src = '/socket.io/socket.io.js';
+    s.onload = () => initSocket();
+    s.onerror = () => updateStatus(true, 'ক্লাউড রুম সক্রিয়');
+    document.head.appendChild(s);
     return;
   }
   try {
@@ -478,7 +714,7 @@ function updateStatus(connected, labelText) {
   }
 }
 
-function joinCurrentRoom() {
+function joinCurrentRoom(showToast = false) {
   const room = normalizeRoomCode(elRoomCode.value);
   elRoomCode.value = room;
   localStorage.setItem('fc_room_code', room);
@@ -486,16 +722,50 @@ function joinCurrentRoom() {
   roomMsgMap.clear();
   lastRoomMetaSig = '';
   lastClearedAtMs = 0;
+  roomBootstrapped = false;
   renderRoomChat();
+  if (elRoomPeersStatus) {
+    elRoomPeersStatus.style.background = '#eff6ff';
+    elRoomPeersStatus.style.borderColor = '#bfdbfe';
+    elRoomPeersStatus.style.color = '#1e40af';
+    elRoomPeersStatus.textContent = `⏳ রুম ${room}-এ যুক্ত হচ্ছে...`;
+  }
   if (socket && socket.connected) {
     socket.emit('join-room', { room, clientName: getDeviceName(), clientType: 'companion' });
   }
   fetchCloudRoomMessages(true);
+  if (showToast && btnConnect) {
+    btnConnect.textContent = `✅ সংযুক্ত (${room})`;
+    setTimeout(() => { btnConnect.textContent = '🔗 রুম কানেক্ট করুন'; }, 1800);
+  }
 }
 
 btnConnect.addEventListener('click', () => {
-  joinCurrentRoom();
+  joinCurrentRoom(true);
 });
+
+if (elRoomCode) {
+  elRoomCode.addEventListener('input', () => {
+    clearTimeout(roomJoinDebounce);
+    roomJoinDebounce = setTimeout(() => {
+      const next = normalizeRoomCode(elRoomCode.value);
+      if (next !== localStorage.getItem('fc_room_code')) {
+        joinCurrentRoom(false);
+      }
+    }, 550);
+  });
+  elRoomCode.addEventListener('change', () => {
+    clearTimeout(roomJoinDebounce);
+    joinCurrentRoom(false);
+  });
+}
+
+if (elBtnJumpChat) {
+  elBtnJumpChat.addEventListener('click', () => {
+    const card = document.getElementById('roomChatCard');
+    if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+}
 
 if (elBtnCopyRoomLink) {
   elBtnCopyRoomLink.addEventListener('click', async () => {
@@ -528,11 +798,28 @@ if (elBtnChatClear) {
   elBtnChatClear.addEventListener('click', async () => {
     const room = normalizeRoomCode(elRoomCode.value);
     if (!confirm(`রুম "${room}"-এর সব মেসেজ মুছে ফেলবেন?`)) return;
-    lastClearedAtMs = Date.now();
+    const clearedAt = Date.now();
+    lastClearedAtMs = clearedAt;
     roomMsgMap.clear();
     renderRoomChat();
     if (socket && socket.connected) socket.emit('clear-room-messages', { room });
-    await fetch(`${EDGE_ROOM_API}?room=${encodeURIComponent(room)}`, { method: 'DELETE' }).catch(() => {});
+    const delRes = await fetch(`${EDGE_ROOM_API}?room=${encodeURIComponent(room)}`, { method: 'DELETE', cache: 'no-store' }).catch(() => null);
+    if (!delRes || !delRes.ok) {
+      const metaFields = {
+        room: { stringValue: room },
+        last_msg_id: { stringValue: '' },
+        cleared_at_ms: { integerValue: String(clearedAt) },
+        updated_at: { timestampValue: new Date().toISOString() }
+      };
+      const mask = Object.keys(metaFields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
+      await fetch(`${FIRESTORE_ROOMS_BASE}/${encodeURIComponent(room)}?${mask}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields: metaFields }),
+        cache: 'no-store'
+      }).catch(() => {});
+    }
+    lastRoomMetaSig = `${room}||${clearedAt}`;
   });
 }
 if (elBtnChatCancelReply) {
@@ -898,4 +1185,7 @@ btnDismissResult.addEventListener('click', () => {
 initSocket();
 fetchCloudRoomMessages(true);
 roomPollTimer = setInterval(() => fetchCloudRoomMessages(false), 3000);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) fetchCloudRoomMessages(false);
+});
 startCamera();

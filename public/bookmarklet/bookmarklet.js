@@ -589,7 +589,7 @@ Return ONLY a single valid JSON object with those keys.
   summaryBtn.innerHTML = '<span>📊 সারসংক্ষেপ (0%)</span>';
   const chatBtn = document.createElement('div');
   chatBtn.id = 'fc-bm-chat-btn';
-  chatBtn.innerHTML = '<span>💬 মেসেজ</span><span id="fc-bm-chat-badge" style="display:none;">0</span>';
+  chatBtn.innerHTML = '<span>💬 মেসেজ</span><span id="fc-bm-chat-peers-dot" style="display:none; background:#22c55e; color:#052e16; border-radius:9px; padding:1px 5px; font-size:9.5px; font-weight:800;"></span><span id="fc-bm-chat-badge" style="display:none;">0</span>';
   const fab = document.createElement('div');
   fab.id = 'fc-bm-fab';
   fab.innerHTML = '<span>📸 NID / সদস্য স্ক্যান</span>';
@@ -607,7 +607,8 @@ Return ONLY a single valid JSON object with those keys.
   modal.innerHTML = `
     <div class="fc-bm-card">
       <div class="fc-bm-hdr">
-        <h3>🪪 NID ও জন্ম নিবন্ধন AI সহকারী (v1.8)</h3>
+        <h3>🪪 NID ও জন্ম নিবন্ধন AI সহকারী (v1.8.1)</h3>
+        <button type="button" id="fc-bm-hdr-chat" style="background:rgba(255,255,255,0.22); border:1px solid rgba(255,255,255,0.45); color:#fff; border-radius:6px; padding:3px 8px; font-size:11px; font-weight:700; cursor:pointer; margin-left:auto; margin-right:8px;">💬 রুম মেসেজ</button>
         <span id="fc-bm-close">&times;</span>
       </div>
       <div class="fc-bm-body">
@@ -4838,8 +4839,13 @@ Return ONLY a single valid JSON object with those keys.
     const clean = String(r || 'FC-101').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 32);
     return clean || 'FC-101';
   }
-  const myClientId = localStorage.getItem('fc_client_id') || (() => {
-    const id = 'bm_' + Math.random().toString(36).slice(2, 10);
+  const myClientId = (() => {
+    const saved = String(localStorage.getItem('fc_client_id') || '').replace(/[^a-zA-Z0-9_]/g, '').slice(0, 24);
+    if (saved && saved.startsWith('bm_')) {
+      if (saved !== localStorage.getItem('fc_client_id')) localStorage.setItem('fc_client_id', saved);
+      return saved;
+    }
+    const id = 'bm_' + Math.random().toString(36).replace(/[^a-z0-9]/g, '').slice(0, 8).padEnd(6, '0');
     localStorage.setItem('fc_client_id', id);
     return id;
   })();
@@ -4852,6 +4858,57 @@ Return ONLY a single valid JSON object with those keys.
   let roomUnreadCount = 0;
   let pendingReplyMsg = null;
   let roomBootstrapped = false;
+  let roomSwitchTimer = null;
+
+  function extractActivePeersFromFields(mf = {}, nowMs = Date.now()) {
+    const peerFields = mf?.peers?.mapValue?.fields;
+    if (!peerFields || typeof peerFields !== 'object') return [];
+    const out = [];
+    for (const [id, val] of Object.entries(peerFields)) {
+      const pf = val?.mapValue?.fields;
+      if (!pf) continue;
+      const seenAt = Number(pf.seenAt?.integerValue || pf.seenAt?.doubleValue || 0);
+      if (nowMs - seenAt <= 45000) {
+        out.push({
+          id,
+          name: pf.name?.stringValue || 'ডিভাইস',
+          client: pf.client?.stringValue || '',
+          seenAt
+        });
+      }
+    }
+    return out.sort((a, b) => b.seenAt - a.seenAt);
+  }
+
+  function renderPeersStatus(peers = [], targetRoom = roomCode) {
+    const list = Array.isArray(peers) ? peers : [];
+    const hasSelf = list.some(p => p.id === myClientId);
+    const totalCount = hasSelf ? list.length : (list.length + 1);
+    const others = list.filter(p => p.id !== myClientId);
+    const dotEl = document.getElementById('fc-bm-chat-peers-dot');
+    const stEl = document.getElementById('fc-bm-chat-status');
+
+    if (others.length > 0) {
+      const summary = others.slice(0, 3).map((p) => {
+        const tag = p.client === 'companion' ? 'মোবাইল' : (p.client === 'extension' ? 'এক্সটেনশন' : (p.client || 'ওয়েব'));
+        return `${p.name || 'ডিভাইস'} (${tag})`;
+      }).join(', ');
+      if (dotEl) {
+        dotEl.textContent = `● ${toBnDigits(totalCount)}`;
+        dotEl.style.display = 'inline-block';
+      }
+      if (stEl) {
+        stEl.style.color = '#065f46';
+        stEl.textContent = `🟢 রুম "${targetRoom}": ${toBnDigits(totalCount)}টি ডিভাইস যুক্ত — ${summary}${others.length > 3 ? ` +${others.length - 3}` : ''}`;
+      }
+    } else {
+      if (dotEl) dotEl.style.display = 'none';
+      if (stEl) {
+        stEl.style.color = '#92400e';
+        stEl.textContent = `🟡 রুম "${targetRoom}": আপনি যুক্ত — অন্য ফোনে familycard.afridi.app খুলুন`;
+      }
+    }
+  }
 
   function updateChatBadge() {
     const badge = document.getElementById('fc-bm-chat-badge');
@@ -4933,7 +4990,7 @@ Return ONLY a single valid JSON object with those keys.
     const inpName = cm.querySelector('#fc-bm-device-name');
     const chkAuto = cm.querySelector('#fc-bm-room-autofill');
 
-    cm.querySelector('#fc-bm-room-join-btn').onclick = () => {
+    const applyRoomJoin = (notify = false) => {
       const nextRoom = normalizeRoomCode(inpRoom.value);
       inpRoom.value = nextRoom;
       myDeviceName = inpName.value.trim() || 'ট্যাব-বুকমার্কলেট';
@@ -4947,10 +5004,35 @@ Return ONLY a single valid JSON object with those keys.
         roomBootstrapped = false;
         renderChatFeed();
       }
-      cm.querySelector('#fc-bm-chat-status').textContent = `☁️ রুম "${roomCode}" সক্রিয়`;
+      const stEl = cm.querySelector('#fc-bm-chat-status');
+      if (stEl) {
+        stEl.style.color = '#1e40af';
+        stEl.textContent = `⏳ রুম "${roomCode}"-এ যুক্ত হচ্ছে...`;
+      }
       fetchRoomMessages(true);
-      showToast(`🔗 রুম "${roomCode}"-এ যুক্ত হয়েছেন!`);
+      if (notify) showToast(`🔗 রুম "${roomCode}"-এ যুক্ত হয়েছেন!`);
     };
+
+    cm.querySelector('#fc-bm-room-join-btn').onclick = () => {
+      clearTimeout(roomSwitchTimer);
+      applyRoomJoin(true);
+    };
+    inpRoom.addEventListener('input', () => {
+      clearTimeout(roomSwitchTimer);
+      roomSwitchTimer = setTimeout(() => {
+        const nextRoom = normalizeRoomCode(inpRoom.value);
+        if (nextRoom !== roomCode) applyRoomJoin(false);
+      }, 550);
+    });
+    inpRoom.addEventListener('change', () => {
+      clearTimeout(roomSwitchTimer);
+      applyRoomJoin(true);
+    });
+    inpName.addEventListener('change', () => {
+      myDeviceName = inpName.value.trim() || 'ট্যাব-বুকমার্কলেট';
+      localStorage.setItem('fc_device_name', myDeviceName);
+      fetchRoomMessages(false);
+    });
 
     cm.querySelector('#fc-bm-room-link-btn').onclick = async () => {
       const r = normalizeRoomCode(inpRoom.value);
@@ -4973,10 +5055,27 @@ Return ONLY a single valid JSON object with those keys.
     cm.querySelector('#fc-bm-chat-refresh').onclick = () => fetchRoomMessages(true);
     cm.querySelector('#fc-bm-chat-clear').onclick = async () => {
       if (!confirm(`রুম "${roomCode}"-এর সব মেসেজ মুছবেন?`)) return;
-      lastRoomClearedMs = Date.now();
+      const clearedAt = Date.now();
+      lastRoomClearedMs = clearedAt;
       roomMsgMap.clear();
       renderChatFeed();
-      await fetch(`${ROOM_EDGE_API}?room=${encodeURIComponent(roomCode)}`, { method: 'DELETE' }).catch(() => {});
+      const delRes = await fetch(`${ROOM_EDGE_API}?room=${encodeURIComponent(roomCode)}`, { method: 'DELETE', cache: 'no-store' }).catch(() => null);
+      if (!delRes || !delRes.ok) {
+        const metaFields = {
+          room: { stringValue: roomCode },
+          last_msg_id: { stringValue: '' },
+          cleared_at_ms: { integerValue: String(clearedAt) },
+          updated_at: { timestampValue: new Date().toISOString() }
+        };
+        const mask = Object.keys(metaFields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
+        await fetch(`${ROOM_FIRESTORE_BASE}/${encodeURIComponent(roomCode)}?${mask}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fields: metaFields }),
+          cache: 'no-store'
+        }).catch(() => {});
+      }
+      lastRoomMetaSig = `${roomCode}||${clearedAt}`;
       showToast(`🗑️ রুম "${roomCode}" চ্যাট ক্লিয়ার হয়েছে`);
     };
 
@@ -5185,15 +5284,92 @@ Return ONLY a single valid JSON object with those keys.
   }
 
   async function fetchRoomMessages(forceFull = false) {
-    if (document.hidden) return;
+    if (document.hidden && !forceFull) return;
+    const targetRoom = roomCode;
+    const useMetaOnly = roomBootstrapped && !forceFull;
+
+    // 1. Primary: Cloudflare Edge API (zero 404s + atomic peer presence + no-store cache busting)
     try {
-      const metaRes = await fetch(`${ROOM_FIRESTORE_BASE}/${encodeURIComponent(roomCode)}?t=${Date.now()}`);
+      const edgeUrl = `${ROOM_EDGE_API}?room=${encodeURIComponent(targetRoom)}&metaOnly=${useMetaOnly ? '1' : '0'}&peerId=${encodeURIComponent(myClientId)}&peerName=${encodeURIComponent(myDeviceName)}&peerClient=bookmarklet&t=${Date.now()}`;
+      const er = await fetch(edgeUrl, { cache: 'no-store' });
+      if (targetRoom !== roomCode) return;
+      if (er.ok) {
+        const ej = await er.json().catch(() => ({}));
+        if (ej && ej.success) {
+          const clearedAt = Number(ej.meta?.cleared_at_ms || 0);
+          const lastId = String(ej.meta?.last_msg_id || '');
+          const sig = `${targetRoom}|${lastId}|${clearedAt}`;
+          if (clearedAt > lastRoomClearedMs) {
+            lastRoomClearedMs = clearedAt;
+            for (const [k, v] of roomMsgMap.entries()) {
+              if (v.ts <= lastRoomClearedMs) roomMsgMap.delete(k);
+            }
+            renderChatFeed();
+          }
+          renderPeersStatus(ej.peers || [], targetRoom);
+
+          if (useMetaOnly && sig === lastRoomMetaSig) return;
+
+          let listPayload = ej;
+          if (useMetaOnly) {
+            const fullRes = await fetch(`${ROOM_EDGE_API}?room=${encodeURIComponent(targetRoom)}&metaOnly=0&t=${Date.now()}`, { cache: 'no-store' });
+            if (targetRoom !== roomCode) return;
+            listPayload = fullRes.ok ? await fullRes.json().catch(() => ({})) : {};
+            if (Array.isArray(listPayload.peers)) renderPeersStatus(listPayload.peers, targetRoom);
+          }
+
+          if (Array.isArray(listPayload.messages)) {
+            const wasBootstrapped = roomBootstrapped;
+            let anyNew = false;
+            listPayload.messages.forEach(m => {
+              if (processIncomingRoomMsg(m, !wasBootstrapped)) anyNew = true;
+            });
+            roomBootstrapped = true;
+            lastRoomMetaSig = sig;
+            if (anyNew || !wasBootstrapped) renderChatFeed();
+            return;
+          }
+        }
+      }
+    } catch (_) {}
+
+    // 2. Fallback: Direct Firestore REST (atomic peer PATCH + cache-busted messages GET)
+    try {
+      const nowMs = Date.now();
+      const peerFields = {
+        room: { stringValue: targetRoom },
+        peers: {
+          mapValue: {
+            fields: {
+              [myClientId]: {
+                mapValue: {
+                  fields: {
+                    name: { stringValue: String(myDeviceName || 'ট্যাব-বুকমার্কলেট').slice(0, 50) },
+                    client: { stringValue: 'bookmarklet' },
+                    seenAt: { integerValue: String(nowMs) }
+                  }
+                }
+              }
+            }
+          }
+        }
+      };
+      const metaRes = await fetch(
+        `${ROOM_FIRESTORE_BASE}/${encodeURIComponent(targetRoom)}?updateMask.fieldPaths=room&updateMask.fieldPaths=peers.${encodeURIComponent(myClientId)}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fields: peerFields }),
+          cache: 'no-store'
+        }
+      );
+      if (targetRoom !== roomCode) return;
       if (metaRes.ok) {
         const mj = await metaRes.json().catch(() => ({}));
         const mf = mj?.fields || {};
         const clearedAt = Number(mf.cleared_at_ms?.integerValue || 0);
         const lastId = mf.last_msg_id?.stringValue || '';
-        const sig = `${roomCode}|${lastId}|${clearedAt}`;
+        const sig = `${targetRoom}|${lastId}|${clearedAt}`;
         if (clearedAt > lastRoomClearedMs) {
           lastRoomClearedMs = clearedAt;
           for (const [k, v] of roomMsgMap.entries()) {
@@ -5201,12 +5377,15 @@ Return ONLY a single valid JSON object with those keys.
           }
           renderChatFeed();
         }
+        renderPeersStatus(extractActivePeersFromFields(mf, nowMs), targetRoom);
         if (!forceFull && sig === lastRoomMetaSig && roomBootstrapped) return;
         lastRoomMetaSig = sig;
-        const listRes = await fetch(`${ROOM_FIRESTORE_BASE}/${encodeURIComponent(roomCode)}/messages?pageSize=60`);
+        const listRes = await fetch(`${ROOM_FIRESTORE_BASE}/${encodeURIComponent(targetRoom)}/messages?pageSize=100&t=${Date.now()}`, { cache: 'no-store' });
+        if (targetRoom !== roomCode) return;
         if (listRes.ok) {
           const lj = await listRes.json().catch(() => ({}));
           const docs = Array.isArray(lj.documents) ? lj.documents : [];
+          const wasBootstrapped = roomBootstrapped;
           let anyNew = false;
           docs.forEach((d) => {
             const f = d.fields || {};
@@ -5217,7 +5396,7 @@ Return ONLY a single valid JSON object with those keys.
             try { if (f.replyToJson?.stringValue) replyTo = JSON.parse(f.replyToJson.stringValue); } catch (_) {}
             const added = processIncomingRoomMsg({
               id,
-              room: roomCode,
+              room: targetRoom,
               type: f.type?.stringValue || 'text',
               text: f.text?.stringValue || '',
               payload,
@@ -5226,41 +5405,39 @@ Return ONLY a single valid JSON object with those keys.
               senderClient: f.senderClient?.stringValue || '',
               senderId: f.senderId?.stringValue || '',
               ts: Number(f.ts?.integerValue || f.ts?.doubleValue || 0)
-            }, !roomBootstrapped);
+            }, !wasBootstrapped);
             if (added) anyNew = true;
           });
           roomBootstrapped = true;
-          if (anyNew) renderChatFeed();
+          if (anyNew || !wasBootstrapped) renderChatFeed();
           return;
         }
       }
     } catch (_) {}
-    try {
-      const er = await fetch(`${ROOM_EDGE_API}?room=${encodeURIComponent(roomCode)}&t=${Date.now()}`);
-      if (er.ok) {
-        const ej = await er.json();
-        if (ej && Array.isArray(ej.messages)) {
-          let anyNew = false;
-          ej.messages.forEach(m => { if (processIncomingRoomMsg(m, !roomBootstrapped)) anyNew = true; });
-          roomBootstrapped = true;
-          if (anyNew) renderChatFeed();
-        }
-      }
-    } catch (_) {}
+
+    const stEl = document.getElementById('fc-bm-chat-status');
+    if (stEl) {
+      stEl.style.color = '#991b1b';
+      stEl.textContent = '⚠️ ক্লাউড রুমে সংযোগ করা যাচ্ছে না — ইন্টারনেট দেখুন।';
+    }
   }
 
   async function sendRoomMessage({ type = 'text', text = '', payload = null } = {}) {
+    const targetRoom = roomCode;
     const ts = Date.now();
     const id = `m_${String(ts).padStart(14, '0')}_${Math.random().toString(36).slice(2, 7)}`;
     const msg = {
       id,
-      room: roomCode,
+      room: targetRoom,
       type,
       text: String(text || '').trim(),
       payload,
       senderName: myDeviceName,
       senderClient: 'bookmarklet',
       senderId: myClientId,
+      peerId: myClientId,
+      peerName: myDeviceName,
+      peerClient: 'bookmarklet',
       replyTo: pendingReplyMsg,
       ts,
       createdAt: new Date(ts).toISOString()
@@ -5271,60 +5448,113 @@ Return ONLY a single valid JSON object with those keys.
     roomMsgMap.set(msg.id, msg);
     renderChatFeed();
 
+    let delivered = false;
     try {
-      const fields = {
-        id: { stringValue: msg.id },
-        room: { stringValue: msg.room },
-        type: { stringValue: msg.type },
-        text: { stringValue: msg.text || '' },
-        payloadJson: { stringValue: msg.payload ? JSON.stringify(msg.payload) : '' },
-        senderName: { stringValue: msg.senderName },
-        senderClient: { stringValue: msg.senderClient },
-        senderId: { stringValue: msg.senderId },
-        replyToJson: { stringValue: msg.replyTo ? JSON.stringify(msg.replyTo) : '' },
-        ts: { integerValue: String(msg.ts) },
-        createdAt: { stringValue: msg.createdAt }
-      };
-      const wRes = await fetch(`${ROOM_FIRESTORE_BASE}/${encodeURIComponent(msg.room)}/messages/${encodeURIComponent(msg.id)}`, {
-        method: 'PATCH',
+      const er = await fetch(ROOM_EDGE_API, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fields })
+        body: JSON.stringify(msg),
+        cache: 'no-store'
       });
-      const preview = (msg.text || msg.payload?.name_bn || msg.payload?.doc_number || 'ডেটা').slice(0, 120);
-      const metaFields = {
-        room: { stringValue: msg.room },
-        last_msg_id: { stringValue: msg.id },
-        last_sender: { stringValue: msg.senderName },
-        last_preview: { stringValue: preview },
-        updated_at: { timestampValue: new Date().toISOString() }
-      };
-      const mask = Object.keys(metaFields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
-      await fetch(`${ROOM_FIRESTORE_BASE}/${encodeURIComponent(msg.room)}?${mask}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fields: metaFields })
-      });
-      if (wRes.ok) return true;
+      if (er.ok) {
+        const ej = await er.json().catch(() => ({}));
+        if (ej && ej.success) {
+          delivered = true;
+          lastRoomMetaSig = `${targetRoom}|${msg.id}|${lastRoomClearedMs}`;
+          roomBootstrapped = true;
+          if (Array.isArray(ej.peers)) renderPeersStatus(ej.peers, targetRoom);
+        }
+      }
     } catch (_) {}
 
-    await fetch(ROOM_EDGE_API, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(msg)
-    }).catch(() => {});
-    return true;
+    if (!delivered) {
+      try {
+        const fields = {
+          id: { stringValue: msg.id },
+          room: { stringValue: msg.room },
+          type: { stringValue: msg.type },
+          text: { stringValue: msg.text || '' },
+          payloadJson: { stringValue: msg.payload ? JSON.stringify(msg.payload) : '' },
+          senderName: { stringValue: msg.senderName },
+          senderClient: { stringValue: msg.senderClient },
+          senderId: { stringValue: msg.senderId },
+          replyToJson: { stringValue: msg.replyTo ? JSON.stringify(msg.replyTo) : '' },
+          ts: { integerValue: String(msg.ts) },
+          createdAt: { stringValue: msg.createdAt }
+        };
+        const wRes = await fetch(`${ROOM_FIRESTORE_BASE}/${encodeURIComponent(msg.room)}/messages/${encodeURIComponent(msg.id)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fields }),
+          cache: 'no-store'
+        });
+        if (wRes.ok) {
+          delivered = true;
+          const preview = (msg.text || msg.payload?.name_bn || msg.payload?.doc_number || 'ডেটা').slice(0, 120);
+          const metaFields = {
+            room: { stringValue: msg.room },
+            last_msg_id: { stringValue: msg.id },
+            last_sender: { stringValue: msg.senderName },
+            last_preview: { stringValue: preview },
+            updated_at: { timestampValue: new Date().toISOString() },
+            peers: {
+              mapValue: {
+                fields: {
+                  [myClientId]: {
+                    mapValue: {
+                      fields: {
+                        name: { stringValue: String(myDeviceName || 'ট্যাব-বুকমার্কলেট').slice(0, 50) },
+                        client: { stringValue: 'bookmarklet' },
+                        seenAt: { integerValue: String(ts) }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          };
+          const mask = ['room', 'last_msg_id', 'last_sender', 'last_preview', 'updated_at', `peers.${myClientId}`]
+            .map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
+          await fetch(`${ROOM_FIRESTORE_BASE}/${encodeURIComponent(msg.room)}?${mask}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fields: metaFields }),
+            cache: 'no-store'
+          }).catch(() => {});
+          lastRoomMetaSig = `${targetRoom}|${msg.id}|${lastRoomClearedMs}`;
+          roomBootstrapped = true;
+        }
+      } catch (_) {}
+    }
+
+    if (!delivered) {
+      showToast('❌ মেসেজ পাঠানো যায়নি! ইন্টারনেট বা রুম কোড পরীক্ষা করুন।');
+    }
+    return delivered;
   }
 
   function openChatModal() {
     const cm = ensureChatModal();
     roomUnreadCount = 0;
     updateChatBadge();
+    const inpRoom = cm.querySelector('#fc-bm-room-input');
+    if (inpRoom && inpRoom.value !== roomCode) inpRoom.value = roomCode;
     cm.style.display = 'flex';
     fetchRoomMessages(true);
     renderChatFeed();
   }
 
   chatBtn.addEventListener('click', openChatModal);
+  const hdrChatBtn = document.getElementById('fc-bm-hdr-chat');
+  if (hdrChatBtn) {
+    hdrChatBtn.addEventListener('click', () => {
+      modal.style.display = 'none';
+      openChatModal();
+    });
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) fetchRoomMessages(false);
+  });
   window.__fcOpenChatModal = openChatModal;
   window.__fcSendRoomMessage = sendRoomMessage;
   setTimeout(() => fetchRoomMessages(true), 900);
@@ -5398,5 +5628,5 @@ Return ONLY a single valid JSON object with those keys.
     setTimeout(() => { t.remove(); }, 4000);
   }
 
-  showToast('🚀 Family Card সহকারী (v1.8) প্রস্তুত! স্ক্যান, রুম মেসেজ বা সারসংক্ষেপ চাপুন।');
+  showToast('🚀 Family Card সহকারী (v1.8.1) প্রস্তুত! স্ক্যান, রুম মেসেজ বা সারসংক্ষেপ চাপুন।');
 })();

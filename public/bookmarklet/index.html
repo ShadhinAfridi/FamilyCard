@@ -144,7 +144,7 @@
 <body>
   <div class="container">
     <div class="header">
-      <div class="badge">🚀 কোনো অ্যাপ ইনস্টল ছাড়াই ১০০% কাজ করবে (v1.8 Production)</div>
+      <div class="badge">🚀 কোনো অ্যাপ ইনস্টল ছাড়াই ১০০% কাজ করবে (v1.8.1 Auto-Update Ready)</div>
       <h1>Google Chrome NID Auto-Filler</h1>
       <p>অ্যান্ড্রয়েড ট্যাবলেটের ডিফল্ট গুগল ক্রোমের জন্য অল-ইন-ওয়ান বুকমার্কলেট</p>
       <div style="font-size: 12px; color: #0284c7; margin-top: 4px; font-weight: 600;">
@@ -155,11 +155,11 @@
     <!-- Step 1: Copy Code (Mobile 1-Line Cloud Loader + Alternatives) -->
     <div class="card" style="border: 2.5px solid #16a34a; background: #f0fdf4;">
       <div style="display: inline-block; background: #16a34a; color: #fff; font-size: 11px; font-weight: 800; padding: 3px 10px; border-radius: 20px; margin-bottom: 8px;">
-        ✅ মোবাইল ক্রোমের জন্য ১০০% কার্যকর (ফুল বান্ডেলের বদলে মাত্র ১ লাইন!)
+        ✅ মোবাইল ক্রোমের জন্য ১০০% কার্যকর (সবসময় লেটেস্ট ভার্সন লোড হয়!)
       </div>
       <h2 style="color: #166534; margin-top: 0;">📋 পদ্ধতি ১: ১-লাইনের মোবাইল ক্রোম শর্ট বুকমার্কলেট (সবচেয়ে সহজ)</h2>
       <p style="font-size: 13px; color: #334155; margin-top: 0; line-height: 1.5;">
-        মোবাইলের গুগল ক্রোম ব্রাউজার বড় জাভাস্ক্রিপ্ট কোড বুকমার্কে পেস্ট করলে কেটে ফেলে (Truncate করে)। তাই মোবাইলের জন্য তৈরি করা হয়েছে <b>মাত্র ১ লাইনের (~২২০ ক্যারেক্টার) ক্লাউড লোডার কোড</b>—যা এক ক্লিকেই আমাদের সার্ভার থেকে সম্পূর্ণ v1.8 অটোমেশন ও মেসেঞ্জার ইঞ্জিন লোড করে নেয় এবং ভবিষ্যতে অটো-আপডেট হয়!
+        মোবাইলের গুগল ক্রোম ব্রাউজার বড় জাভাস্ক্রিপ্ট কোড বুকমার্কে পেস্ট করলে কেটে ফেলে। তাই নিচের <b>১-লাইনের ক্লাউড লোডার</b> ব্যবহার করুন — এটি প্রতিবার ট্যাপে সরাসরি সার্ভার থেকে লেটেস্ট <b>v1.8.1 রুম মেসেঞ্জার ও অটোমেশন ইঞ্জিন</b> লোড করে (আগে সেভ করা পুরোনো বুকমার্ক থাকলে একবার নিচের কোডটি দিয়ে বুকমার্ক Edit করে আপডেট করে নিন)!
       </p>
 
       <button id="btnCopyShort" class="btn btn-success" style="margin-bottom: 10px; background: linear-gradient(135deg, #16a34a, #15803d); font-size: 15px;">
@@ -385,7 +385,7 @@
   </div>
 
   <script>
-    const shortLoaderCode = "javascript:!function(){if(window.__fcOpenModal)return void window.__fcOpenModal();var k='fc_app_v15',c=localStorage.getItem(k),u='https://binary-ict.web.app/bookmarklet/app.min.js',b='https://familycard.afridi.app/bookmarklet/app.min.js';if(c)try{(0,eval)(c)}catch(e){c=0}fetch(u+'?t='+Date.now()).then(function(r){if(!r.ok)throw 0;return r.text()}).catch(function(){return fetch(b+'?t='+Date.now()).then(function(r){return r.text()})}).then(function(t){if(t&&t.length>999){localStorage.setItem(k,t);if(!c)(0,eval)(t)}}).catch(function(){if(!c){var s=document.createElement('script');s.src=u;(document.head||document.documentElement).appendChild(s)}})}();";
+    const shortLoaderCode = "javascript:!function(){if(window.__fcOpenModal)return void window.__fcOpenModal();var k='fc_app_v18',u='https://binary-ict.web.app/bookmarklet/app.min.js',b='https://familycard.afridi.app/bookmarklet/app.min.js',c=localStorage.getItem(k),ac=typeof AbortController!=='undefined'?new AbortController():null,tm=ac?setTimeout(function(){ac.abort()},2600):0,op=ac?{signal:ac.signal,cache:'no-store'}:{cache:'no-store'};fetch(u+'?t='+Date.now(),op).then(function(r){if(!r.ok)throw 0;return r.text()}).catch(function(){return fetch(b+'?t='+Date.now(),{cache:'no-store'}).then(function(r){if(!r.ok)throw 0;return r.text()})}).then(function(t){clearTimeout(tm);if(t&&t.length>999){try{localStorage.setItem(k,t);localStorage.setItem('fc_app_v15',t)}catch(e){}(0,eval)(t)}}).catch(function(){clearTimeout(tm);if(c)try{(0,eval)(c)}catch(e){c=0}if(!c){var s=document.createElement('script');s.src=u+'?t='+Date.now();(document.head||document.documentElement).appendChild(s)}})}();";
 
     const offlineCacheLoaderCode = shortLoaderCode;
 

@@ -1839,7 +1839,8 @@ async function handleExtractNidRoute(req, res) {
 
     // If a room is specified, broadcast to that room
     if (room) {
-      io.to(String(room).toUpperCase().trim()).emit('nid-data-extracted', {
+      const cleanBroadcastRoom = normalizeRoomCode(room);
+      io.to(cleanBroadcastRoom).emit('nid-data-extracted', {
         success: true,
         data: extracted,
         timestamp: new Date().toISOString()
@@ -1970,6 +1971,11 @@ function normalizeRoomMessage(raw = {}, fallbackRoom = 'FC-101') {
 
 function appendRoomMessageInMemory(rawMsg, fallbackRoom = 'FC-101') {
   const msg = normalizeRoomMessage(rawMsg, fallbackRoom);
+  // Cap active rooms in memory to 200 (evict oldest room) to prevent unconstrained RAM exhaustion
+  if (!roomMessagesStore.has(msg.room) && roomMessagesStore.size >= 200) {
+    const oldestRoom = roomMessagesStore.keys().next().value;
+    if (oldestRoom) roomMessagesStore.delete(oldestRoom);
+  }
   const list = roomMessagesStore.get(msg.room) || [];
   if (!list.some((m) => m.id === msg.id)) {
     list.push(msg);

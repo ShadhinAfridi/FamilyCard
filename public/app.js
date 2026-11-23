@@ -2073,7 +2073,13 @@ async function openQuickHouseModal(existingHouse = null) {
 
 function renderGpsInModal(loc) {
   if (!loc) return;
-  modalGpsStatusText.textContent = '✅ জিপিএস অবস্থান সফলভাবে লকড';
+  if (loc.isFallback) {
+    modalGpsStatusText.textContent = '⚠️ জিপিএস আনলকড (ম্যাপে ক্লিক করে চিহ্নিত করুন)';
+    modalGpsStatusText.style.color = '#d97706';
+  } else {
+    modalGpsStatusText.textContent = '✅ জিপিএস অবস্থান সফলভাবে লকড';
+    modalGpsStatusText.style.color = '#15803d';
+  }
   modalGpsCoords.textContent = `অক্ষাংশ: ${loc.lat}, দ্রাঘিমাংশ: ${loc.lng}`;
   modalGpsAccuracyBadge.textContent = `নির্ভুলতা: ±${loc.accuracy}m`;
   modalPlusCodeBadge.textContent = `প্লাস কোড: ${loc.plusCode || encodePlusCode(loc.lat, loc.lng)}`;
@@ -2086,6 +2092,13 @@ async function saveHouseSurveyRecord(forceEligible = false) {
     alert('দয়া করে প্রধান নারীর নাম অথবা পরিবারের নাম লিখুন!');
     modalLadyName.focus();
     return;
+  }
+
+  if (!currentLiveGps || currentLiveGps.isFallback) {
+    const okFallback = confirm(
+      '⚠️ লাইভ জিপিএস সিগন্যাল পাওয়া যায়নি (ডিফল্ট কোঅর্ডিনেট সক্রিয়)!\n\nআপনি কি নিশ্চিত যে এই অবস্থানে বাড়িটি সেভ করবেন?\n\nটিপ: বাতিল করে ম্যাপে আপনার কাঙ্ক্ষিত বাড়ির ছাদে/উঠানে ট্যাপ করে সঠিক অবস্থান চিহ্নিত করতে পারেন।'
+    );
+    if (!okFallback) return;
   }
 
   const rawNid = normalizeDigits(modalLadyNid.value || '').replace(/[^0-9]/g, '');

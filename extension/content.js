@@ -782,10 +782,10 @@
 
   function getSafeFamilyDocId(data) {
     const rawId = scrapeFamilyId() || (data && data.family_id) || (lastExtractedData && lastExtractedData.family_id) || '';
-    const cleanFamily = normalizeDigits(rawId).replace(/[^0-9]/g, '');
+    const cleanFamily = normalizeDigits(rawId).replace(/[^0-9A-Za-z_-]/g, '');
     if (cleanFamily) return cleanFamily;
     const fallbackDoc = data ? (data.nid_number || data.birth_reg_no || data.doc_number || '') : '';
-    const cleanDoc = normalizeDigits(fallbackDoc).replace(/[^0-9]/g, '');
+    const cleanDoc = normalizeDigits(fallbackDoc).replace(/[^0-9A-Za-z_-]/g, '');
     return cleanDoc || null;
   }
 
@@ -4700,6 +4700,26 @@
   let smartBackupThrottleTimer = null;
   let isBackingUpSteps = false;
 
+  function safeSetLocalStorage(key, val) {
+    try {
+      localStorage.setItem(key, val);
+    } catch (e) {
+      try {
+        const backupKeys = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith('fc_step_backup_')) backupKeys.push(k);
+        }
+        if (backupKeys.length > 4) {
+          backupKeys.slice(0, Math.ceil(backupKeys.length / 2)).forEach(k => localStorage.removeItem(k));
+          localStorage.removeItem('fc_app_v18');
+          localStorage.removeItem('fc_app_v15');
+          localStorage.setItem(key, val);
+        }
+      } catch (_) {}
+    }
+  }
+
   function extractFullStepsBackupData() {
     const fid = scrapeFamilyId() || lastExtractedData?.family_id || lastExtractedData?.nid_number || '';
     const summary = typeof collectFullFamilyCardSummary === 'function' ? collectFullFamilyCardSummary() : null;
@@ -4868,15 +4888,13 @@
     isBackingUpSteps = true;
     try {
       // 1. Always save locally first (Zero data loss even on crash/refresh)
-      try {
-        localStorage.setItem(`fc_step_backup_${fid}`, JSON.stringify(backupData));
-        localStorage.setItem('fc_last_backup_meta', JSON.stringify({
-          fid,
-          ladyName: backupData.step2.nameBn || '',
-          timestamp: backupData.backupTimestamp,
-          readiness: backupData.readinessPct
-        }));
-      } catch (_) {}
+      safeSetLocalStorage(`fc_step_backup_${fid}`, JSON.stringify(backupData));
+      safeSetLocalStorage('fc_last_backup_meta', JSON.stringify({
+        fid,
+        ladyName: backupData.step2.nameBn || '',
+        timestamp: backupData.backupTimestamp,
+        readiness: backupData.readinessPct
+      }));
 
       // 2. Prepare structured Firestore root fields
       const cleanFid = normalizeDigits(fid).replace(/[^0-9A-Za-z_-]/g, '');
@@ -5116,6 +5134,36 @@
     if (typeof handleSection6Bank === 'function') {
       handleSection6Bank();
       restoredSteps++;
+    }
+
+    // Step 8: Family Members (সদস্য তালিকা পুনরুদ্ধার)
+    if (Array.isArray(backupObj.step8_members) && backupObj.step8_members.length > 0) {
+      try {
+        let memberCards = Array.from(document.querySelectorAll('.fm-members-stack .fm-member-card, [data-family-card-tab="6"] .fm-member-card'));
+        let memRestored = 0;
+        for (let i = 0; i < backupObj.step8_members.length; i++) {
+          const m = backupObj.step8_members[i];
+          let card = memberCards[i];
+          if (!card && typeof triggerPortalAddMember === 'function') {
+            triggerPortalAddMember();
+            await new Promise(r => setTimeout(r, 380));
+            memberCards = Array.from(document.querySelectorAll('.fm-members-stack .fm-member-card, [data-family-card-tab="6"] .fm-member-card'));
+            card = memberCards[memberCards.length - 1];
+          }
+          if (card && typeof fillMemberCard === 'function') {
+            await fillMemberCard(card, {
+              doc_type: m.docType || 'nid',
+              doc_number: m.docNum || '',
+              name_bn: m.nameBn || '',
+              relation: m.relation || '',
+              age: m.age || '',
+              gender: m.gender || ''
+            });
+            memRestored++;
+          }
+        }
+        if (memRestored > 0) restoredSteps++;
+      } catch (_) {}
     }
 
     // Step 9: Money allocation

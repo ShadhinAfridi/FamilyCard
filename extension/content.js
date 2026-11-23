@@ -26,6 +26,7 @@
     if (!str) return '';
     return String(str)
       .normalize('NFC')
+      .replace(/[\u200B-\u200D\uFEFF]/g, '')
       .replace(/\u09A1\u09BC/g, '\u09DC')
       .replace(/\u09A2\u09BC/g, '\u09DD')
       .replace(/\u09AF\u09BC/g, '\u09DF')
@@ -59,46 +60,96 @@
   }
 
   const BN_NAME_WORD_MAP = {
-    'মোঃ': 'MD.', 'মো:': 'MD.', 'মো.': 'MD.', 'মোহাম্মদ': 'MOHAMMAD', 'মোহাম্মাদ': 'MOHAMMAD',
+    'মোঃ': 'MD.', 'মো:': 'MD.', 'মো.': 'MD.', 'মোহাম্মদ': 'MOHAMMAD', 'মোহাম্মাদ': 'MOHAMMAD', 'মুহাম্মদ': 'MUHAMMAD',
     'মোছাঃ': 'MOSAMMAT', 'মোছা:': 'MOSAMMAT', 'মোছা.': 'MOSAMMAT', 'মোসাম্মৎ': 'MOSAMMAT', 'মোসাম্মত': 'MOSAMMAT',
     'শ্রী': 'SRI', 'শ্রীমতী': 'SRIMOTI', 'শেখ': 'SHEIKH', 'সৈয়দ': 'SYED', 'সৈয়দ': 'SYED',
     'খন্দকার': 'KHANDAKER', 'চৌধুরী': 'CHOWDHURY', 'মজুমদার': 'MAJUMDER', 'তালুকদার': 'TALUKDER',
-    'সরকার': 'SARKAR', 'মন্ডল': 'MONDAL', 'মণ্ডল': 'MONDAL', 'বিশ্বাস': 'BISWAS',
+    'সরকার': 'SARKAR', 'মন্ডল': 'MONDAL', 'মণ্ডল': 'MONDAL', 'বিশ্বাস': 'BISWAS', 'ভূঁইয়া': 'BHUIYAN', 'ভুঁইয়া': 'BHUIYAN',
     'হোসেন': 'HOSSAIN', 'হোসাইন': 'HOSSAIN', 'ইসলাম': 'ISLAM', 'আহমেদ': 'AHMED',
     'আহম্মেদ': 'AHMED', 'আহমদ': 'AHMED', 'রহমান': 'RAHMAN', 'করিম': 'KARIM',
     'রহিম': 'RAHIM', 'আলী': 'ALI', 'আলি': 'ALI', 'খাতুন': 'KHATUN', 'বেগম': 'BEGUM',
-    'আক্তার': 'AKTER', 'আখতার': 'AKTER', 'সুলতানা': 'SULTANA', 'জাহান': 'JAHAN',
+    'আক্তার': 'AKTER', 'আখতার': 'AKHTAR', 'সুলতানা': 'SULTANA', 'জাহান': 'JAHAN',
     'ইয়াসমিন': 'YASMIN', 'ইয়াসমিন': 'YASMIN', 'পারভীন': 'PARVIN', 'পারভিন': 'PARVIN',
-    'নাহার': 'NAHAR', 'রফিকুল': 'RAFIQUL', 'শফিকুল': 'SHAFIQUL', 'তরিকুল': 'TARIQUL',
-    'আব্দুল': 'ABDUL', 'আবদুল': 'ABDUL', 'আব্দুর': 'ABDUR', 'আবদুর': 'ABDUR',
-    'আব্দুল্লাহ': 'ABDULLAH', 'আবদুল্লাহ': 'ABDULLAH', 'আবু': 'ABU', 'হাসান': 'HASAN',
-    'হাবিব': 'HABIB', 'কবির': 'KABIR', 'নজরুল': 'NAZRUL', 'কামাল': 'KAMAL',
-    'জামাল': 'JAMAL', 'আলম': 'ALAM', 'মিয়া': 'MIA', 'মিয়া': 'MIA', 'মুন্সি': 'MUNSHI',
-    'মুন্সী': 'MUNSHI', 'মোস্তফা': 'MOSTAFA', 'সালাম': 'SALAM', 'মজিদ': 'MAJID',
-    'হাকিম': 'HAKIM', 'হালিম': 'HALIM', 'রশিদ': 'RASHID', 'লতিফ': 'LATIF',
+    'নাহার': 'NAHAR', 'রফিকুল': 'RAFIQUL', 'রফিক': 'RAFIQ', 'শফিকুল': 'SHAFIQUL', 'শফিক': 'SHAFIQ',
+    'তরিকুল': 'TARIQUL', 'তৌহিদুল': 'TOUHIDUL', 'সাইফুল': 'SAIFUL', 'নজরুল': 'NAZRUL', 'সিরাজুল': 'SIRAJUL',
+    'আব্দুল': 'ABDUL', 'আবদুল': 'ABDUL', 'আব্দুর': 'ABDUR', 'আবদুর': 'ABDUR', 'আব্দুস': 'ABDUS', 'আবুল': 'ABUL',
+    'আব্দুল্লাহ': 'ABDULLAH', 'আবদুল্লাহ': 'ABDULLAH', 'আবু': 'ABU', 'হাসান': 'HASAN', 'হাছান': 'HASAN',
+    'হাবিব': 'HABIB', 'হাবিবুর': 'HABIBUR', 'কবির': 'KABIR', 'হুমায়ুন': 'HUMAYUN', 'হুমায়ুন': 'HUMAYUN',
+    'কামাল': 'KAMAL', 'জামাল': 'JAMAL', 'আলম': 'ALAM', 'মিয়া': 'MIA', 'মিয়া': 'MIA', 'মিঞা': 'MIA',
+    'মুন্সি': 'MUNSHI', 'মুন্সী': 'MUNSHI', 'মোস্তফা': 'MOSTAFA', 'সালাম': 'SALAM', 'মজিদ': 'MAJID',
+    'হাকিম': 'HAKIM', 'হালিম': 'HALIM', 'রশিদ': 'RASHID', 'লতিফ': 'LATIF', 'খালিদ': 'KHALID', 'খালেদ': 'KHALED',
     'জব্বার': 'JABBAR', 'সাত্তার': 'SATTAR', 'গফুর': 'GAFUR', 'মান্নান': 'MANNAN',
-    'হান্নান': 'HANNAN', 'মনির': 'MONIR', 'মনিরুল': 'MONIRUL', 'নূর': 'NUR', 'নুর': 'NUR',
-    'রুহুল': 'RUHUL', 'আমিন': 'AMIN', 'আমিনুল': 'AMINUL', 'শহীদ': 'SHAHID', 'শহিদ': 'SHAHID',
-    'মাহমুদ': 'MAHMUD', 'রাসেল': 'RASEL', 'রিপন': 'RIPON', 'সজীব': 'SAJIB', 'সজিব': 'SAJIB',
-    'তানভীর': 'TANVIR', 'তানভির': 'TANVIR', 'সাকিব': 'SAKIB', 'শাকিব': 'SAKIB',
-    'আরিফ': 'ARIF', 'আশরাফ': 'ASHRAF', 'ফারুক': 'FARUK', 'ফজলুল': 'FAZLUL',
-    'মশিউর': 'MOSHIUR', 'মাহবুব': 'MAHBUB', 'আনোয়ার': 'ANOWAR', 'আনোয়ার': 'ANOWAR',
-    'দেলোয়ার': 'DELOWAR', 'দেলোয়ার': 'DELOWAR', 'মনোয়ার': 'MONOWAR', 'মনোয়ার': 'MONOWAR',
+    'হান্নান': 'HANNAN', 'মনির': 'MONIR', 'মনিরুল': 'MONIRUL', 'নূর': 'NUR', 'নুর': 'NUR', 'নূরুল': 'NURUL', 'নুরুল': 'NURUL',
+    'রুহুল': 'RUHUL', 'আমিন': 'AMIN', 'আমিনুল': 'AMINUL', 'শহীদ': 'SHAHID', 'শহিদ': 'SHAHID', 'শহীদুল': 'SHAHIDUL', 'শহিদুল': 'SHAHIDUL',
+    'মাহমুদ': 'MAHMUD', 'মাহমুদুল': 'MAHMUDUL', 'রাসেল': 'RASEL', 'রিপন': 'RIPON', 'সজীব': 'SAJIB', 'সজিব': 'SAJIB', 'সুজন': 'SUJAN',
+    'তানভীর': 'TANVIR', 'তানভির': 'TANVIR', 'সাকিব': 'SAKIB', 'শাকিব': 'SAKIB', 'শাকিল': 'SHAKIL',
+    'আরিফ': 'ARIF', 'আরিফুল': 'ARIFUL', 'আশরাফ': 'ASHRAF', 'আশরাফুল': 'ASHRAFUL', 'ফারুক': 'FARUK', 'ফজলুল': 'FAZLUL',
+    'মশিউর': 'MOSHIUR', 'মাহবুব': 'MAHBUB', 'মিজানুর': 'MIZANUR', 'মজিবুর': 'MUJIBUR', 'আনিছুর': 'ANISUR', 'আনিসুর': 'ANISUR',
+    'আজিজ': 'AZIZ', 'আজিজুল': 'AZIZUL', 'রেজাউল': 'REZAUL', 'শামসুল': 'SHAMSUL', 'জহিরুল': 'ZAHIRUL', 'জাহিদ': 'ZAHID', 'জাহিদুল': 'ZAHIDUL',
+    'আনোয়ার': 'ANOWAR', 'আনোয়ার': 'ANOWAR', 'দেলোয়ার': 'DELOWAR', 'দেলোয়ার': 'DELOWAR', 'মনোয়ার': 'MONOWAR', 'মনোয়ার': 'MONOWAR',
     'সরোয়ার': 'SAROWAR', 'সরোয়ার': 'SAROWAR', 'জাহাঙ্গীর': 'JAHANGIR', 'জাহাংগীর': 'JAHANGIR',
-    'আলমগীর': 'ALAMGIR', 'শাহীন': 'SHAHIN', 'শাহিন': 'SHAHIN', 'শাহজাহান': 'SHAHJAHAN',
-    'ইব্রাহিম': 'IBRAHIM', 'ইব্রাহীম': 'IBRAHIM', 'ইসমাইল': 'ISMAIL', 'ইউসুফ': 'YUSUF',
-    'ইউনুস': 'YUNUS', 'ইয়াকুব': 'YAKUB', 'ইয়াকুব': 'YAKUB', 'সোলাইমান': 'SULAIMAN',
+    'আলমগীর': 'ALAMGIR', 'শাহীন': 'SHAHIN', 'শাহিন': 'SHAHIN', 'শাহজাহান': 'SHAHJAHAN', 'সোহাগ': 'SOHAG', 'সোহেল': 'SOHEL',
+    'ইব্রাহিম': 'IBRAHIM', 'ইব্রাহীম': 'IBRAHIM', 'ইসমাইল': 'ISMAIL', 'ইউসুফ': 'YUSUF', 'ইউনুস': 'YUNUS',
+    'ইয়াকুব': 'YAKUB', 'ইয়াকুব': 'YAKUB', 'সোলাইমান': 'SULAIMAN', 'হক': 'HAQUE', 'বেলাল': 'BELAL', 'জালাল': 'JALAL', 'হেলাল': 'HELAL', 'দুলাল': 'DULAL',
     'ফাতেমা': 'FATEMA', 'আয়েশা': 'AYESHA', 'আয়েশা': 'AYESHA', 'খাদিজা': 'KHADIJA',
     'মরিয়ম': 'MARIYAM', 'মরিয়ম': 'MARIYAM', 'সুমাইয়া': 'SUMAIYA', 'সুমাইয়া': 'SUMAIYA',
-    'তাসনিম': 'TASNIM', 'নুসরাত': 'NUSRAT', 'শারমিন': 'SHARMIN', 'রোকসানা': 'ROKSANA',
-    'সালমা': 'SALMA', 'হালিমা': 'HALIMA', 'সখিনা': 'SAKHINA', 'জামিলা': 'JAMILA',
-    'আনোয়ারা': 'ANOWARA', 'আনোয়ারা': 'ANOWARA', 'মনোয়ারা': 'MONOWARA', 'মনোয়ারা': 'MONOWARA',
-    'রেহানা': 'REHANA', 'শাহানা': 'SHAHANA', 'রুবিনা': 'RUBINA', 'শিরিন': 'SHIRIN',
-    'লায়লা': 'LAYLA', 'লায়লা': 'LAYLA', 'রানী': 'RANI', 'রাণী': 'RANI', 'দেবী': 'DEVI',
-    'দাস': 'DAS', 'পাল': 'PAL', 'রায়': 'ROY', 'রায়': 'ROY', 'সেন': 'SEN', 'ঘোষ': 'GHOSH',
-    'দত্ত': 'DUTTA', 'হালদার': 'HALDER', 'মল্লিক': 'MALLICK', 'প্রামাণিক': 'PRAMANIK',
-    'ফকির': 'FAKIR', 'মৃধা': 'MRIDHA', 'হাওলাদার': 'HOWLADER', 'সরদার': 'SARDAR',
+    'তাসনিম': 'TASNIM', 'নুসরাত': 'NUSRAT', 'শারমিন': 'SHARMIN', 'রোকসানা': 'ROKSANA', 'ফারজানা': 'FARZANA', 'তানিয়া': 'TANIA', 'তানিয়া': 'TANIA',
+    'সালমা': 'SALMA', 'হালিমা': 'HALIMA', 'সখিনা': 'SAKHINA', 'সকিনা': 'SAKINA', 'জামিলা': 'JAMILA', 'রোকেয়া': 'ROKEYA', 'রোকেয়া': 'ROKEYA',
+    'আনোয়ারা': 'ANOWARA', 'আনোয়ারা': 'ANOWARA', 'মনোয়ারা': 'MONOWARA', 'মনোয়ারা': 'MONOWARA', 'জাহানারা': 'JAHANARA', 'সাহারা': 'SAHARA',
+    'রেহানা': 'REHANA', 'শাহানা': 'SHAHANA', 'রুবিনা': 'RUBINA', 'শিরিন': 'SHIRIN', 'নাজমা': 'NAZMA', 'নাসরিন': 'NASRIN',
+    'তাহমিনা': 'TAHMINA', 'তাসলিমা': 'TASLIMA', 'বিলকিস': 'BILKIS', 'রাবেয়া': 'RABEYA', 'রাবেয়া': 'RABEYA', 'সালেহা': 'SALEHA',
+    'লায়লা': 'LAYLA', 'লায়লা': 'LAYLA', 'নূরজাহান': 'NURJAHAN', 'নুরজাহান': 'NURJAHAN', 'রানী': 'RANI', 'রাণী': 'RANI', 'দেবী': 'DEVI', 'বিবি': 'BIBI', 'নেছা': 'NESSA', 'বানু': 'BANU',
+    'দাস': 'DAS', 'দাশ': 'DAS', 'পাল': 'PAL', 'রায়': 'ROY', 'রায়': 'ROY', 'সেন': 'SEN', 'ঘোষ': 'GHOSH', 'বসু': 'BASU', 'বর্মন': 'BARMAN',
+    'দত্ত': 'DUTTA', 'হালদার': 'HALDER', 'মল্লিক': 'MALLICK', 'প্রামাণিক': 'PRAMANIK', 'শর্মা': 'SHARMA', 'চক্রবর্তী': 'CHAKRABORTY', 'চন্দ্র': 'CHANDRA',
+    'ফকির': 'FAKIR', 'মৃধা': 'MRIDHA', 'হাওলাদার': 'HOWLADER', 'সরদার': 'SARDAR', 'সিকদার': 'SIKDER', 'পাটোয়ারী': 'PATWARY', 'পাটোয়ারী': 'PATWARY',
+    'মোল্লা': 'MOLLA', 'কাজী': 'KAZI', 'গাজী': 'GAZI', 'ব্যাপারী': 'BEPARI', 'তরফদার': 'TARAFDAR',
     'খান': 'KHAN', 'উদ্দিন': 'UDDIN', 'উদ্দীন': 'UDDIN', 'আহসান': 'AHSAN', 'সাঈদ': 'SAID'
+  };
+
+  const EN_NAME_WORD_MAP = {
+    'MD.': 'মোঃ', 'MD': 'মোঃ', 'MOHD': 'মোঃ', 'MOHAMMAD': 'মোহাম্মদ', 'MOHAMMED': 'মোহাম্মদ', 'MUHAMMAD': 'মুহাম্মদ',
+    'MST.': 'মোছাঃ', 'MST': 'মোছাঃ', 'MOSAMMAT': 'মোছাঃ', 'MOSAMMOT': 'মোছাঃ', 'MRS': 'বেগম',
+    'SRI': 'শ্রী', 'SHREE': 'শ্রী', 'SRIMOTI': 'শ্রীমতী', 'SHRIMATI': 'শ্রীমতী',
+    'SHEIKH': 'শেখ', 'SK': 'শেখ', 'SYED': 'সৈয়দ', 'KHANDAKER': 'খন্দকার', 'CHOWDHURY': 'চৌধুরী',
+    'MAJUMDER': 'মজুমদার', 'TALUKDER': 'তালুকদার', 'SARKAR': 'সরকার', 'SARKER': 'সরকার',
+    'MONDAL': 'মণ্ডল', 'MANDAL': 'মণ্ডল', 'BISWAS': 'বিশ্বাস', 'BHUIYAN': 'ভূঁইয়া',
+    'HOSSAIN': 'হোসেন', 'HOSEN': 'হোসেন', 'HUSSAIN': 'হোসেন', 'ISLAM': 'ইসলাম',
+    'AHMED': 'আহমেদ', 'AHMAD': 'আহমেদ', 'RAHMAN': 'রহমান', 'ROHMAN': 'রহমান',
+    'KARIM': 'করিম', 'KORIM': 'করিম', 'RAHIM': 'রহিম', 'ROHIM': 'রহিম',
+    'ALI': 'আলী', 'KHATUN': 'খাতুন', 'BEGUM': 'বেগম', 'AKTER': 'আক্তার', 'AKHTAR': 'আখতার', 'AKHTER': 'আক্তার',
+    'SULTANA': 'সুলতানা', 'JAHAN': 'জাহান', 'YASMIN': 'ইয়াসমিন', 'YESMIN': 'ইয়াসমিন', 'PARVIN': 'পারভীন', 'PARVEEN': 'পারভীন',
+    'NAHAR': 'নাহার', 'RAFIQUL': 'রফিকুল', 'RAFIQ': 'রফিক', 'SHAFIQUL': 'শফিকুল', 'SHAFIQ': 'শফিক', 'TARIQUL': 'তরিকুল', 'TARIQ': 'তারিক',
+    'ABDUL': 'আব্দুল', 'ABDUR': 'আব্দুর', 'ABDUS': 'আব্দুস', 'ABUL': 'আবুল', 'ABDULLAH': 'আব্দুল্লাহ', 'ABU': 'আবু',
+    'HASAN': 'হাসান', 'HASSAN': 'হাসান', 'HABIB': 'হাবিব', 'HABIBUR': 'হাবিবুর', 'KABIR': 'কবির',
+    'NAZRUL': 'নজরুল', 'SAIFUL': 'সাইফুল', 'SIRAJUL': 'সিরাজুল', 'TOUHIDUL': 'তৌহিদুল',
+    'KAMAL': 'কামাল', 'JAMAL': 'জামাল', 'ALAM': 'আলম', 'MIA': 'মিয়া', 'MIAH': 'মিয়া', 'MIYA': 'মিয়া',
+    'MUNSHI': 'মুন্সী', 'MOSTAFA': 'মোস্তফা', 'MUSTAFA': 'মোস্তফা', 'SALAM': 'সালাম', 'MAJID': 'মজিদ',
+    'HAKIM': 'হাকিম', 'HALIM': 'হালিম', 'RASHID': 'রশিদ', 'LATIF': 'লতিফ', 'KHALID': 'খালিদ', 'KHALED': 'খালেদ',
+    'JABBAR': 'জব্বার', 'SATTAR': 'সাত্তার', 'GAFUR': 'গফুর', 'MANNAN': 'মান্নান', 'HANNAN': 'হান্নান',
+    'MONIR': 'মনির', 'MONIRUL': 'মনিরুল', 'NUR': 'নূর', 'NOOR': 'নূর', 'NURUL': 'নূরুল', 'RUHUL': 'রুহুল',
+    'AMIN': 'আমিন', 'AMINUL': 'আমিনুল', 'SHAHID': 'শহীদ', 'SHAHIDUL': 'শহীদুল', 'MAHMUD': 'মাহমুদ', 'MAHMUDUL': 'মাহমুদুল',
+    'RASEL': 'রাসেল', 'RIPON': 'রিপন', 'SAJIB': 'সজীব', 'SUJAN': 'সুজন', 'SUJON': 'সুজন',
+    'TANVIR': 'তানভীর', 'SAKIB': 'সাকিব', 'SHAKIB': 'শাকিব', 'SHAKIL': 'শাকিল',
+    'ARIF': 'আরিফ', 'ARIFUL': 'আরিফুল', 'ASHRAF': 'আশরাফ', 'ASHRAFUL': 'আশরাফুল', 'FARUK': 'ফারুক', 'FARUQ': 'ফারুক', 'FAZLUL': 'ফজলুল',
+    'MOSHIUR': 'মশিউর', 'MAHBUB': 'মাহবুব', 'MIZANUR': 'মিজানুর', 'MUJIBUR': 'মজিবুর', 'ANISUR': 'আনিসুর',
+    'AZIZ': 'আজিজ', 'AZIZUL': 'আজিজুল', 'REZAUL': 'রেজাউল', 'SHAMSUL': 'শামসুল', 'ZAHIRUL': 'জহিরুল', 'ZAHID': 'জাহিদ', 'ZAHIDUL': 'জাহিদুল',
+    'ANOWAR': 'আনোয়ার', 'ANWAR': 'আনোয়ার', 'DELOWAR': 'দেলোয়ার', 'MONOWAR': 'মনোয়ার', 'SAROWAR': 'সরোয়ার',
+    'JAHANGIR': 'জাহাঙ্গীর', 'ALAMGIR': 'আলমগীর', 'SHAHIN': 'শাহীন', 'SHAHJAHAN': 'শাহজাহান', 'SOHAG': 'সোহাগ', 'SOHEL': 'সোহেল',
+    'IBRAHIM': 'ইব্রাহিম', 'ISMAIL': 'ইসমাইল', 'YUSUF': 'ইউসুফ', 'YUNUS': 'ইউনুস', 'YAKUB': 'ইয়াকুব', 'SULAIMAN': 'সোলাইমান',
+    'HAQUE': 'হক', 'HOQUE': 'হক', 'BELAL': 'বেলাল', 'JALAL': 'জালাল', 'HELAL': 'হেলাল', 'DULAL': 'দুলাল', 'HUMAYUN': 'হুমায়ুন',
+    'FATEMA': 'ফাতেমা', 'FATIMA': 'ফাতেমা', 'AYESHA': 'আয়েশা', 'KHADIJA': 'খাদিজা', 'MARIYAM': 'মরিয়ম', 'MORIUM': 'মরিয়ম',
+    'SUMAIYA': 'সুমাইয়া', 'TASNIM': 'তাসনিম', 'NUSRAT': 'নুসরাত', 'SHARMIN': 'শারমিন', 'ROKSANA': 'রোকসানা', 'FARZANA': 'ফারজানা',
+    'TANIA': 'তানিয়া', 'SONIA': 'সোনিয়া', 'SALMA': 'সালমা', 'HALIMA': 'হালিমা', 'SAKHINA': 'সখিনা', 'SAKINA': 'সকিনা',
+    'JAMILA': 'জামিলা', 'ROKEYA': 'রোকেয়া', 'ANOWARA': 'আনোয়ারা', 'MONOWARA': 'মনোয়ারা', 'JAHANARA': 'জাহানারা',
+    'REHANA': 'রেহানা', 'SHAHANA': 'শাহানা', 'RUBINA': 'রুবিনা', 'SHIRIN': 'শিরিন', 'NAZMA': 'নাজমা', 'NASRIN': 'নাসরিন',
+    'TAHMINA': 'তাহমিনা', 'TASLIMA': 'তাসলিমা', 'BILKIS': 'বিলকিস', 'RABEYA': 'রাবেয়া', 'SALEHA': 'সালেহা', 'LAYLA': 'লায়লা',
+    'NURJAHAN': 'নূরজাহান', 'RANI': 'রাণী', 'DEVI': 'দেবী', 'DEBI': 'দেবী', 'BIBI': 'বিবি', 'NESSA': 'নেছা', 'BANU': 'বানু',
+    'DAS': 'দাস', 'PAL': 'পাল', 'PAUL': 'পাল', 'ROY': 'রায়', 'RAY': 'রায়', 'SEN': 'সেন', 'GHOSH': 'ঘোষ',
+    'DUTTA': 'দত্ত', 'HALDER': 'হালদার', 'MALLICK': 'মল্লিক', 'PRAMANIK': 'প্রামাণিক', 'SHARMA': 'শর্মা',
+    'CHAKRABORTY': 'চক্রবর্তী', 'CHANDRA': 'চন্দ্র', 'BARMAN': 'বর্মন', 'FAKIR': 'ফকির', 'MRIDHA': 'মৃধা',
+    'HOWLADER': 'হাওলাদার', 'SARDAR': 'সরদার', 'SIKDER': 'সিকদার', 'PATWARY': 'পাটোয়ারী',
+    'MOLLA': 'মোল্লা', 'MOLLAH': 'মোল্লা', 'KAZI': 'কাজী', 'GAZI': 'গাজী', 'BEPARI': 'ব্যাপারী', 'TARAFDAR': 'তরফদার',
+    'KHAN': 'খান', 'UDDIN': 'উদ্দিন', 'AHSAN': 'আহসান', 'SAID': 'সাঈদ'
   };
 
   function transliterateBnWordToEn(word) {
@@ -109,60 +160,76 @@
     const bare = nfc.replace(/[।,;:!?'"()\[\]]+/g, '');
     if (BN_NAME_WORD_MAP[bare]) return BN_NAME_WORD_MAP[bare];
     if (!hasBengaliScript(bare)) return normalizeDigits(bare).toUpperCase();
-    const indVowels = { 'অ':'O', 'আ':'A', 'ই':'I', 'ঈ':'I', 'উ':'U', 'ঊ':'U', 'ঋ':'RI', 'এ':'E', 'ঐ':'OI', 'ও':'O', 'ঔ':'OU' };
-    const kars = { 'া':'A', 'ি':'I', 'ী':'I', 'ু':'U', 'ূ':'U', 'ৃ':'RI', 'ে':'E', 'ৈ':'OI', 'ো':'O', 'ৌ':'OU' };
+    const indVowels = { 'অ': 'O', 'আ': 'A', 'ই': 'I', 'ঈ': 'I', 'উ': 'U', 'ঊ': 'U', 'ঋ': 'RI', 'এ': 'E', 'ঐ': 'OI', 'ও': 'O', 'ঔ': 'OU' };
+    const kars = { 'া': 'A', 'ি': 'I', 'ী': 'I', 'ু': 'U', 'ূ': 'U', 'ৃ': 'RI', 'ে': 'E', 'ৈ': 'OI', 'ো': 'O', 'ৌ': 'OU' };
     const cons = {
-      'ক':'K', 'খ':'KH', 'গ':'G', 'ঘ':'GH', 'ঙ':'NG', 'চ':'CH', 'ছ':'CHH', 'জ':'J', 'ঝ':'JH', 'ঞ':'N',
-      'ট':'T', 'ঠ':'TH', 'ড':'D', 'ঢ':'DH', 'ণ':'N', 'ত':'T', 'থ':'TH', 'দ':'D', 'ধ':'DH', 'ন':'N',
-      'প':'P', 'ফ':'F', 'ব':'B', 'ভ':'BH', 'ম':'M', 'য':'J', 'র':'R', 'ল':'L', 'শ':'SH', 'ষ':'SH', 'স':'S', 'হ':'H',
-      'ড়':'R', 'ঢ়':'RH', 'য়':'Y', 'ৎ':'T'
+      'ক': 'K', 'খ': 'KH', 'গ': 'G', 'ঘ': 'GH', 'ঙ': 'NG', 'চ': 'CH', 'ছ': 'CHH', 'জ': 'J', 'ঝ': 'JH', 'ঞ': 'N',
+      'ট': 'T', 'ঠ': 'TH', 'ড': 'D', 'ঢ': 'DH', 'ণ': 'N', 'ত': 'T', 'থ': 'TH', 'দ': 'D', 'ধ': 'DH', 'ন': 'N',
+      'প': 'P', 'ফ': 'F', 'ব': 'B', 'ভ': 'BH', 'ম': 'M', 'য': 'J', 'র': 'R', 'ল': 'L', 'শ': 'SH', 'ষ': 'SH', 'স': 'S', 'হ': 'H',
+      'ড়': 'R', 'ঢ়': 'RH', 'য়': 'Y', 'ৎ': 'T'
     };
-    let out = '', i = 0, lastHadExplicitVowel = true;
+    let out = '', i = 0, lastConsStartIdx = 0, lastWasVowel = true;
     while (i < bare.length) {
       const ch = bare[i];
       if (bare.slice(i, i + 3) === 'ক্ষ') {
         out += i === 0 ? 'KH' : 'KSH';
         i += 3;
         const nc = bare[i] || '';
-        if (!kars[nc] && nc !== '্' && i < bare.length && cons[nc]) out += 'A';
-        lastHadExplicitVowel = Boolean(kars[nc]);
+        if (!kars[nc] && nc !== '্' && i < bare.length && cons[nc]) { out += 'A'; lastWasVowel = true; } else { lastWasVowel = Boolean(kars[nc]); }
         continue;
       }
       if (bare.slice(i, i + 3) === 'জ্ঞ') {
         out += 'GY';
         i += 3;
         const nc = bare[i] || '';
-        if (!kars[nc] && nc !== '্' && i < bare.length && cons[nc]) out += 'A';
-        lastHadExplicitVowel = Boolean(kars[nc]);
+        if (!kars[nc] && nc !== '্' && i < bare.length && cons[nc]) { out += 'A'; lastWasVowel = true; } else { lastWasVowel = Boolean(kars[nc]); }
         continue;
       }
-      if (indVowels[ch]) { out += indVowels[ch]; lastHadExplicitVowel = true; i++; continue; }
-      if (kars[ch]) { out += kars[ch]; lastHadExplicitVowel = true; i++; continue; }
-      if (ch === 'ং') { out += 'NG'; lastHadExplicitVowel = false; i++; continue; }
-      if (ch === 'ঃ') { out += i === bare.length - 1 ? '' : 'H'; lastHadExplicitVowel = false; i++; continue; }
+      if (indVowels[ch]) { out += indVowels[ch]; lastWasVowel = true; i++; continue; }
+      if (kars[ch]) { out += kars[ch]; lastWasVowel = true; i++; continue; }
+      if (ch === 'ং') { out += 'NG'; lastWasVowel = false; i++; continue; }
+      if (ch === 'ঃ') { out += i === bare.length - 1 ? '' : 'H'; lastWasVowel = false; i++; continue; }
       if (ch === 'ঁ') { i++; continue; }
       if (ch === '্') {
-        if (bare[i + 1] === 'য') { out += 'Y'; i += 2; continue; }
-        if (bare[i + 1] === 'র') { out += 'R'; i += 2; continue; }
-        lastHadExplicitVowel = true;
+        const nextC = bare[i + 1] || '';
+        if (nextC === 'য') { out += 'Y'; i += 2; lastWasVowel = false; continue; }
+        if (nextC === 'র') { out += 'R'; i += 2; lastWasVowel = false; continue; }
+        if (nextC === 'ব') {
+          if (lastConsStartIdx > 0 && cons[bare[i - 1]]) out += 'W';
+          i += 2;
+          lastWasVowel = false;
+          continue;
+        }
         i++;
+        lastWasVowel = false;
         continue;
       }
       if (cons[ch]) {
-        out += cons[ch];
+        if (ch === 'র' && bare[i + 1] === '্' && cons[bare[i + 2]]) {
+          out += 'R' + cons[bare[i + 2]];
+          i += 3;
+          const afterC = bare[i] || '';
+          if (!kars[afterC] && afterC !== '্' && i < bare.length && cons[afterC]) { out += 'A'; lastWasVowel = true; } else { lastWasVowel = false; }
+          continue;
+        }
+        lastConsStartIdx = i;
+        out += (ch === 'য' && i > 0) ? 'J' : cons[ch];
         const nc = bare[i + 1] || '';
         if (!kars[nc] && nc !== '্' && nc !== 'ং' && nc !== 'ঃ' && ch !== 'ৎ') {
-          if (i + 1 < bare.length && (cons[nc] || (!indVowels[nc] && i + 2 < bare.length)) && !(lastHadExplicitVowel === false && i > 0 && bare[i - 1] === 'া')) {
-            out += 'A';
-            lastHadExplicitVowel = false;
-          }
+          const afterN = bare[i + 2] || '';
+          const addA =
+            i + 1 < bare.length &&
+            (cons[nc] || (!indVowels[nc] && i + 2 < bare.length)) &&
+            !(nc === 'ম' && !afterN && bare[i] !== 'ত' && out.length > 2) &&
+            !(lastWasVowel === false && i > 1 && !kars[bare[i - 1]]);
+          if (addA) { out += 'A'; lastWasVowel = true; } else { lastWasVowel = false; }
         } else {
-          lastHadExplicitVowel = Boolean(kars[nc]);
+          lastWasVowel = false;
         }
         i++;
         continue;
       }
-      out += /[A-Za-z0-9.]/.test(ch) ? ch.toUpperCase() : '';
+      out += /[A-Za-z0-9.\-]/.test(ch) ? ch.toUpperCase() : '';
       i++;
     }
     return out.replace(/AAA+/g, 'A').replace(/AA+/g, 'A').trim();
@@ -175,6 +242,134 @@
     if (!hasBengaliScript(cleaned)) return (typeof normalizeDigits === 'function' ? normalizeDigits(cleaned) : cleaned).toUpperCase().replace(/\s+/g, ' ').trim();
     return cleaned.split(/\s+/).map(transliterateBnWordToEn).filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
   }
+
+  function transliterateEnWordToBn(word) {
+    if (!word) return '';
+    const raw = String(word).replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+    if (!raw) return '';
+    if (hasBengaliScript(raw)) return raw;
+    const upper = raw.toUpperCase().replace(/[,;!?'"()\[\]]+/g, '');
+    if (!upper) return '';
+    if (EN_NAME_WORD_MAP[upper]) return EN_NAME_WORD_MAP[upper];
+    const bare = upper.replace(/\.+$/g, '');
+    if (EN_NAME_WORD_MAP[bare]) return EN_NAME_WORD_MAP[bare];
+    if (/^\d+$/.test(bare)) return bare;
+    const s = bare.replace(/[^A-Z]/g, '');
+    if (!s) return raw;
+    const consRules = [
+      ['CHH', 'ছ'], ['KSH', 'ক্ষ'], ['SHR', 'শ্র'],
+      ['BH', 'ভ'], ['PH', 'ফ'], ['TH', 'থ'], ['DH', 'ধ'], ['KH', 'খ'], ['GH', 'ঘ'],
+      ['JH', 'ঝ'], ['CH', 'চ'], ['SH', 'শ'], ['NG', 'ং'],
+      ['K', 'ক'], ['G', 'গ'], ['C', 'স'], ['J', 'জ'], ['Z', 'জ'],
+      ['T', 'ত'], ['D', 'দ'], ['N', 'ন'], ['P', 'প'], ['F', 'ফ'],
+      ['B', 'ব'], ['V', 'ভ'], ['M', 'ম'], ['R', 'র'], ['L', 'ল'],
+      ['S', 'স'], ['H', 'হ'], ['Q', 'ক'], ['W', 'ও'], ['Y', 'য়'], ['X', 'ক্স']
+    ];
+    const initVowels = [
+      ['AA', 'আ'], ['EE', 'ঈ'], ['OO', 'উ'], ['AI', 'আই'], ['OI', 'ঐ'], ['AU', 'ঔ'], ['OU', 'ঔ'], ['EA', 'ই'],
+      ['A', 'আ'], ['I', 'ই'], ['U', 'উ'], ['E', 'এ'], ['O', 'ও']
+    ];
+    const matras = [
+      ['AA', 'া'], ['EE', 'ী'], ['OO', 'ু'], ['AI', 'াই'], ['OI', 'ৈ'], ['AU', 'ৌ'], ['OU', 'ৌ'], ['EA', 'ি'],
+      ['A', 'া'], ['I', 'ি'], ['U', 'ু'], ['E', 'ে'], ['O', 'ো']
+    ];
+    let out = '', i = 0, afterConsonant = false;
+    while (i < s.length) {
+      let matched = false;
+      if (afterConsonant) {
+        for (const [pat, matra] of matras) {
+          if (s.startsWith(pat, i)) { out += matra; i += pat.length; afterConsonant = false; matched = true; break; }
+        }
+        if (matched) continue;
+      } else {
+        for (const [pat, v] of initVowels) {
+          if (s.startsWith(pat, i)) { out += v; i += pat.length; afterConsonant = false; matched = true; break; }
+        }
+        if (matched) continue;
+      }
+      for (const [pat, c] of consRules) {
+        if (s.startsWith(pat, i)) {
+          out += (c === 'ং' && !afterConsonant && i === 0) ? 'নগ' : c;
+          i += pat.length;
+          afterConsonant = c !== 'ং';
+          matched = true;
+          break;
+        }
+      }
+      if (!matched) i++;
+    }
+    return out || raw;
+  }
+
+  function transliterateEnToBn(enText) {
+    if (!enText) return '';
+    const cleaned = String(enText).replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/\s+/g, ' ').trim();
+    if (!cleaned) return '';
+    if (hasBengaliScript(cleaned)) return cleaned;
+    return cleaned.split(/\s+/).map(transliterateEnWordToBn).filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+  }
+
+  function stripPersonPrefixes(str) {
+    return String(str || '')
+      .normalize('NFC')
+      .replace(/[\u200B-\u200D\uFEFF]/g, '')
+      .replace(/^(?:মৃত|মরহুম|আলহাজ্ব|মোঃ|মো:|মো\.|মোহাম্মদ|মোহাম্মাদ|মোছাঃ|মোছা:|মোছা\.|মোসাম্মৎ|মোসাম্মত|শ্রী|শ্রীমতী|late|md\.?|mohammad|mohammed|mst\.?|mosammat|sri|srimoti)\s+/gi, '')
+      .replace(/[^A-Za-z\u0980-\u09FF0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toUpperCase();
+  }
+
+  const FC_FIELD_SPECS = {
+    docNid: {
+      keys: ['আবেদনকারীর জাতীয় পরিচয়পত্র নম্বর', 'জাতীয় পরিচিতি নম্বর (এনআইডি)', 'জাতীয় পরিচিতি নম্বর (এনআইডি)', 'জাতীয় পরিচিতি নম্বর', 'জাতীয় পরিচিতি নম্বর', 'জাতীয় পরিচয়পত্র নম্বর', 'জাতীয় পরিচয়পত্র নম্বর', 'পরিচিতি নম্বর (এনআইডি)', 'এনআইডি নম্বর', 'পরিচিতি নম্বর', 'nid number', 'national id'],
+      exclude: ['পিতা', 'মাতা', 'স্বামী', 'স্ত্রী', 'নমিনী', 'নমিনি', 'জন্ম নিবন্ধন', 'রেফারেন্স', 'ক্রমিক', 'father', 'mother', 'spouse', 'nominee', 'reference', 'serial']
+    },
+    docBrc: {
+      keys: ['আবেদনকারীর জন্ম নিবন্ধন নম্বর', 'জন্ম নিবন্ধন নম্বর', 'জন্ম নিবন্ধন নং', 'নিবন্ধন নম্বর', 'জন্ম নিবন্ধন', 'birth registration number', 'birth reg'],
+      exclude: ['পিতা', 'মাতা', 'স্বামী', 'স্ত্রী', 'নমিনী', 'নমিনি', 'তারিখ', 'এনআইডি', 'রেফারেন্স', 'ক্রমিক', 'father', 'mother', 'spouse', 'nominee', 'date', 'reference', 'serial']
+    },
+    nameBn: {
+      keys: ['আবেদনকারীর নাম (বাংলা)', 'আবেদনকারীর নাম বাংলায়', 'আবেদনকারীর নাম বাংলায়', 'সম্পূর্ণ নাম (বাংলা)', 'পূর্ণ নাম (বাংলা)', 'নাম বাংলায়', 'নাম বাংলায়', 'নাম (বাংলা)'],
+      exclude: ['পিতা', 'মাতা', 'স্বামী', 'স্ত্রী', 'নমিনী', 'নমিনি', 'ইংরেজি', 'english', 'father', 'mother', 'spouse', 'nominee']
+    },
+    nameEn: {
+      keys: ['আবেদনকারীর নাম (ইংরেজি)', 'আবেদনকারীর নাম ইংরেজিতে', 'সম্পূর্ণ নাম (ইংরেজি)', 'পূর্ণ নাম (ইংরেজি)', 'নাম ইংরেজিতে', 'নাম (ইংরেজি)'],
+      exclude: ['পিতা', 'মাতা', 'স্বামী', 'স্ত্রী', 'নমিনী', 'নমিনি', 'বাংলা', 'bangla', 'father', 'mother', 'spouse', 'nominee']
+    },
+    fatherBn: {
+      keys: ['পিতার নাম (বাংলা)', 'পিতার নাম বাংলায়', 'পিতার নাম বাংলায়', 'পিতার নাম(বাংলা)', 'পিতা (বাংলা)', 'পিতার বাংলা নাম', 'পিতার নাম', 'father name bangla', "father's name (bangla)"],
+      exclude: ['ইংরেজি', 'english', 'এনআইডি', 'nid', 'পরিচিতি', 'নিবন্ধন', 'বয়স', 'বয়স', 'পেশা', 'আয়', 'আয়', 'মোবাইল', 'মাতা', 'mother', 'স্বামী', 'স্ত্রী', 'spouse']
+    },
+    fatherEn: {
+      keys: ['পিতার নাম (ইংরেজি)', 'পিতার নাম ইংরেজিতে', 'পিতার নাম(ইংরেজি)', 'পিতা (ইংরেজি)', 'পিতার ইংরেজি নাম', "father's name (english)", 'father name english', 'father name'],
+      exclude: ['বাংলা', 'bangla', 'এনআইডি', 'nid', 'পরিচিতি', 'নিবন্ধন', 'বয়স', 'বয়স', 'মাতা', 'mother']
+    },
+    motherBn: {
+      keys: ['মাতার নাম (বাংলা)', 'মাতার নাম বাংলায়', 'মাতার নাম বাংলায়', 'মাতার নাম(বাংলা)', 'মাতা (বাংলা)', 'মাতার বাংলা নাম', 'মাতার নাম', 'mother name bangla', "mother's name (bangla)"],
+      exclude: ['ইংরেজি', 'english', 'এনআইডি', 'nid', 'পরিচিতি', 'নিবন্ধন', 'বয়স', 'বয়স', 'পেশা', 'আয়', 'আয়', 'মোবাইল', 'পিতা', 'father', 'স্বামী', 'স্ত্রী', 'spouse']
+    },
+    motherEn: {
+      keys: ['মাতার নাম (ইংরেজি)', 'মাতার নাম ইংরেজিতে', 'মাতার নাম(ইংরেজি)', 'মাতা (ইংরেজি)', 'মাতার ইংরেজি নাম', "mother's name (english)", 'mother name english', 'mother name'],
+      exclude: ['বাংলা', 'bangla', 'এনআইডি', 'nid', 'পরিচিতি', 'নিবন্ধন', 'বয়স', 'বয়স', 'পিতা', 'father']
+    },
+    spouseBn: {
+      keys: ['স্বামীর নাম (বাংলা)', 'স্ত্রীর নাম (বাংলা)', 'স্বামী/স্ত্রীর নাম (বাংলা)', 'স্বামী বা স্ত্রীর নাম (বাংলা)', 'স্বামীর নাম', 'স্ত্রীর নাম', 'স্বামী/স্ত্রীর নাম'],
+      exclude: ['ইংরেজি', 'english', 'এনআইডি', 'nid', 'পরিচিতি']
+    },
+    spouseEn: {
+      keys: ['স্বামীর নাম (ইংরেজি)', 'স্ত্রীর নাম (ইংরেজি)', 'স্বামী/স্ত্রীর নাম (ইংরেজি)', 'স্বামী বা স্ত্রীর নাম (ইংরেজি)'],
+      exclude: ['বাংলা', 'bangla', 'এনআইডি', 'nid', 'পরিচিতি']
+    },
+    dob: {
+      keys: ['জন্ম তারিখ', 'জন্মতারিখ', 'date of birth'],
+      exclude: ['নিবন্ধন', 'প্রদান', 'registration', 'issue']
+    },
+    mobile: {
+      keys: ['মোবাইল নম্বর', 'মোবাইল নং', 'মোবাইল', 'mobile number', 'mobile'],
+      exclude: ['জরুরি', 'বিকল্প', 'নমিনী', 'নমিনি', 'পিতা', 'মাতা']
+    }
+  };
 
   const FC_ERROR_LOGS_KEY = 'fc_error_logs';
   const FIRESTORE_ERROR_LOGS_BASE = 'https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/fc_error_logs';
@@ -318,11 +513,17 @@
     if (!raw || typeof raw !== 'object') return null;
     const out = { ...raw };
     const cleanDigits = (v) => normalizeDigits(v || '').replace(/[^0-9]/g, '');
-    const rawNid = cleanDigits(out.nid_number);
-    const rawBrc = cleanDigits(out.birth_reg_no);
-    const rawDoc = cleanDigits(out.doc_number);
-
+    const fatherNid = cleanDigits(out.father_nid);
+    const motherNid = cleanDigits(out.mother_nid);
     if (out.dob) out.dob = standardizeDate(out.dob);
+    const birthYear = (String(out.dob || '').match(/\b(19\d{2}|20\d{2})\b/) || [])[1] || '';
+    const dobDigits = cleanDigits(out.dob);
+    const excludeSet = new Set([fatherNid, motherNid, dobDigits].filter(Boolean));
+    const rawNidAll = cleanDigits(out.nid_number);
+    const rawBrc = cleanDigits(out.birth_reg_no || out.brc_number);
+    const rawDoc = cleanDigits(out.doc_number);
+    const rawNid = rawNidAll && !excludeSet.has(rawNidAll) ? rawNidAll : '';
+
     if (out.gender) out.gender = normalizeGenderValue(out.gender);
     if (out.mobile_number) out.mobile_number = normalizeMobileNumber(out.mobile_number);
 
@@ -338,30 +539,92 @@
       ['mother_name_bn', 'mother_name_en'],
       ['spouse_name_bn', 'spouse_name_en']
     ]) {
-      const bnV = String(out[bnK] || '').trim();
-      const enV = String(out[enK] || '').trim();
-      if (bnV && (!enV || hasBengaliScript(enV))) {
-        const tr = transliterateBnToEn(bnV);
-        if (tr) {
-          out[enK] = tr;
-          out.auto_transliterated_en = true;
+      let bnV = String(out[bnK] || '').trim();
+      let enV = String(out[enK] || '').trim();
+      if (bnV && !hasBengaliScript(bnV) && /[A-Za-z]/.test(bnV) && enV && hasBengaliScript(enV)) {
+        out[bnK] = enV;
+        out[enK] = bnV.toUpperCase();
+        bnV = out[bnK];
+        enV = out[enK];
+      } else {
+        if (!bnV && hasBengaliScript(enV)) {
+          out[bnK] = enV;
+          out[enK] = '';
+          bnV = enV;
+          enV = '';
+        }
+        if (bnV && !hasBengaliScript(bnV) && /[A-Za-z]/.test(bnV)) {
+          if (!enV || hasBengaliScript(enV)) out[enK] = bnV.toUpperCase();
+          out[bnK] = '';
+          bnV = '';
+        }
+        if (enV && hasBengaliScript(enV)) {
+          if (!bnV) out[bnK] = enV;
+          out[enK] = '';
         }
       }
     }
 
-    const isBrc = out.doc_type === 'birth_certificate' || (!rawNid && (rawBrc.length === 17 || rawDoc.length === 17 && !out.nid_number && out.birth_reg_no));
-    out.doc_type = isBrc ? 'birth_certificate' : 'nid';
-    if (isBrc) {
-      out.birth_reg_no = rawBrc || rawDoc || rawNid || '';
-      out.doc_number = out.birth_reg_no || rawDoc || '';
-    } else {
-      let nidVal = rawNid || rawDoc || '';
-      if (nidVal.length === 13 && out.dob) {
-        const ym = String(out.dob).match(/\b(19\d{2}|20\d{2})\b/);
-        if (ym) nidVal = ym[1] + nidVal;
+    // Prevent married women's "স্বামী:" from polluting Father's name
+    const spBnN = stripPersonPrefixes(out.spouse_name_bn || '');
+    const ftBnN = stripPersonPrefixes(out.father_name_bn || '');
+    const spEnN = stripPersonPrefixes(out.spouse_name_en || '');
+    const ftEnN = stripPersonPrefixes(out.father_name_en || '');
+    if ((spBnN && ftBnN && spBnN === ftBnN) || (spEnN && ftEnN && spEnN === ftEnN)) {
+      out.father_name_bn = '';
+      out.father_name_en = '';
+    }
+
+    for (const [bnK, enK] of [
+      ['name_bn', 'name_en'],
+      ['father_name_bn', 'father_name_en'],
+      ['mother_name_bn', 'mother_name_en'],
+      ['spouse_name_bn', 'spouse_name_en']
+    ]) {
+      const bnV = String(out[bnK] || '').trim();
+      const enV = String(out[enK] || '').trim();
+      if (bnV && (!enV || hasBengaliScript(enV))) {
+        const tr = transliterateBnToEn(bnV);
+        if (tr && !hasBengaliScript(tr)) {
+          out[enK] = tr;
+          out.auto_transliterated_en = true;
+        }
+      } else if (enV && (!bnV || !hasBengaliScript(bnV))) {
+        const trBn = transliterateEnToBn(enV);
+        if (trBn && hasBengaliScript(trBn)) {
+          out[bnK] = trBn;
+          out.auto_transliterated_bn = true;
+        }
       }
+    }
+
+    const isBrc = out.doc_type === 'birth_certificate' || (!rawNid && rawBrc.length === 17);
+    out.doc_type = isBrc ? 'birth_certificate' : 'nid';
+    const pickNums = (cands, lens) => {
+      const list = cands.map(cleanDigits).filter(Boolean).filter(x => !excludeSet.has(x));
+      for (const l of lens) {
+        const exact = list.filter(x => x.length === l);
+        if (exact.length) {
+          if (l === 17 && birthYear) {
+            const byYr = exact.find(x => x.startsWith(birthYear));
+            if (byYr) return byYr;
+          }
+          return exact[0];
+        }
+      }
+      return list[0] || '';
+    };
+    if (isBrc) {
+      const brcVal = pickNums([rawBrc, rawDoc, rawNid], [17]);
+      out.birth_reg_no = brcVal;
+      out.doc_number = brcVal;
+      out.nid_number = '';
+    } else {
+      let nidVal = pickNums([rawNid, rawDoc, rawBrc], [10, 17, 13]);
+      if (nidVal.length === 13 && birthYear) nidVal = birthYear + nidVal;
       out.nid_number = nidVal;
-      out.doc_number = nidVal || rawDoc || '';
+      out.doc_number = nidVal;
+      out.birth_reg_no = '';
     }
 
     if (!out.marital_status) out.marital_status = out.marital_status_suggestion || 'বিবাহিত';
@@ -749,9 +1012,9 @@
 
           <!-- Document & Camera Frame Size Bar (Works for Applicant + Member) -->
           <div id="fc-modal-doc-frame-bar" class="fc-modal-doc-pills">
-            <button type="button" class="fc-modal-frame-pill active" data-doc-choice="nid" data-frame-mode="id">🪪 NID (ID কার্ড)</button>
+            <button type="button" class="fc-modal-frame-pill active" data-doc-choice="auto">🤖 অটো শনাক্ত</button>
+            <button type="button" class="fc-modal-frame-pill" data-doc-choice="nid" data-frame-mode="id">🪪 NID (ID কার্ড)</button>
             <button type="button" class="fc-modal-frame-pill" data-doc-choice="birth_certificate" data-frame-mode="a4">📄 জন্ম নিবন্ধন (A4)</button>
-            <button type="button" class="fc-modal-frame-pill" data-doc-choice="auto">🤖 অটো</button>
           </div>
 
           <!-- Family Member Sub-panel (Shown when member target selected) -->
@@ -770,8 +1033,8 @@
               <div class="fc-modal-field">
                 <label for="fc-modal-doc-type">📄 সনদের ধরন*</label>
                 <select id="fc-modal-doc-type" style="padding: 4px 6px; border-radius: 6px; border: 1px solid #86efac; font-weight: 600;">
-                  <option value="auto">অটো-ডিটেক্ট (NID বা জন্ম সনদ)</option>
-                  <option value="nid" selected>জাতীয় পরিচিতি নম্বর (NID)</option>
+                  <option value="auto" selected>অটো-ডিটেক্ট (NID বা জন্ম সনদ)</option>
+                  <option value="nid">জাতীয় পরিচিতি নম্বর (NID)</option>
                   <option value="birth_certificate">জন্ম নিবন্ধন সনদ (BRC)</option>
                 </select>
               </div>
@@ -1020,11 +1283,11 @@
     const videoElem = document.getElementById('fc-modal-video');
     const selectMemberDocType = document.getElementById('fc-modal-doc-type');
     const docFramePills = Array.from(document.querySelectorAll('#fc-modal-doc-frame-bar .fc-modal-frame-pill'));
-    window.__fcModalDocChoice = window.__fcModalDocChoice || 'nid';
+    window.__fcModalDocChoice = window.__fcModalDocChoice || 'auto';
     window.__fcModalFrameMode = window.__fcModalFrameMode || 'id';
 
     function applyModalDocumentFrameMode(docChoice, explicitFrameMode = null) {
-      window.__fcModalDocChoice = docChoice || 'nid';
+      window.__fcModalDocChoice = docChoice || 'auto';
       if (selectMemberDocType && selectMemberDocType.value !== window.__fcModalDocChoice) {
         selectMemberDocType.value = window.__fcModalDocChoice;
       }
@@ -1051,7 +1314,7 @@
 
     docFramePills.forEach((pill) => {
       pill.addEventListener('click', () => {
-        const choice = pill.dataset.docChoice || 'nid';
+        const choice = pill.dataset.docChoice || 'auto';
         const nextFrame = pill.dataset.frameMode || (choice === 'birth_certificate' ? 'a4' : (choice === 'nid' ? 'id' : window.__fcModalFrameMode));
         applyModalDocumentFrameMode(choice, nextFrame);
       });
@@ -1059,7 +1322,7 @@
     if (selectMemberDocType) {
       selectMemberDocType.addEventListener('change', () => applyModalDocumentFrameMode(selectMemberDocType.value));
     }
-    applyModalDocumentFrameMode('nid', 'id');
+    applyModalDocumentFrameMode('auto', 'id');
     const btnSubmit = document.getElementById('fc-modal-btn-submit');
     const btnTargetSelf = document.getElementById('fc-modal-target-self-btn');
     const btnTargetMember = document.getElementById('fc-modal-target-member-btn');
@@ -2006,8 +2269,8 @@
     // 1. Verification Type Radio (NID vs Birth Certificate) — scoped strictly to .v-radio
     await ensureVerificationRadio(card, isBirthReg);
 
-    function findCardInput(keywords) {
-      return findInputByLabelText(keywords, card);
+    function findCardInput(specOrKeywords, extraOpts = {}) {
+      return findInputByLabelText(specOrKeywords, card, extraOpts);
     }
 
     async function selectCardDropdown(keywords, candidates) {
@@ -2018,7 +2281,7 @@
         if (label.closest('.v-radio, .v-checkbox, .v-input--selection-controls, [role="radiogroup"]')) continue;
         const text = normalizeBn(label.textContent || '');
         if (normKeys.some(k => text.includes(k))) {
-          container = label.closest('.col, [class*="col-"], .v-input') || label.parentElement;
+          container = label.closest('.v-input') || label.closest('.col, [class*="col-"]') || label.parentElement;
           break;
         }
       }
@@ -2026,34 +2289,32 @@
       await selectSingleVuetifyOption(container, candidates);
     }
 
-    // 2. Identification number (poll briefly if Vuetify swaps field after radio switch)
+    // 2. Identification number (poll up to 800ms if Vuetify swaps field after radio switch)
     if (docNumber) {
-      const numKeys = isBirthReg
-        ? ['জন্ম নিবন্ধন নম্বর', 'নিবন্ধন নম্বর', 'জন্ম নিবন্ধন']
-        : ['জাতীয় পরিচিতি নম্বর', 'জাতীয় পরিচিতি নম্বর', 'এনআইডি', 'পরিচিতি নম্বর'];
-      let idInp = findCardInput(numKeys);
-      for (let t = 0; !idInp && t < 5; t++) {
+      const numSpec = isBirthReg ? FC_FIELD_SPECS.docBrc : FC_FIELD_SPECS.docNid;
+      let idInp = findCardInput(numSpec);
+      for (let t = 0; !idInp && t < 8; t++) {
         await new Promise(r => setTimeout(r, 100));
-        idInp = findCardInput(numKeys);
+        idInp = findCardInput(numSpec);
       }
       if (idInp) setReactiveValue(idInp, docNumber);
     }
 
     // 3. Date of birth
     if (data.dob) {
-      const dobInp = findCardInput(['জন্ম তারিখ']);
+      const dobInp = findCardInput(FC_FIELD_SPECS.dob);
       if (dobInp) setReactiveValue(dobInp, data.dob);
     }
 
     // 4. Name Bangla
     if (data.name_bn) {
-      const bnInp = findCardInput(['নাম বাংলায়', 'নাম বাংলায়', 'নাম (বাংলা)']);
+      const bnInp = findCardInput(FC_FIELD_SPECS.nameBn);
       if (bnInp) setReactiveValue(bnInp, data.name_bn);
     }
 
     // 5. Name English
     if (data.name_en) {
-      const enInp = findCardInput(['নাম ইংরেজিতে', 'নাম (ইংরেজি)']);
+      const enInp = findCardInput(FC_FIELD_SPECS.nameEn);
       if (enInp) setReactiveValue(enInp, data.name_en.toUpperCase());
     }
 
@@ -2065,21 +2326,21 @@
 
     // 7. Father's Name Bangla & English
     if (data.father_name_bn) {
-      const fbn = findCardInput(['পিতার নাম (বাংলা)', 'পিতার নাম বাংলায়']);
+      const fbn = findCardInput(FC_FIELD_SPECS.fatherBn);
       if (fbn) setReactiveValue(fbn, data.father_name_bn);
     }
     if (data.father_name_en) {
-      const fen = findCardInput(['পিতার নাম (ইংরেজি)', 'পিতার নাম ইংরেজিতে']);
+      const fen = findCardInput(FC_FIELD_SPECS.fatherEn);
       if (fen) setReactiveValue(fen, data.father_name_en.toUpperCase());
     }
 
     // 8. Mother's Name Bangla & English
     if (data.mother_name_bn) {
-      const mbn = findCardInput(['মাতার নাম (বাংলা)', 'মাতার নাম বাংলায়']);
+      const mbn = findCardInput(FC_FIELD_SPECS.motherBn);
       if (mbn) setReactiveValue(mbn, data.mother_name_bn);
     }
     if (data.mother_name_en) {
-      const men = findCardInput(['মাতার নাম (ইংরেজি)', 'মাতার নাম ইংরেজিতে']);
+      const men = findCardInput(FC_FIELD_SPECS.motherEn);
       if (men) setReactiveValue(men, data.mother_name_en.toUpperCase());
     }
 
@@ -2353,7 +2614,7 @@
   }
 
   // Compress & enhance document image on an off-screen canvas
-  function compressImageFile(file, maxDimension = 1800, quality = 0.90) {
+  function compressImageFile(file, maxDimension = 2048, quality = 0.92) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onerror = reject;
@@ -2928,7 +3189,8 @@
         const modalMob = document.getElementById('fc-modal-mobile');
         if (modalMob) modalMob.value = mob;
         const tab1 = document.querySelector('[data-family-card-tab="1"]');
-        const mobInp = findInputByLabelText(['মোবাইল নম্বর'], tab1) || findInputByLabelText(['মোবাইল নম্বর']) || document.getElementById('input-1294') || document.getElementById('input-250');
+        const mobScope = tab1 || (!document.querySelector('[data-family-card-tab]') ? document : null);
+        const mobInp = mobScope ? findInputByLabelText(FC_FIELD_SPECS.mobile, mobScope) : null;
         if (mobInp) setReactiveValue(mobInp, mob);
         showToast(`📱 মোবাইল ${mob} ফর্মে বসানো হয়েছে!`);
       } else if (act === 'copy') {
@@ -3542,53 +3804,79 @@
   function resolveDocNumberAndType(data) {
     if (!data || typeof data !== 'object') return { docType: 'nid', docNumber: '' };
     const clean = (raw) => normalizeDigits(raw || '').replace(/[^0-9]/g, '');
+    const birthYear = (String(standardizeDate(data.dob || '') || data.dob || '').match(/\b(19\d{2}|20\d{2})\b/) || [])[1] || '';
+    const excludeSet = new Set([clean(data.father_nid), clean(data.mother_nid), clean(data.dob)].filter(Boolean));
     const pick = (cands, lens) => {
-      const list = cands.map(clean).filter(Boolean);
+      const list = cands.map(clean).filter(Boolean).filter(x => !excludeSet.has(x));
       for (const l of lens) {
-        const hit = list.find(x => x.length === l);
-        if (hit) return hit;
+        const matches = list.filter(x => x.length === l);
+        if (matches.length) {
+          if (l === 17 && birthYear) {
+            const yrHit = matches.find(x => x.startsWith(birthYear));
+            if (yrHit) return yrHit;
+          }
+          return matches[0];
+        }
       }
       return list[0] || '';
     };
-    const rawBrc = clean(data.birth_reg_no);
-    const rawNid = clean(data.nid_number);
+    const rawBrc = clean(data.birth_reg_no || data.brc_number);
+    const rawNidAll = clean(data.nid_number);
+    const rawNid = rawNidAll && !excludeSet.has(rawNidAll) ? rawNidAll : '';
     const rawDoc = clean(data.doc_number);
     const isBrc = data.doc_type === 'birth_certificate' || (!rawNid && rawBrc.length === 17);
     const docType = isBrc ? 'birth_certificate' : 'nid';
     let docNumber = isBrc
       ? pick([rawBrc, rawDoc, rawNid], [17])
       : pick([rawNid, rawDoc, rawBrc], [10, 17, 13]);
-    if (!isBrc && docNumber.length === 13 && data.dob) {
-      const ym = String(standardizeDate(data.dob)).match(/\b(19\d{2}|20\d{2})\b/);
-      if (ym) docNumber = ym[1] + docNumber;
+    if (!isBrc && docNumber.length === 13 && birthYear) {
+      docNumber = birthYear + docNumber;
     }
     return { docType, docNumber };
   }
 
   function isRadioSelected(radioWrap) {
     if (!radioWrap) return false;
-    const inp = radioWrap.querySelector('input[type="radio"]');
-    return Boolean((inp && (inp.checked || inp.getAttribute('aria-checked') === 'true')) || radioWrap.classList.contains('v-item--active'));
+    const inp = radioWrap.matches && radioWrap.matches('input[type="radio"]') ? radioWrap : radioWrap.querySelector('input[type="radio"]');
+    return Boolean((inp && (inp.checked || inp.getAttribute('aria-checked') === 'true')) || (radioWrap.classList && radioWrap.classList.contains('v-item--active')));
   }
 
   async function ensureVerificationRadio(scope, isBirthReg) {
     if (!scope) return false;
-    const radios = Array.from(scope.querySelectorAll('.v-radio'));
-    if (!radios.length) return false;
-    const target = radios.find((rl) => {
-      const txt = normalizeBn(rl.textContent || '');
+    let candidates = Array.from(scope.querySelectorAll('.v-radio, .v-selection-control')).map((wrap) => ({
+      wrap,
+      inp: wrap.querySelector('input[type="radio"]'),
+      label: wrap.querySelector('label'),
+      text: normalizeBn(wrap.textContent || '').toLowerCase()
+    }));
+    if (!candidates.length) {
+      candidates = Array.from(scope.querySelectorAll('input[type="radio"]')).map((inp) => {
+        const label = (inp.labels && inp.labels[0]) || inp.closest('label') || (inp.id ? scope.querySelector(`label[for="${inp.id}"]`) : null);
+        const wrap = inp.closest('.v-radio, .v-selection-control, label, div') || inp;
+        return {
+          wrap,
+          inp,
+          label,
+          text: normalizeBn((label ? label.textContent : '') || (wrap ? wrap.textContent : '') || inp.value || '').toLowerCase()
+        };
+      });
+    }
+    if (!candidates.length) return false;
+    const nidRadioKeys = ['জাতীয় পরিচিতি', 'জাতীয় পরিচয়', 'পরিচয়পত্র', 'পরিচিতি নম্বর', 'এনআইডি', 'nid'].map(k => normalizeBn(k));
+    const brcRadioKeys = ['জন্ম নিবন্ধন', 'নিবন্ধন', 'birth'].map(k => normalizeBn(k));
+    const target = candidates.find((rl) => {
+      const txt = rl.text;
       return isBirthReg
-        ? (txt.includes('জন্ম নিবন্ধন') || txt.includes('নিবন্ধন'))
-        : (txt.includes('জাতীয় পরিচিতি') || txt.includes('জাতীয় পরিচিতি') || txt.includes('এনআইডি') || txt.includes('NID'));
+        ? brcRadioKeys.some(k => txt.includes(k))
+        : nidRadioKeys.some(k => txt.includes(k));
     });
     if (!target) return false;
-    if (!isRadioSelected(target)) {
-      const inp = target.querySelector('input[type="radio"]');
-      const label = target.querySelector('label');
-      if (label) label.click();
-      else if (inp) inp.click();
-      else target.click();
-      await new Promise((r) => setTimeout(r, 260));
+    const already = isRadioSelected(target.wrap) || isRadioSelected(target.inp);
+    if (!already) {
+      if (target.label) target.label.click();
+      if (!(isRadioSelected(target.wrap) || isRadioSelected(target.inp)) && target.inp) target.inp.click();
+      if (!(isRadioSelected(target.wrap) || isRadioSelected(target.inp)) && target.wrap && target.wrap !== target.label && target.wrap !== target.inp) target.wrap.click();
+      await new Promise((r) => setTimeout(r, 320));
       return true;
     }
     return false;
@@ -3603,89 +3891,190 @@
     return true;
   }
 
+  function normalizeLabelForMatch(str) {
+    return normalizeBn(str || '')
+      .toLowerCase()
+      .replace(/[*ঃ:]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function resolveFieldSpec(specOrKeywords, opts = {}) {
+    if (specOrKeywords && !Array.isArray(specOrKeywords) && Array.isArray(specOrKeywords.keys)) {
+      return {
+        keys: specOrKeywords.keys,
+        exclude: [...(specOrKeywords.exclude || []), ...(opts.exclude || [])]
+      };
+    }
+    return {
+      keys: Array.isArray(specOrKeywords) ? specOrKeywords : [specOrKeywords].filter(Boolean),
+      exclude: opts.exclude || []
+    };
+  }
+
+  function matchesLabelSpec(labelRaw, keywordNorm, excludeNorms) {
+    const cleanLbl = normalizeLabelForMatch(labelRaw);
+    if (!cleanLbl) return 0;
+    if (excludeNorms.some(ex => ex && cleanLbl.includes(ex))) return 0;
+    const compactLbl = cleanLbl.replace(/[()]/g, ' ').replace(/\s+/g, ' ').trim();
+    const compactKey = keywordNorm.replace(/[()]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (cleanLbl === keywordNorm || compactLbl === compactKey) return 3;
+    if (cleanLbl.startsWith(keywordNorm) || compactLbl.startsWith(compactKey)) return 2;
+    if (cleanLbl.includes(keywordNorm) || compactLbl.includes(compactKey)) return 1;
+    return 0;
+  }
+
+  // Bind each Vuetify .v-input (1-to-1) first, then any un-paired leaf .col fields — prevents nested .col label/input cross-pairing
   function collectTabFieldEntries(scope) {
     if (!scope) return [];
     const entries = [];
-    const cols = Array.from(scope.querySelectorAll('.col, [class*="col-"]'));
-    for (const col of cols) {
-      const label = Array.from(col.querySelectorAll('label')).find(l => !l.closest('.v-radio, .v-checkbox, .v-input--selection-controls, [role="radiogroup"]'));
-      if (!label) continue;
-      const labelText = normalizeBn(label.textContent || '');
-      if (!labelText) continue;
-      const selEl = col.querySelector('.v-select');
-      const selValEl = selEl ? selEl.querySelector('.v-select__selection') : null;
-      const selText = selValEl ? String(selValEl.textContent || '').trim() : '';
+    const seenInputs = new Set();
+
+    const vInputs = Array.from(scope.querySelectorAll('.v-input')).filter(vi =>
+      !vi.closest('.v-radio, .v-checkbox, .v-input--radio-group, .v-input--checkbox, [role="radiogroup"]') &&
+      !vi.classList.contains('v-input--radio-group') &&
+      !vi.classList.contains('v-input--checkbox')
+    );
+
+    for (const vi of vInputs) {
+      const col = vi.closest('.col, [class*="col-"]');
+      const label = Array.from(vi.querySelectorAll('label')).find(l => !l.closest('.v-radio, .v-checkbox, [role="radiogroup"]'))
+        || (col && col.querySelectorAll('.v-input').length === 1
+          ? Array.from(col.querySelectorAll('label')).find(l => !l.closest('.v-radio, .v-checkbox, [role="radiogroup"]'))
+          : null);
       let rawInput = null;
-      if (label.htmlFor) {
+      if (label?.htmlFor) {
         const byFor = document.getElementById(label.htmlFor);
         if (byFor && scope.contains(byFor) && !/^(hidden|radio|checkbox|button|submit|file)$/i.test(byFor.type || '')) rawInput = byFor;
       }
       if (!rawInput) {
-        rawInput = Array.from(col.querySelectorAll('input, textarea')).find(el => !/^(hidden|radio|checkbox|button|submit|file)$/i.test(el.type || '')) || null;
+        rawInput = Array.from(vi.querySelectorAll('input, textarea')).find(el => !/^(hidden|radio|checkbox|button|submit|file)$/i.test(el.type || '')) || null;
       }
-      const input = (rawInput && isFillableTextInput(rawInput)) ? rawInput : (Array.from(col.querySelectorAll('input, textarea')).find(isFillableTextInput) || null);
+      const input = (rawInput && isFillableTextInput(rawInput)) ? rawInput : (Array.from(vi.querySelectorAll('input, textarea')).find(isFillableTextInput) || null);
+      const labelStr = label?.textContent || input?.getAttribute('aria-label') || input?.placeholder || '';
+      const labelText = normalizeBn(labelStr);
+      if (!labelText) continue;
+      if (input) seenInputs.add(input);
+      else if (rawInput) seenInputs.add(rawInput);
+
+      const selEl = vi.classList.contains('v-select') ? vi : vi.querySelector('.v-select');
+      const selValEl = selEl ? selEl.querySelector('.v-select__selection') : null;
+      const selText = selValEl ? String(selValEl.textContent || '').trim() : '';
       const value = selText || (rawInput ? String(rawInput.value || '').trim() : '') || '';
-      entries.push({ col, label, labelText, input, rawInput, vSelect: selEl, value });
+      entries.push({ col: col || vi, vInput: vi, label, labelText, input, rawInput, vSelect: selEl, value });
+    }
+
+    const leafCols = Array.from(scope.querySelectorAll('.col, [class*="col-"]')).filter(col => !col.querySelector('.col, [class*="col-"]'));
+    for (const col of leafCols) {
+      const nonSelInputs = Array.from(col.querySelectorAll('input, textarea')).filter(el => !/^(hidden|radio|checkbox|button|submit|file)$/i.test(el.type || ''));
+      if (nonSelInputs.length > 1) continue;
+      const rawInput = nonSelInputs[0] || null;
+      if (rawInput && seenInputs.has(rawInput)) continue;
+      const label = Array.from(col.querySelectorAll('label')).find(l => !l.closest('.v-radio, .v-checkbox, .v-input--selection-controls, [role="radiogroup"]'));
+      if (!label) continue;
+      const labelText = normalizeBn(label.textContent || '');
+      if (!labelText) continue;
+      let boundInput = rawInput;
+      if (label.htmlFor) {
+        const byFor = document.getElementById(label.htmlFor);
+        if (byFor && scope.contains(byFor) && !/^(hidden|radio|checkbox|button|submit|file)$/i.test(byFor.type || '')) boundInput = byFor;
+      }
+      if (boundInput && seenInputs.has(boundInput)) continue;
+      const selEl = col.querySelector('.v-select');
+      const selValEl = selEl ? selEl.querySelector('.v-select__selection') : null;
+      const selText = selValEl ? String(selValEl.textContent || '').trim() : '';
+      const input = (boundInput && isFillableTextInput(boundInput)) ? boundInput : (nonSelInputs.find(isFillableTextInput) || null);
+      const value = selText || (boundInput ? String(boundInput.value || '').trim() : '') || '';
+      entries.push({ col, vInput: boundInput?.closest?.('.v-input') || null, label, labelText, input, rawInput: boundInput, vSelect: selEl, value });
     }
     return entries;
   }
 
-  function findEntryByKeywords(entries, keywords) {
-    const normKeys = keywords.map(k => normalizeBn(k));
-    return entries.find(e => normKeys.some(k => e.labelText.includes(k))) || null;
+  function findEntryByKeywords(entries, specOrKeywords, opts = {}) {
+    if (!entries || !entries.length) return null;
+    const { keys, exclude } = resolveFieldSpec(specOrKeywords, opts);
+    const normKeys = keys.map(normalizeLabelForMatch).filter(Boolean);
+    const normExcludes = exclude.map(normalizeLabelForMatch).filter(Boolean);
+    let bestEntry = null;
+    let bestRank = 0;
+    for (let kIdx = 0; kIdx < normKeys.length; kIdx++) {
+      const k = normKeys[kIdx];
+      for (const e of entries) {
+        const score = matchesLabelSpec(e.labelText, k, normExcludes);
+        if (score <= 0) continue;
+        // Prefer exact match, then earlier specific keyword in priority list
+        const rank = score * 1000 - kIdx;
+        if (rank > bestRank) {
+          bestRank = rank;
+          bestEntry = e;
+        }
+      }
+      if (bestRank >= 3000) break;
+    }
+    return bestEntry;
   }
 
-  function findInputByLabelText(keywords, rootEl = null) {
+  function findInputByLabelText(specOrKeywords, rootEl = null, opts = {}) {
     const scope = rootEl || document;
-    const normKeys = keywords.map(k => normalizeBn(k));
+    const { keys, exclude } = resolveFieldSpec(specOrKeywords, opts);
+    const entries = collectTabFieldEntries(scope);
+    const hit = findEntryByKeywords(entries, { keys, exclude });
+    if (hit && hit.input && isFillableTextInput(hit.input)) return hit.input;
+
+    const normKeys = keys.map(normalizeLabelForMatch).filter(Boolean);
+    const normExcludes = exclude.map(normalizeLabelForMatch).filter(Boolean);
     const labels = Array.from(scope.querySelectorAll('label'));
-    for (const label of labels) {
-      if (label.closest('.v-radio, .v-checkbox, .v-input--selection-controls, [role="radiogroup"]')) continue;
-      const text = normalizeBn(label.textContent || '');
-      if (!normKeys.some(k => text.includes(k))) continue;
-      if (label.htmlFor) {
-        const inp = document.getElementById(label.htmlFor);
-        if (isFillableTextInput(inp) && (!rootEl || rootEl.contains(inp))) return inp;
+    for (const k of normKeys) {
+      let bestMatch = null;
+      let bestScore = 0;
+      for (const label of labels) {
+        if (label.closest('.v-radio, .v-checkbox, .v-input--selection-controls, [role="radiogroup"]')) continue;
+        const score = matchesLabelSpec(label.textContent || '', k, normExcludes);
+        if (score <= bestScore) continue;
+        let inp = null;
+        if (label.htmlFor) {
+          const byFor = document.getElementById(label.htmlFor);
+          if (isFillableTextInput(byFor) && (!rootEl || rootEl.contains(byFor))) inp = byFor;
+        }
+        if (!inp) {
+          const vInput = label.closest('.v-input');
+          if (vInput) inp = Array.from(vInput.querySelectorAll('input, textarea')).find(isFillableTextInput) || null;
+        }
+        if (inp) {
+          bestScore = score;
+          bestMatch = inp;
+          if (score === 3) return inp;
+        }
       }
-      const vInput = label.closest('.v-input');
-      if (vInput) {
-        const cand = Array.from(vInput.querySelectorAll('input, textarea')).find(isFillableTextInput);
-        if (cand) return cand;
-      }
-      let cur = label.parentElement;
-      for (let depth = 0; cur && cur !== scope && depth < 5; depth++, cur = cur.parentElement) {
-        if (cur.matches('.v-radio, .v-checkbox, [role="radiogroup"]')) continue;
-        const cand = Array.from(cur.querySelectorAll('input, textarea')).find(isFillableTextInput);
-        if (cand) return cand;
-        if (cur.matches('.col, [class*="col-"]')) break;
-      }
+      if (bestMatch) return bestMatch;
     }
     return null;
   }
 
   function findStep0DocNumberInput(tab0, isBirthReg) {
-    const numKeys = isBirthReg
-      ? ['জন্ম নিবন্ধন নম্বর', 'নিবন্ধন নম্বর', 'জন্ম নিবন্ধন']
-      : ['জাতীয় পরিচিতি নম্বর (এনআইডি)', 'জাতীয় পরিচিতি নম্বর', 'জাতীয় পরিচিতি নম্বর', 'জাতীয় পরিচয়পত্র নম্বর', 'এনআইডি নম্বর', 'পরিচিতি নম্বর'];
-    const byLabel = findInputByLabelText(numKeys, tab0);
-    if (byLabel) return byLabel;
+    const scope = tab0 || (!document.querySelector('[data-family-card-tab]') ? document : null);
+    if (!scope) return null;
+    const spec = isBirthReg ? FC_FIELD_SPECS.docBrc : FC_FIELD_SPECS.docNid;
+    const excludeNorms = spec.exclude.map(normalizeLabelForMatch);
 
-    const scope = tab0 || document;
-    const candidates = Array.from(scope.querySelectorAll('input')).filter(isFillableTextInput);
-    const nonDob = candidates.filter((inp) => !/DD\/MM|YYYY/i.test(inp.placeholder || ''));
-    const byContext = nonDob.find((inp) => {
-      const box = inp.closest('.col, [class*="col-"], .v-input, .row');
-      const txt = normalizeBn(box?.textContent || '');
+    const byLabel = findInputByLabelText(spec, scope);
+    if (byLabel && !/DD\/MM|YYYY/i.test(byLabel.placeholder || '')) return byLabel;
+
+    // Secondary check: input placeholder or aria-label inside leaf .v-input ONLY (never broad .row containers!)
+    const candidates = Array.from(scope.querySelectorAll('input')).filter(isFillableTextInput)
+      .filter(inp => !/DD\/MM|YYYY/i.test(inp.placeholder || ''));
+    const nidAttrKeys = ['জাতীয় পরিচিতি', 'পরিচয়পত্র', 'এনআইডি'].map(normalizeLabelForMatch);
+    const brcAttrKeys = ['জন্ম নিবন্ধন', 'নিবন্ধন নম্বর', 'birth reg'].map(normalizeLabelForMatch);
+    const attrMatched = candidates.find((inp) => {
+      const vi = inp.closest('.v-input');
+      const viLabel = vi?.querySelector('label')?.textContent || '';
+      const attrTxt = normalizeLabelForMatch(`${viLabel} ${inp.getAttribute('aria-label') || ''} ${inp.placeholder || ''}`);
+      if (!attrTxt || excludeNorms.some(ex => attrTxt.includes(ex))) return false;
       return isBirthReg
-        ? (txt.includes('নিবন্ধন') || txt.includes('birth'))
-        : (txt.includes('পরিচিতি') || txt.includes('এনআইডি') || txt.includes('nid'));
+        ? brcAttrKeys.some(k => attrTxt.includes(k))
+        : (nidAttrKeys.some(k => attrTxt.includes(k)) || /\bnid\b/.test(attrTxt));
     });
-    if (byContext) return byContext;
-
-    if (tab0 && nonDob.length >= 3) {
-      return nonDob[2];
-    }
-    return document.getElementById('input-594') || document.getElementById('input-215');
+    return attrMatched || null;
   }
 
   // Helper to normalize Bengali numerals (০-৯) to English (0-9)
@@ -3905,31 +4294,36 @@
     try {
       const tab0 = document.querySelector('[data-family-card-tab="0"]');
       const tab1 = document.querySelector('[data-family-card-tab="1"]');
+      const hasPortalTabs = Boolean(document.querySelector('[data-family-card-tab], #tab0, #tab1, #tab6, #tab8'));
       const { docType, docNumber } = resolveDocNumberAndType(data);
       const isBirthReg = docType === 'birth_certificate';
       const valOpts = overwriteExisting
         ? { ignoreUserGuard: true }
         : { respectNonEmpty: true };
 
-      // Step 0: Verification & Basic Identity (fill ONLY when tab0 is visible or absent)
-      if (!tab0 || isElementVisible(tab0)) {
+      // Step 0: Verification & Basic Identity (fill ONLY when tab0 is visible, or no portal tabs exist)
+      if ((tab0 && isElementVisible(tab0)) || (!tab0 && !hasPortalTabs)) {
         const scope0 = tab0 || document;
         await ensureVerificationRadio(scope0, isBirthReg);
 
-        const entries0 = tab0 ? collectTabFieldEntries(tab0) : [];
-        const nameBnInp = findEntryByKeywords(entries0, ['সম্পূর্ণ নাম (বাংলা)', 'পূর্ণ নাম (বাংলা)', 'নাম (বাংলা)'])?.input || findInputByLabelText(['সম্পূর্ণ নাম (বাংলা)', 'পূর্ণ নাম (বাংলা)', 'নাম (বাংলা)'], tab0) || findInputByLabelText(['সম্পূর্ণ নাম (বাংলা)']) || document.getElementById('input-211');
-        if (nameBnInp) attachInputEditGuard(nameBnInp);
+        const entries0 = collectTabFieldEntries(scope0);
+        const pick0 = (spec) => {
+          const inp = findEntryByKeywords(entries0, spec)?.input || findInputByLabelText(spec, scope0);
+          if (inp) attachInputEditGuard(inp);
+          return inp;
+        };
+
+        const nameBnInp = pick0(FC_FIELD_SPECS.nameBn);
         if (data.name_bn && setReactiveValue(nameBnInp, data.name_bn, valOpts)) filledCount++;
 
-        const nameEnInp = findEntryByKeywords(entries0, ['সম্পূর্ণ নাম (ইংরেজি)', 'পূর্ণ নাম (ইংরেজি)', 'নাম (ইংরেজি)'])?.input || findInputByLabelText(['সম্পূর্ণ নাম (ইংরেজি)', 'পূর্ণ নাম (ইংরেজি)', 'নাম (ইংরেজি)'], tab0) || findInputByLabelText(['সম্পূর্ণ নাম (ইংরেজি)']) || document.getElementById('input-213');
-        if (nameEnInp) attachInputEditGuard(nameEnInp);
+        const nameEnInp = pick0(FC_FIELD_SPECS.nameEn);
         if (data.name_en && setReactiveValue(nameEnInp, String(data.name_en).toUpperCase().trim(), valOpts)) filledCount++;
 
         if (docNumber) {
-          let inp = findStep0DocNumberInput(tab0, isBirthReg);
-          for (let t = 0; !inp && t < 5; t++) {
-            await new Promise(r => setTimeout(r, 80));
-            inp = findStep0DocNumberInput(tab0, isBirthReg);
+          let inp = findStep0DocNumberInput(scope0, isBirthReg);
+          for (let t = 0; !inp && t < 10; t++) {
+            await new Promise(r => setTimeout(r, 90));
+            inp = findStep0DocNumberInput(scope0, isBirthReg);
           }
           if (inp) {
             attachInputEditGuard(inp);
@@ -3937,7 +4331,7 @@
           }
         }
 
-        const dobInp = findEntryByKeywords(entries0, ['জন্ম তারিখ'])?.input || findInputByLabelText(['জন্ম তারিখ'], tab0) || findInputByLabelText(['জন্ম তারিখ']) || scope0.querySelector('input[placeholder*="DD/MM"]') || document.getElementById('input-221');
+        const dobInp = pick0(FC_FIELD_SPECS.dob) || scope0.querySelector('input[placeholder*="DD/MM"]');
         if (dobInp) attachInputEditGuard(dobInp);
         if (data.dob && setReactiveValue(dobInp, standardizeDate(data.dob), valOpts)) filledCount++;
 
@@ -3947,7 +4341,7 @@
       }
 
       // Step 2 (tab1 - ব্যক্তিগত তথ্য): Select marital & religion first so conditional spouse inputs render before scanning
-      if (!tab1 || isElementVisible(tab1)) {
+      if ((tab1 && isElementVisible(tab1)) || (!tab1 && !hasPortalTabs)) {
         const scope1 = tab1 || document;
         const targetMarital = data.marital_status || data.marital_status_suggestion || 'বিবাহিত';
         const targetReligion = data.religion || 'ইসলাম';
@@ -3959,38 +4353,48 @@
           if (await selectDropdownByLabel(['ধর্ম'], targetReligion, scope1, { respectNonEmpty: !overwriteExisting, ignoreUserGuard: overwriteExisting })) filledCount++;
         }
 
-        const entries1 = tab1 ? collectTabFieldEntries(tab1) : [];
-        const pick1 = (keys, fallbackIds = []) => {
-          let inp = findEntryByKeywords(entries1, keys)?.input || findInputByLabelText(keys, tab1);
-          if (!inp) {
-            for (const fid of fallbackIds) {
-              const cand = document.getElementById(fid);
-              if (cand && (!tab1 || tab1.contains(cand)) && isFillableTextInput(cand)) { inp = cand; break; }
-            }
-          }
+        // Wait briefly for conditional spouse fields / Vue re-render before scanning Step 2 inputs
+        await new Promise(r => setTimeout(r, 150));
+
+        const entries1 = collectTabFieldEntries(scope1);
+        const pick1 = (spec) => {
+          const inp = findEntryByKeywords(entries1, spec)?.input || findInputByLabelText(spec, scope1);
           if (inp) attachInputEditGuard(inp);
           return inp;
         };
 
-        const fBnInp = pick1(['পিতার নাম (বাংলা)'], ['input-1687', 'input-1286', 'input-242']);
+        const step2NameBn = pick1(FC_FIELD_SPECS.nameBn);
+        if (step2NameBn && data.name_bn) {
+          if (setReactiveValue(step2NameBn, data.name_bn, valOpts)) filledCount++;
+        }
+        const step2NameEn = pick1(FC_FIELD_SPECS.nameEn);
+        if (step2NameEn && data.name_en) {
+          if (setReactiveValue(step2NameEn, String(data.name_en).toUpperCase().trim(), valOpts)) filledCount++;
+        }
+        if (docNumber) {
+          const step2DocInp = pick1(isBirthReg ? FC_FIELD_SPECS.docBrc : FC_FIELD_SPECS.docNid);
+          if (step2DocInp && setReactiveValue(step2DocInp, docNumber, valOpts)) filledCount++;
+        }
+
+        const fBnInp = pick1(FC_FIELD_SPECS.fatherBn);
         if (data.father_name_bn && setReactiveValue(fBnInp, data.father_name_bn, valOpts)) filledCount++;
 
-        const fEnInp = pick1(['পিতার নাম (ইংরেজি)'], ['input-1689', 'input-1288', 'input-244']);
+        const fEnInp = pick1(FC_FIELD_SPECS.fatherEn);
         if (data.father_name_en && setReactiveValue(fEnInp, String(data.father_name_en).toUpperCase().trim(), valOpts)) filledCount++;
 
-        const mBnInp = pick1(['মাতার নাম (বাংলা)'], ['input-1691', 'input-1290', 'input-246']);
+        const mBnInp = pick1(FC_FIELD_SPECS.motherBn);
         if (data.mother_name_bn && setReactiveValue(mBnInp, data.mother_name_bn, valOpts)) filledCount++;
 
-        const mEnInp = pick1(['মাতার নাম (ইংরেজি)'], ['input-1693', 'input-1292', 'input-248']);
+        const mEnInp = pick1(FC_FIELD_SPECS.motherEn);
         if (data.mother_name_en && setReactiveValue(mEnInp, String(data.mother_name_en).toUpperCase().trim(), valOpts)) filledCount++;
 
-        const mobInp = pick1(['মোবাইল নম্বর'], ['input-1695', 'input-1294', 'input-250']);
+        const mobInp = pick1(FC_FIELD_SPECS.mobile);
         if (data.mobile_number && setReactiveValue(mobInp, normalizeMobileNumber(data.mobile_number), valOpts)) filledCount++;
 
         if (data.spouse_name_bn || data.spouse_name_en) {
-          const spBnInp = pick1(['স্বামীর নাম (বাংলা)', 'স্ত্রীর নাম (বাংলা)', 'স্বামী/স্ত্রীর নাম (বাংলা)']);
+          const spBnInp = pick1(FC_FIELD_SPECS.spouseBn);
           if (spBnInp && data.spouse_name_bn && setReactiveValue(spBnInp, data.spouse_name_bn, valOpts)) filledCount++;
-          const spEnInp = pick1(['স্বামীর নাম (ইংরেজি)', 'স্ত্রীর নাম (ইংরেজি)', 'স্বামী/স্ত্রীর নাম (ইংরেজি)']);
+          const spEnInp = pick1(FC_FIELD_SPECS.spouseEn);
           if (spEnInp && data.spouse_name_en && setReactiveValue(spEnInp, String(data.spouse_name_en).toUpperCase().trim(), valOpts)) filledCount++;
         }
 
@@ -4012,12 +4416,12 @@
 
   function readStep2FieldState(tab1) {
     const entries = collectTabFieldEntries(tab1);
-    const val = (keys) => findEntryByKeywords(entries, keys)?.value || '';
-    const fatherBn = val(['পিতার নাম (বাংলা)']);
-    const fatherEn = val(['পিতার নাম (ইংরেজি)']);
-    const motherBn = val(['মাতার নাম (বাংলা)']);
-    const motherEn = val(['মাতার নাম (ইংরেজি)']);
-    const mobile = normalizeMobileNumber(val(['মোবাইল নম্বর']));
+    const val = (spec) => findEntryByKeywords(entries, spec)?.value || '';
+    const fatherBn = val(FC_FIELD_SPECS.fatherBn);
+    const fatherEn = val(FC_FIELD_SPECS.fatherEn);
+    const motherBn = val(FC_FIELD_SPECS.motherBn);
+    const motherEn = val(FC_FIELD_SPECS.motherEn);
+    const mobile = normalizeMobileNumber(val(FC_FIELD_SPECS.mobile));
     const marital = val(['বৈবাহিক অবস্থা']);
     const religion = val(['ধর্ম']);
     const age = val(['বয়স', 'বয়স']);
@@ -4120,7 +4524,7 @@
           const modalMob = normalizeMobileNumber(document.getElementById('fc-modal-mobile')?.value || localStorage.getItem('fc_default_mobile') || '');
           const cur = readStep2FieldState(tab1);
           if (modalMob && !cur.mobile) {
-            const mobInp = findInputByLabelText(['মোবাইল নম্বর'], tab1) || document.getElementById('input-1695') || document.getElementById('input-1294');
+            const mobInp = findInputByLabelText(FC_FIELD_SPECS.mobile, tab1);
             if (mobInp) setReactiveValue(mobInp, modalMob, { ignoreUserGuard: true });
           }
           injectSection2Toolbar(tab1);
@@ -7734,17 +8138,19 @@
       : getCachedFamilyScan(familyId, false);
 
     const applicant = {
-      nameBn: findEntryByKeywords(entries0, ['নাম (বাংলা)'])?.value || findEntryByKeywords(entries1, ['নাম (বাংলা)'])?.value || matchedLast?.name_bn || '',
-      nameEn: findEntryByKeywords(entries0, ['নাম (ইংরেজি)'])?.value || findEntryByKeywords(entries1, ['নাম (ইংরেজি)'])?.value || matchedLast?.name_en || '',
+      nameBn: findEntryByKeywords(entries0, FC_FIELD_SPECS.nameBn)?.value || findEntryByKeywords(entries1, FC_FIELD_SPECS.nameBn)?.value || matchedLast?.name_bn || '',
+      nameEn: findEntryByKeywords(entries0, FC_FIELD_SPECS.nameEn)?.value || findEntryByKeywords(entries1, FC_FIELD_SPECS.nameEn)?.value || matchedLast?.name_en || '',
       nid: normalizeDigits(
-        findEntryByKeywords(entries0, ['জাতীয় পরিচিতি', 'জন্ম নিবন্ধন', 'NID', 'BRC'])?.value ||
-        findEntryByKeywords(entries1, ['জাতীয় পরিচিতি', 'জন্ম নিবন্ধন', 'NID', 'BRC'])?.value ||
-        matchedLast?.nid_number || matchedLast?.brc_number || matchedLast?.doc_number || ''
+        findEntryByKeywords(entries0, FC_FIELD_SPECS.docBrc)?.value ||
+        findEntryByKeywords(entries0, FC_FIELD_SPECS.docNid)?.value ||
+        findEntryByKeywords(entries1, FC_FIELD_SPECS.docBrc)?.value ||
+        findEntryByKeywords(entries1, FC_FIELD_SPECS.docNid)?.value ||
+        matchedLast?.nid_number || matchedLast?.birth_reg_no || matchedLast?.brc_number || matchedLast?.doc_number || ''
       ).replace(/[^0-9]/g, ''),
-      dob: standardizeDate(findEntryByKeywords(entries0, ['জন্ম তারিখ'])?.value || findEntryByKeywords(entries1, ['জন্ম তারিখ'])?.value || matchedLast?.dob || ''),
-      fatherBn: findEntryByKeywords(entries1, ['পিতার নাম (বাংলা)'])?.value || matchedLast?.father_name_bn || '',
-      motherBn: findEntryByKeywords(entries1, ['মাতার নাম (বাংলা)'])?.value || matchedLast?.mother_name_bn || '',
-      mobile: normalizeMobileNumber(findEntryByKeywords(entries1, ['মোবাইল'])?.value || findEntryByKeywords(entries0, ['মোবাইল'])?.value || matchedLast?.mobile_number || '')
+      dob: standardizeDate(findEntryByKeywords(entries0, FC_FIELD_SPECS.dob)?.value || findEntryByKeywords(entries1, FC_FIELD_SPECS.dob)?.value || matchedLast?.dob || ''),
+      fatherBn: findEntryByKeywords(entries1, FC_FIELD_SPECS.fatherBn)?.value || matchedLast?.father_name_bn || '',
+      motherBn: findEntryByKeywords(entries1, FC_FIELD_SPECS.motherBn)?.value || matchedLast?.mother_name_bn || '',
+      mobile: normalizeMobileNumber(findEntryByKeywords(entries1, FC_FIELD_SPECS.mobile)?.value || findEntryByKeywords(entries0, FC_FIELD_SPECS.mobile)?.value || matchedLast?.mobile_number || '')
     };
 
     const s3Media = inspectSection3Media(tab9);

@@ -107,9 +107,9 @@
 
       <!-- Document & Camera Frame Size Bar -->
       <div class="doc-frame-bar" role="group" aria-label="ডকুমেন্ট ও ক্যামেরা ফ্রেম সাইজ">
-        <button type="button" class="frame-pill active" data-doc-choice="nid" data-frame-mode="id">🪪 NID (ID কার্ড)</button>
+        <button type="button" class="frame-pill active" data-doc-choice="auto">🤖 অটো শনাক্ত</button>
+        <button type="button" class="frame-pill" data-doc-choice="nid" data-frame-mode="id">🪪 NID (ID কার্ড)</button>
         <button type="button" class="frame-pill" data-doc-choice="birth_certificate" data-frame-mode="a4">📄 জন্ম নিবন্ধন (A4)</button>
-        <button type="button" class="frame-pill" data-doc-choice="auto">🤖 অটো</button>
       </div>
 
       <!-- Live Camera View -->
@@ -152,8 +152,8 @@
         <div class="form-group" style="margin-bottom: 10px;">
           <label for="docType">🪪 ডকুমেন্টের ধরন</label>
           <select id="docType" class="select-input">
-            <option value="auto">অটো-ডিটেক্ট (NID / জন্ম নিবন্ধন)</option>
-            <option value="nid" selected>জাতীয় পরিচয়পত্র (NID - ID কার্ড সাইজ • ১০/১৩/১৭ ডিজিট)</option>
+            <option value="auto" selected>অটো-ডিটেক্ট (NID / জন্ম নিবন্ধন)</option>
+            <option value="nid">জাতীয় পরিচয়পত্র (NID - ID কার্ড সাইজ • ১০/১৩/১৭ ডিজিট)</option>
             <option value="birth_certificate">ডিজিটাল জন্ম নিবন্ধন সনদ (A4 সাইজ • ১৭ ডিজিট BRC)</option>
           </select>
         </div>

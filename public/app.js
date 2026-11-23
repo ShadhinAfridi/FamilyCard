@@ -985,7 +985,7 @@ let currentFrameMode = 'id';
 let originalUploadDataUrl = null;
 
 function applyDocumentFrameMode(docChoice, explicitFrameMode = null) {
-  const normalizedChoice = docChoice || 'nid';
+  const normalizedChoice = docChoice || 'auto';
   if (elDocType && elDocType.value !== normalizedChoice) {
     elDocType.value = normalizedChoice;
   }
@@ -1012,7 +1012,7 @@ function applyDocumentFrameMode(docChoice, explicitFrameMode = null) {
 
 docFramePills.forEach((pill) => {
   pill.addEventListener('click', () => {
-    const choice = pill.dataset.docChoice || 'nid';
+    const choice = pill.dataset.docChoice || 'auto';
     const nextFrame = pill.dataset.frameMode || (choice === 'birth_certificate' ? 'a4' : (choice === 'nid' ? 'id' : currentFrameMode));
     applyDocumentFrameMode(choice, nextFrame);
   });
@@ -1022,7 +1022,7 @@ if (elDocType) {
   elDocType.addEventListener('change', () => {
     applyDocumentFrameMode(elDocType.value);
   });
-  applyDocumentFrameMode(elDocType.value || 'nid');
+  applyDocumentFrameMode(elDocType.value || 'auto');
 }
 
 // Camera Stream Setup with progressive high-res constraints
@@ -1350,7 +1350,7 @@ function displayResults(data) {
     resDocType.textContent = data.ocr_model_used ? `${label} • ${data.ocr_model_used}` : label;
   }
 
-  document.getElementById('resNameBn').textContent = data.name_bn || 'পাওয়া যায়নি';
+  document.getElementById('resNameBn').textContent = (data.name_bn || 'পাওয়া যায়নি') + (data.auto_transliterated_bn ? ' (স্বয়ংক্রিয় বাংলা)' : '');
   document.getElementById('resNameEn').textContent = (data.name_en || 'পাওয়া যায়নি') + (data.auto_transliterated_en ? ' (স্বয়ংক্রিয় ইংরেজি)' : '');
   let nidDisplay = data.doc_number || data.nid_number || data.birth_reg_no || 'পাওয়া যায়নি';
   if (data.nid_converted_to_17) {

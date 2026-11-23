@@ -303,30 +303,33 @@ function hasBengaliScript(str) {
 }
 
 const BN_NAME_WORD_MAP = {
-  'মোঃ': 'MD.', 'মো:': 'MD.', 'মো.': 'MD.', 'মোহাম্মদ': 'MOHAMMAD', 'মোহাম্মাদ': 'MOHAMMAD',
-  'মোছাঃ': 'MOSAMMAT', 'মোছা:': 'MOSAMMAT', 'মোছা.': 'MOSAMMAT', 'মোসাম্মৎ': 'MOSAMMAT', 'মোসাম্মত': 'MOSAMMAT',
-  'শ্রী': 'SRI', 'শ্রীমতী': 'SRIMOTI', 'শেখ': 'SHEIKH', 'সৈয়দ': 'SYED', 'সৈয়দ': 'SYED',
-  'খন্দকার': 'KHANDAKER', 'চৌধুরী': 'CHOWDHURY', 'মজুমদার': 'MAJUMDER', 'তালুকদার': 'TALUKDER',
-  'সরকার': 'SARKAR', 'মন্ডল': 'MONDAL', 'মণ্ডল': 'MONDAL', 'বিশ্বাস': 'BISWAS',
-  'হোসেন': 'HOSSAIN', 'হোসাইন': 'HOSSAIN', 'ইসলাম': 'ISLAM', 'আহমেদ': 'AHMED',
-  'আহম্মেদ': 'AHMED', 'আহমদ': 'AHMED', 'রহমান': 'RAHMAN', 'করিম': 'KARIM',
-  'রহিম': 'RAHIM', 'আলী': 'ALI', 'আলি': 'ALI', 'খাতুন': 'KHATUN', 'বেগম': 'BEGUM',
+  'মোঃ': 'MD.', 'মো:': 'MD.', 'মো.': 'MD.', 'মোহাম্মদ': 'MOHAMMAD', 'মোহাম্মাদ': 'MOHAMMAD', 'মুহাম্মদ': 'MUHAMMAD', 'মুহাম্মাদ': 'MUHAMMAD',
+  'মোছাঃ': 'MOSAMMAT', 'মোছা:': 'MOSAMMAT', 'মোছা.': 'MOSAMMAT', 'মোসাম্মৎ': 'MOSAMMAT', 'মোসাম্মত': 'MOSAMMAT', 'মোসাঃ': 'MOST.', 'মোসা.': 'MOST.', 'মোসা:': 'MOST.',
+  'শ্রী': 'SRI', 'শ্রীমতী': 'SRIMOTI', 'মৃত': 'LATE', 'হাজী': 'HAJI', 'হাজি': 'HAJI',
+  'শেখ': 'SHEIKH', 'সৈয়দ': 'SYED', 'সৈয়দ': 'SYED', 'কাজী': 'KAZI', 'কাজি': 'KAZI', 'মির্জা': 'MIRZA', 'গাজী': 'GAZI', 'গাজি': 'GAZI',
+  'খন্দকার': 'KHANDAKER', 'খোন্দকার': 'KHONDKER', 'চৌধুরী': 'CHOWDHURY', 'মজুমদার': 'MAJUMDER', 'তালুকদার': 'TALUKDER',
+  'সরকার': 'SARKAR', 'মন্ডল': 'MONDAL', 'মণ্ডল': 'MONDAL', 'বিশ্বাস': 'BISWAS', 'শিকদার': 'SHIKDER', 'সিকদার': 'SIKDER',
+  'ভূঁইয়া': 'BHUIYAN', 'ভুইয়া': 'BHUIYAN', 'ভূইয়া': 'BHUIYAN', 'ভূঁইয়া': 'BHUIYAN', 'পাটোয়ারী': 'PATWARY', 'পাটোয়ারী': 'PATWARY',
+  'মোল্লা': 'MOLLA', 'বেপারী': 'BEPARI', 'ব্যাপারী': 'BEPARI', 'মাতুব্বর': 'MATUBBAR', 'সাহা': 'SAHA', 'বড়ুয়া': 'BARUA', 'বড়ুয়া': 'BARUA',
+  'হোসেন': 'HOSSAIN', 'হোসাইন': 'HOSSAIN', 'হোসনে': 'HOSNE', 'ইসলাম': 'ISLAM', 'আহমেদ': 'AHMED',
+  'আহম্মেদ': 'AHMED', 'আহমদ': 'AHMED', 'আহম্মদ': 'AHMED', 'রহমান': 'RAHMAN', 'করিম': 'KARIM',
+  'রহিম': 'RAHIM', 'আলী': 'ALI', 'আলি': 'ALI', 'খাতুন': 'KHATUN', 'বেগম': 'BEGUM', 'বিবি': 'BIBI', 'বানু': 'BANU', 'নেছা': 'NESSA', 'নেসা': 'NESA',
   'আক্তার': 'AKTER', 'আখতার': 'AKTER', 'সুলতানা': 'SULTANA', 'জাহান': 'JAHAN',
   'ইয়াসমিন': 'YASMIN', 'ইয়াসমিন': 'YASMIN', 'পারভীন': 'PARVIN', 'পারভিন': 'PARVIN',
-  'নাহার': 'NAHAR', 'রফিকুল': 'RAFIQUL', 'শফিকুল': 'SHAFIQUL', 'তরিকুল': 'TARIQUL',
-  'আব্দুল': 'ABDUL', 'আবদুল': 'ABDUL', 'আব্দুর': 'ABDUR', 'আবদুর': 'ABDUR',
-  'আব্দুল্লাহ': 'ABDULLAH', 'আবদুল্লাহ': 'ABDULLAH', 'আবু': 'ABU', 'হাসান': 'HASAN',
+  'নাহার': 'NAHAR', 'রফিকুল': 'RAFIQUL', 'শফিকুল': 'SHAFIQUL', 'তরিকুল': 'TARIQUL', 'রফিক': 'RAFIQ', 'শফিক': 'SHAFIQ',
+  'আব্দুল': 'ABDUL', 'আবদুল': 'ABDUL', 'আব্দুর': 'ABDUR', 'আবদুর': 'ABDUR', 'আবুল': 'ABUL',
+  'আব্দুল্লাহ': 'ABDULLAH', 'আবদুল্লাহ': 'ABDULLAH', 'আবু': 'ABU', 'হাসান': 'HASAN', 'হাছান': 'HASAN',
   'হাবিব': 'HABIB', 'কবির': 'KABIR', 'নজরুল': 'NAZRUL', 'কামাল': 'KAMAL',
   'জামাল': 'JAMAL', 'আলম': 'ALAM', 'মিয়া': 'MIA', 'মিয়া': 'MIA', 'মুন্সি': 'MUNSHI',
   'মুন্সী': 'MUNSHI', 'মোস্তফা': 'MOSTAFA', 'সালাম': 'SALAM', 'মজিদ': 'MAJID',
   'হাকিম': 'HAKIM', 'হালিম': 'HALIM', 'রশিদ': 'RASHID', 'লতিফ': 'LATIF',
   'জব্বার': 'JABBAR', 'সাত্তার': 'SATTAR', 'গফুর': 'GAFUR', 'মান্নান': 'MANNAN',
-  'হান্নান': 'HANNAN', 'মনির': 'MONIR', 'মনিরুল': 'MONIRUL', 'নূর': 'NUR', 'নুর': 'NUR',
-  'রুহুল': 'RUHUL', 'আমিন': 'AMIN', 'আমিনুল': 'AMINUL', 'শহীদ': 'SHAHID', 'শহিদ': 'SHAHID',
-  'মাহমুদ': 'MAHMUD', 'রাসেল': 'RASEL', 'রিপন': 'RIPON', 'সজীব': 'SAJIB', 'সজিব': 'SAJIB',
+  'হান্নান': 'HANNAN', 'মনির': 'MONIR', 'মনিরুল': 'MONIRUL', 'নূর': 'NUR', 'নুর': 'NUR', 'নূরুল': 'NURUL', 'নুরুল': 'NURUL',
+  'রুহুল': 'RUHUL', 'আমিন': 'AMIN', 'আমিনুল': 'AMINUL', 'শহীদ': 'SHAHID', 'শহিদ': 'SHAHID', 'শহীদুল': 'SHAHIDUL', 'শহিদুল': 'SHAHIDUL',
+  'মাহমুদ': 'MAHMUD', 'মাহমুদুল': 'MAHMUDUL', 'রাসেল': 'RASEL', 'রিপন': 'RIPON', 'সজীব': 'SAJIB', 'সজিব': 'SAJIB',
   'তানভীর': 'TANVIR', 'তানভির': 'TANVIR', 'সাকিব': 'SAKIB', 'শাকিব': 'SAKIB',
-  'আরিফ': 'ARIF', 'আশরাফ': 'ASHRAF', 'ফারুক': 'FARUK', 'ফজলুল': 'FAZLUL',
-  'মশিউর': 'MOSHIUR', 'মাহবুব': 'MAHBUB', 'আনোয়ার': 'ANOWAR', 'আনোয়ার': 'ANOWAR',
+  'আরিফ': 'ARIF', 'আরিফুল': 'ARIFUL', 'আশরাফ': 'ASHRAF', 'আশরাফুল': 'ASHRAFUL', 'ফারুক': 'FARUK', 'ফজলুল': 'FAZLUL',
+  'মশিউর': 'MOSHIUR', 'মাহবুব': 'MAHBUB', 'মাহবুবুর': 'MAHBUBUR', 'আনোয়ার': 'ANOWAR', 'আনোয়ার': 'ANOWAR',
   'দেলোয়ার': 'DELOWAR', 'দেলোয়ার': 'DELOWAR', 'মনোয়ার': 'MONOWAR', 'মনোয়ার': 'MONOWAR',
   'সরোয়ার': 'SAROWAR', 'সরোয়ার': 'SAROWAR', 'জাহাঙ্গীর': 'JAHANGIR', 'জাহাংগীর': 'JAHANGIR',
   'আলমগীর': 'ALAMGIR', 'শাহীন': 'SHAHIN', 'শাহিন': 'SHAHIN', 'শাহজাহান': 'SHAHJAHAN',
@@ -342,12 +345,27 @@ const BN_NAME_WORD_MAP = {
   'দাস': 'DAS', 'পাল': 'PAL', 'রায়': 'ROY', 'রায়': 'ROY', 'সেন': 'SEN', 'ঘোষ': 'GHOSH',
   'দত্ত': 'DUTTA', 'হালদার': 'HALDER', 'মল্লিক': 'MALLICK', 'প্রামাণিক': 'PRAMANIK',
   'ফকির': 'FAKIR', 'মৃধা': 'MRIDHA', 'হাওলাদার': 'HOWLADER', 'সরদার': 'SARDAR',
-  'খান': 'KHAN', 'উদ্দিন': 'UDDIN', 'উদ্দীন': 'UDDIN', 'আহসান': 'AHSAN', 'সাঈদ': 'SAID',
+  'খান': 'KHAN', 'খাঁ': 'KHAN', 'উদ্দিন': 'UDDIN', 'উদ্দীন': 'UDDIN', 'আহসান': 'AHSAN', 'সাঈদ': 'SAID',
   'বাচ্চু': 'BACHCHU', 'বাবুল': 'BABUL', 'মিজানুর': 'MIZANUR', 'সাইফুল': 'SAIFUL',
   'নাজমুল': 'NAZMUL', 'কামরুল': 'KAMRUL', 'জহিরুল': 'ZAHIRUL', 'জহির': 'ZAHIR',
   'আজিজ': 'AZIZ', 'আজিজুল': 'AZIZUL', 'তৌহিদ': 'TOWHID', 'তৌহিদুল': 'TOWHIDUL',
   'হামিদ': 'HAMID', 'হামিদুল': 'HAMIDUL', 'খালেক': 'KHALEQ', 'মালেক': 'MALEK',
-  'সিদ্দিক': 'SIDDIK', 'সিদ্দিকুর': 'SIDDIQUR', 'মোতালেব': 'MOTALEB', 'মোশাররফ': 'MOSHARRAF'
+  'সিদ্দিক': 'SIDDIK', 'সিদ্দিকুর': 'SIDDIQUR', 'মোতালেব': 'MOTALEB', 'মোশাররফ': 'MOSHARRAF',
+  'সেলিম': 'SELIM', 'সোহেল': 'SOHEL', 'সুমন': 'SUMON', 'মাসুদ': 'MASUD', 'জসিম': 'JASIM', 'হেলাল': 'HELAL',
+  'সুজন': 'SUJON', 'পলাশ': 'PALASH', 'জহুরুল': 'ZAHURUL', 'আকবর': 'AKBAR', 'আসাদ': 'ASAD', 'আসলাম': 'ASLAM',
+  'বোরহান': 'BORHAN', 'বশির': 'BASHIR', 'কাদের': 'KADER', 'রেজা': 'REZA', 'রেজাউল': 'REZAUL',
+  'রবিউল': 'RABIUL', 'শামীম': 'SHAMIM', 'শামিম': 'SHAMIM', 'শরীফ': 'SHARIF', 'শরিফ': 'SHARIF', 'শরিফুল': 'SHARIFUL',
+  'জিয়া': 'ZIA', 'জিয়া': 'ZIA', 'জিয়াউর': 'ZIAUR', 'জিয়াউর': 'ZIAUR', 'খলিল': 'KHALIL', 'খলিলুর': 'KHALILUR',
+  'ফয়সাল': 'FAISAL', 'ফয়সাল': 'FAISAL', 'ইমরান': 'IMRAN', 'মেহেদী': 'MEHEDI', 'মেহেদি': 'MEHEDI',
+  'রাকিব': 'RAKIB', 'রাকিবুল': 'RAKIBUL', 'মামুন': 'MAMUN', 'সোহান': 'SOHAN', 'সোহানুর': 'SOHANUR',
+  'ফারহানা': 'FARHANA', 'রুমানা': 'RUMANA', 'সাবিনা': 'SABINA', 'তাহমিনা': 'TAHMINA', 'রাজিয়া': 'RAZIA', 'রাজিয়া': 'RAZIA',
+  'নাজমা': 'NAZMA', 'সাজিদা': 'SAJIDA', 'ফরিদা': 'FARIDA', 'মাহফুজা': 'MAHFUZA', 'নাসরিন': 'NASRIN', 'নাসরীন': 'NASRIN',
+  'জোহরা': 'ZOHRA', 'মমতাজ': 'MOMTAZ', 'আমেনা': 'AMENA', 'হাজেরা': 'HAJERA', 'খোদেজা': 'KHODEJA', 'রাহেলা': 'RAHELA',
+  'শামসুন্নাহার': 'SHAMSUNNAHAR', 'রোকেয়া': 'ROKEYA', 'রোকেয়া': 'ROKEYA', 'জান্নাত': 'JANNAT', 'জান্নাতুল': 'JANNATUL',
+  'ফেরদৌস': 'FERDOUS', 'ফেরদৌসী': 'FERDOUSI', 'আসমা': 'ASMA', 'নাসিমা': 'NASIMA', 'হাসিনা': 'HASINA',
+  'জাকির': 'ZAKIR', 'জাহিদ': 'ZAHID', 'জাহিদুল': 'ZAHIDUL', 'জোনায়েদ': 'ZUNAID', 'জুনায়েদ': 'ZUNAID',
+  'খায়রুল': 'KHAYRUL', 'খায়রুল': 'KHAYRUL', 'বদরুল': 'BADRUL', 'মফিজ': 'MAFIZ', 'মফিজুল': 'MAFIZUL',
+  'চাকমা': 'CHAKMA', 'মারমা': 'MARMA', 'ত্রিপুরা': 'TRIPURA', 'তঞ্চঙ্গ্যা': 'TANCHANGYA'
 };
 
 function transliterateBnWordToEn(word) {
@@ -369,7 +387,7 @@ function transliterateBnWordToEn(word) {
   };
   let out = '';
   let i = 0;
-  let lastHadExplicitVowel = true;
+  let lastHadConjunct = false;
   while (i < bare.length) {
     const ch = bare[i];
     if (bare.slice(i, i + 3) === 'ক্ষ') {
@@ -377,7 +395,7 @@ function transliterateBnWordToEn(word) {
       i += 3;
       const nextCh = bare[i] || '';
       if (!kars[nextCh] && nextCh !== '্' && i < bare.length && cons[nextCh]) out += 'A';
-      lastHadExplicitVowel = Boolean(kars[nextCh]);
+      lastHadConjunct = false;
       continue;
     }
     if (bare.slice(i, i + 3) === 'জ্ঞ') {
@@ -385,28 +403,29 @@ function transliterateBnWordToEn(word) {
       i += 3;
       const nextCh = bare[i] || '';
       if (!kars[nextCh] && nextCh !== '্' && i < bare.length && cons[nextCh]) out += 'A';
-      lastHadExplicitVowel = Boolean(kars[nextCh]);
+      lastHadConjunct = false;
       continue;
     }
     if (indVowels[ch]) {
       out += indVowels[ch];
-      lastHadExplicitVowel = true;
+      lastHadConjunct = false;
       i++;
       continue;
     }
     if (kars[ch]) {
       out += kars[ch];
-      lastHadExplicitVowel = true;
+      lastHadConjunct = false;
       i++;
       continue;
     }
-    if (ch === 'ং') { out += 'NG'; lastHadExplicitVowel = false; i++; continue; }
-    if (ch === 'ঃ') { out += i === bare.length - 1 ? '' : 'H'; lastHadExplicitVowel = false; i++; continue; }
+    if (ch === 'ং') { out += 'NG'; lastHadConjunct = false; i++; continue; }
+    if (ch === 'ঃ') { out += i === bare.length - 1 ? '' : 'H'; lastHadConjunct = false; i++; continue; }
     if (ch === 'ঁ') { i++; continue; }
     if (ch === '্') {
-      if (bare[i + 1] === 'য') { out += 'Y'; i += 2; continue; }
-      if (bare[i + 1] === 'র') { out += 'R'; i += 2; continue; }
-      lastHadExplicitVowel = true;
+      if (bare[i + 1] === 'য') { out += 'Y'; lastHadConjunct = true; i += 2; continue; }
+      if (bare[i + 1] === 'র') { out += 'R'; lastHadConjunct = true; i += 2; continue; }
+      if (bare[i + 1] === 'ব' && i > 0) { out += 'W'; lastHadConjunct = true; i += 2; continue; }
+      lastHadConjunct = true;
       i++;
       continue;
     }
@@ -414,17 +433,18 @@ function transliterateBnWordToEn(word) {
       out += cons[ch];
       const nextCh = bare[i + 1] || '';
       if (!kars[nextCh] && nextCh !== '্' && nextCh !== 'ং' && nextCh !== 'ঃ' && ch !== 'ৎ') {
-        if (i + 1 < bare.length && (cons[nextCh] || (!indVowels[nextCh] && i + 2 < bare.length)) && !(lastHadExplicitVowel === false && i > 0 && bare[i - 1] === 'া')) {
+        const isLastConsonant = i + 1 >= bare.length;
+        const prevWasAa = i > 0 && bare[i - 1] === 'া';
+        if (!isLastConsonant && (cons[nextCh] || (!indVowels[nextCh] && i + 2 < bare.length)) && !(prevWasAa && !lastHadConjunct)) {
           out += 'A';
-          lastHadExplicitVowel = false;
         }
-      } else {
-        lastHadExplicitVowel = Boolean(kars[nextCh]);
       }
+      lastHadConjunct = false;
       i++;
       continue;
     }
     out += /[A-Za-z0-9.]/.test(ch) ? ch.toUpperCase() : '';
+    lastHadConjunct = false;
     i++;
   }
   return out.replace(/AAA+/g, 'A').replace(/AA+/g, 'A').trim();
@@ -444,13 +464,183 @@ function transliterateBnToEn(bnText) {
     .trim();
 }
 
+const EN_NAME_WORD_MAP = (() => {
+  const m = {};
+  for (const [bnW, enW] of Object.entries(BN_NAME_WORD_MAP)) {
+    const key = String(enW || '').toUpperCase().trim();
+    const cleanKey = key.replace(/\.+$/, '');
+    if (key && !m[key]) m[key] = bnW;
+    if (cleanKey && !m[cleanKey]) m[cleanKey] = bnW;
+  }
+  return {
+    ...m,
+    'MD.': 'মোঃ', 'MD': 'মোঃ', 'MOHAMMAD': 'মোহাম্মদ', 'MOHAMMED': 'মোহাম্মদ', 'MUHAMMAD': 'মুহাম্মদ',
+    'MOSAMMAT': 'মোছাঃ', 'MOST.': 'মোছাঃ', 'MOST': 'মোছাঃ', 'MST.': 'মোছাঃ', 'MST': 'মোছাঃ',
+    'SRI': 'শ্রী', 'SRIMOTI': 'শ্রীমতী', 'SHREE': 'শ্রী', 'LATE': 'মৃত', 'HAJI': 'হাজী',
+    'HOSSAIN': 'হোসেন', 'HOSSAINE': 'হোসেন', 'HOSEN': 'হোসেন', 'HASAN': 'হাসান', 'HASSAN': 'হাসান',
+    'RAHMAN': 'রহমান', 'ROHMAN': 'রহমান', 'ISLAM': 'ইসলাম', 'AHMED': 'আহমেদ', 'AHMAD': 'আহমদ', 'AHAMMED': 'আহম্মেদ',
+    'KARIM': 'করিম', 'RAHIM': 'রহিম', 'ALI': 'আলী', 'KHAN': 'খান', 'UDDIN': 'উদ্দিন',
+    'ABDUL': 'আব্দুল', 'ABDUR': 'আব্দুর', 'ABDULLAH': 'আব্দুল্লাহ', 'ABU': 'আবু', 'ABUL': 'আবুল',
+    'CHOWDHURY': 'চৌধুরী', 'SARKAR': 'সরকার', 'SARKER': 'সরকার', 'SERKER': 'সরকার',
+    'TALUKDER': 'তালুকদার', 'TALUKDAR': 'তালুকদার', 'MAJUMDER': 'মজুমদার', 'MOZUMDER': 'মজুমদার', 'MAJUMDAR': 'মজুমদার',
+    'MONDAL': 'মন্ডল', 'MANDAL': 'মন্ডল', 'BISWAS': 'বিশ্বাস', 'SHEIKH': 'শেখ', 'SYED': 'সৈয়দ',
+    'KHANDAKER': 'খন্দকার', 'KHONDKER': 'খোন্দকার', 'KHONDAKAR': 'খন্দকার', 'KAZI': 'কাজী', 'MIRZA': 'মির্জা', 'GAZI': 'গাজী',
+    'SHIKDER': 'শিকদার', 'SIKDER': 'সিকদার', 'SIKDAR': 'সিকদার', 'BHUIYAN': 'ভূঁইয়া', 'BHUIYA': 'ভুইয়া',
+    'PATWARY': 'পাটোয়ারী', 'HOWLADER': 'হাওলাদার', 'HAWLADAR': 'হাওলাদার', 'SARDAR': 'সরদার', 'SARDER': 'সরদার',
+    'FAKIR': 'ফকির', 'MRIDHA': 'মৃধা', 'PRAMANIK': 'প্রামাণিক', 'MALLICK': 'মল্লিক', 'MOLLA': 'মোল্লা', 'MOLLAH': 'মোল্লা',
+    'BEPARI': 'বেপারী', 'MATUBBAR': 'মাতুব্বর', 'SAHA': 'সাহা', 'BARUA': 'বড়ুয়া', 'BORUA': 'বড়ুয়া',
+    'KHATUN': 'খাতুন', 'BEGUM': 'বেগম', 'AKTER': 'আক্তার', 'AKHTER': 'আক্তার', 'AKTAR': 'আক্তার', 'AKHTAR': 'আক্তার',
+    'SULTANA': 'সুলতানা', 'JAHAN': 'জাহান', 'YASMIN': 'ইয়াসমিন', 'YEASMIN': 'ইয়াসমিন', 'YESMIN': 'ইয়াসমিন',
+    'PARVIN': 'পারভীন', 'PARVEEN': 'পারভীন', 'NAHAR': 'নাহার', 'FATEMA': 'ফাতেমা', 'FATIMA': 'ফাতিমা',
+    'AYESHA': 'আয়েশা', 'AISHA': 'আয়েশা', 'KHADIJA': 'খাদিজা', 'MARIYAM': 'মরিয়ম', 'MORIOM': 'মরিয়ম', 'MARYAM': 'মরিয়ম',
+    'SUMAIYA': 'সুমাইয়া', 'SUMIYA': 'সুমাইয়া', 'TASNIM': 'তাসনিম', 'NUSRAT': 'নুসরাত', 'SHARMIN': 'শারমিন',
+    'ROKSANA': 'রোকসানা', 'ROKHSANA': 'রোখসানা', 'SALMA': 'সালমা', 'HALIMA': 'হালিমা', 'SAKHINA': 'সখিনা', 'SOKHINA': 'সখিনা',
+    'JAMILA': 'জামিলা', 'ANOWARA': 'আনোয়ারা', 'ANWARA': 'আনোয়ারা', 'MONOWARA': 'মনোয়ারা', 'REHANA': 'রেহানা',
+    'SHAHANA': 'শাহানা', 'RUBINA': 'রুবিনা', 'SHIRIN': 'শিরিন', 'LAYLA': 'লায়লা', 'LAILA': 'লায়লা',
+    'RANI': 'রানী', 'DEVI': 'দেবী', 'DAS': 'দাস', 'PAL': 'পাল', 'PAUL': 'পাল', 'ROY': 'রায়', 'SEN': 'সেন',
+    'GHOSH': 'ঘোষ', 'DUTTA': 'দত্ত', 'HALDER': 'হালদার', 'KARMAKAR': 'কর্মকার', 'KUMAR': 'কুমার', 'CHANDRA': 'চন্দ্র', 'NATH': 'নাথ',
+    'MIA': 'মিয়া', 'MIYA': 'মিয়া', 'MIAH': 'মিয়া', 'MUNSHI': 'মুন্সি', 'MOSTAFA': 'মোস্তফা', 'MUSTAFA': 'মোস্তফা',
+    'ALAM': 'আলম', 'ALAMGIR': 'আলমগীর', 'JAHANGIR': 'জাহাঙ্গীর', 'KAMAL': 'কামাল', 'JAMAL': 'জামাল',
+    'NAZRUL': 'নজরুল', 'RAFIQUL': 'রফিকুল', 'SHAFIQUL': 'শফিকুল', 'TARIQUL': 'তরিকুল', 'RAFIQ': 'রফিক', 'SHAFIQ': 'শফিক',
+    'AMIN': 'আমিন', 'AMINUL': 'আমিনুল', 'RUHUL': 'রুহুল', 'SHAHID': 'শহীদ', 'SHAHIDUL': 'শহীদুল',
+    'MAHMUD': 'মাহমুদ', 'MAHMUDUL': 'মাহমুদুল', 'RASEL': 'রাসেল', 'RASHEL': 'রাসেল', 'RIPON': 'রিপন',
+    'SAJIB': 'সজীব', 'SOJIB': 'সজীব', 'TANVIR': 'তানভীর', 'SAKIB': 'সাকিব', 'SHAKIB': 'শাকিব',
+    'ARIF': 'আরিফ', 'ARIFUL': 'আরিফুল', 'ASHRAF': 'আশরাফ', 'ASHRAFUL': 'আশরাফুল', 'FARUK': 'ফারুক', 'FARUQ': 'ফারুক',
+    'FAZLUL': 'ফজলুল', 'MOSHIUR': 'মশিউর', 'MASHIUR': 'মশিউর', 'MAHBUB': 'মাহবুব', 'MAHBUBUR': 'মাহবুবুর',
+    'ANOWAR': 'আনোয়ার', 'ANWAR': 'আনোয়ার', 'DELOWAR': 'দেলোয়ার', 'DELWAR': 'দেলোয়ার',
+    'MONOWAR': 'মনোয়ার', 'SAROWAR': 'সরোয়ার', 'SHAHIN': 'শাহীন', 'SHAHJAHAN': 'শাহজাহান',
+    'IBRAHIM': 'ইব্রাহিম', 'ISMAIL': 'ইসমাইল', 'YUSUF': 'ইউসুফ', 'YUNUS': 'ইউনুস', 'YAKUB': 'ইয়াকুব', 'SULAIMAN': 'সোলাইমান', 'SOLAIMAN': 'সোলাইমান',
+    'MIZANUR': 'মিজানুর', 'SAIFUL': 'সাইফুল', 'NAZMUL': 'নাজমুল', 'KAMRUL': 'কামরুল', 'ZAHIRUL': 'জহিরুল', 'ZAHIR': 'জহির',
+    'AZIZ': 'আজিজ', 'AZIZUL': 'আজিজুল', 'TOWHID': 'তৌহিদ', 'TOWHIDUL': 'তৌহিদুল', 'HAMID': 'হামিদ', 'HAMIDUL': 'হামিদুল',
+    'KHALEQ': 'খালেক', 'KHALEK': 'খালেক', 'MALEK': 'মালেক', 'SIDDIK': 'সিদ্দিক', 'SIDDIQ': 'সিদ্দিক', 'SIDDIQUR': 'সিদ্দিকুর',
+    'MOTALEB': 'মোতালেব', 'MOSHARRAF': 'মোশাররফ', 'MONIR': 'মনির', 'MONIRUL': 'মনিরুল', 'NUR': 'নূর', 'NOOR': 'নূর', 'NURUL': 'নূরুল',
+    'SALAM': 'সালাম', 'MAJID': 'মজিদ', 'HAKIM': 'হাকিম', 'HALIM': 'হালিম', 'RASHID': 'রশিদ', 'LATIF': 'লতিফ',
+    'JABBAR': 'জব্বার', 'SATTAR': 'সাত্তার', 'GAFUR': 'গফুর', 'MANNAN': 'মান্নান', 'HANNAN': 'হান্নান',
+    'KABIR': 'কবির', 'HABIB': 'হাবিব', 'AHSAN': 'আহসান', 'SAID': 'সাঈদ', 'BACHCHU': 'বাচ্চু', 'BABUL': 'বাবুল',
+    'SOHEL': 'সোহেল', 'SELIM': 'সেলিম', 'SALIM': 'সলিম', 'SUMON': 'সুমন', 'MASUD': 'মাসুদ', 'JASIM': 'জসিম', 'JASHIM': 'জসিম',
+    'HELAL': 'হেলাল', 'SUJON': 'সুজন', 'SUJAN': 'সুজন', 'PALASH': 'পলাশ', 'ZAHURUL': 'জহুরুল',
+    'AKBAR': 'আকবর', 'ASAD': 'আসাদ', 'ASADUL': 'আসাদুল', 'ASLAM': 'আসলাম', 'BORHAN': 'বোরহান',
+    'BASHIR': 'বশির', 'KADER': 'কাদের', 'QADER': 'কাদের', 'REZA': 'রেজা', 'REZAUL': 'রেজাউল', 'RABIUL': 'রবিউল', 'ROBIUL': 'রবিউল',
+    'SHAMIM': 'শামীম', 'SHARIF': 'শরীফ', 'SHARIFUL': 'শরিফুল', 'ZIA': 'জিয়া', 'ZIAUR': 'জিয়াউর', 'KHALIL': 'খলিল', 'KHALILUR': 'খলিলুর',
+    'FAISAL': 'ফয়সাল', 'FOYSAL': 'ফয়সাল', 'IMRAN': 'ইমরান', 'MEHEDI': 'মেহেদী', 'RAKIB': 'রাকিব', 'RAKIBUL': 'রাকিবুল',
+    'MAMUN': 'মামুন', 'SOHAG': 'সোহগ', 'SHOHAG': 'সোহাগ', 'NAHID': 'নাহিদ', 'FAHAD': 'ফাহাদ', 'EMON': 'ইমন', 'SHANTO': 'শান্ত', 'HRIDOY': 'হৃদয়',
+    'FARHANA': 'ফারহানা', 'RUMANA': 'রুমানা', 'SABINA': 'সাবিনা', 'TAHMINA': 'তাহমিনা', 'RAZIA': 'রাজিয়া', 'RAZIYA': 'রাজিয়া',
+    'NAZMA': 'নাজমা', 'SAJIDA': 'সাজিদা', 'FARIDA': 'ফরিদা', 'MAHFUZA': 'মাহফুজা', 'NASRIN': 'নাসরিন',
+    'ZOHRA': 'জোহরা', 'MOMTAZ': 'মমতাজ', 'AMENA': 'আমেনা', 'HAJERA': 'হাজেরা', 'KHODEJA': 'খোদেজা', 'RAHELA': 'রাহেলা',
+    'SHAMSUNNAHAR': 'শামসুন্নাহার', 'ROKEYA': 'রোকেয়া', 'JANNAT': 'জান্নাত', 'JANNATUL': 'জান্নাতুল',
+    'FERDOUS': 'ফেরদৌস', 'FERDOUSI': 'ফেরদৌসী', 'ASMA': 'আসমা', 'NASIMA': 'নাসিমা', 'HASINA': 'হাসিনা',
+    'SADIA': 'সাদিয়া', 'SADIYA': 'সাদিয়া', 'TANIA': 'তানিয়া', 'SONIA': 'সোনিয়া', 'LAMIA': 'লামিয়া', 'AFRIN': 'আফরিন',
+    'SHILPI': 'শিল্পী', 'SWAPNA': 'স্বপ্না', 'REKHA': 'রেখা', 'SHIKHA': 'শিখা', 'MINA': 'মিনা', 'DIPA': 'দীপা', 'SIMA': 'সীমা',
+    'BIBI': 'বিবি', 'BANU': 'বানু', 'NESSA': 'নেছা', 'NESA': 'নেসা', 'CHAKMA': 'চাকমা', 'MARMA': 'মারমা', 'TRIPURA': 'ত্রিপুরা', 'TANCHANGYA': 'তঞ্চঙ্গ্যা'
+  };
+})();
+
+function transliterateEnWordToBn(word) {
+  if (!word) return '';
+  const raw = String(word).trim();
+  if (!raw) return '';
+  if (hasBengaliScript(raw)) return raw;
+  const bare = raw.toUpperCase().replace(/[^A-Z.]/g, '');
+  if (!bare) return raw;
+  if (EN_NAME_WORD_MAP[bare]) return EN_NAME_WORD_MAP[bare];
+  const noDot = bare.replace(/\.+$/, '');
+  if (EN_NAME_WORD_MAP[noDot]) return EN_NAME_WORD_MAP[noDot];
+
+  const vInit = [
+    ['OUI', 'ঔই'], ['OU', 'ঔ'], ['OI', 'ঐ'], ['AA', 'আ'], ['AE', 'আ'], ['AI', 'আই'],
+    ['EA', 'ইয়া'], ['EE', 'ঈ'], ['EI', 'এই'], ['EO', 'ইও'], ['IA', 'ইয়া'], ['IE', 'ই'],
+    ['IO', 'ইও'], ['OO', 'উ'], ['OA', 'ও'], ['OY', 'অয়'], ['A', 'আ'], ['E', 'এ'],
+    ['I', 'ই'], ['O', 'ও'], ['U', 'উ'], ['Y', 'ইয়']
+  ];
+  const vKar = [
+    ['OU', 'ৌ'], ['OI', 'ৈ'], ['AA', 'া'], ['AE', 'ে'], ['AI', 'াই'], ['AY', 'ায়'],
+    ['EE', 'ী'], ['EI', 'েই'], ['EY', 'ে'], ['OO', 'ূ'], ['OU', 'ৌ'], ['OW', 'ো'],
+    ['OA', 'ো'], ['OY', 'য়'], ['A', 'া'], ['E', 'ে'], ['I', 'ি'], ['O', 'ো'], ['U', 'ু'], ['Y', 'ি']
+  ];
+  const cMap = [
+    ['CHH', 'ছ'], ['CH', 'চ'], ['SH', 'শ'], ['KH', 'খ'], ['GH', 'ঘ'], ['TH', 'থ'],
+    ['DH', 'ধ'], ['PH', 'ফ'], ['BH', 'ভ'], ['JH', 'ঝ'], ['RH', 'ঢ়'], ['NG', 'ং'],
+    ['K', 'ক'], ['C', 'ক'], ['G', 'গ'], ['J', 'জ'], ['Z', 'জ'], ['T', 'ত'],
+    ['D', 'দ'], ['N', 'ন'], ['P', 'প'], ['F', 'ফ'], ['B', 'ব'], ['V', 'ভ'],
+    ['M', 'ম'], ['R', 'র'], ['L', 'ল'], ['S', 'স'], ['H', 'হ'], ['Q', 'ক'],
+    ['W', 'ওয়'], ['X', 'ক্স'], ['Y', 'য়']
+  ];
+
+  let out = '';
+  let i = 0;
+  let afterCons = false;
+  while (i < noDot.length) {
+    let matched = false;
+    if (afterCons) {
+      for (const [k, v] of vKar) {
+        if (noDot.startsWith(k, i)) {
+          out += v;
+          i += k.length;
+          afterCons = false;
+          matched = true;
+          break;
+        }
+      }
+      if (matched) continue;
+    } else {
+      for (const [k, v] of vInit) {
+        if (noDot.startsWith(k, i)) {
+          out += v;
+          i += k.length;
+          afterCons = false;
+          matched = true;
+          break;
+        }
+      }
+      if (matched) continue;
+    }
+    for (const [k, v] of cMap) {
+      if (noDot.startsWith(k, i)) {
+        out += v;
+        i += k.length;
+        afterCons = (k !== 'NG');
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) {
+      out += noDot[i];
+      i++;
+      afterCons = false;
+    }
+  }
+  return out.trim();
+}
+
+function transliterateEnToBn(enText) {
+  if (!enText) return '';
+  const cleaned = String(enText).trim();
+  if (!cleaned) return '';
+  if (hasBengaliScript(cleaned)) return cleaned.normalize('NFC').replace(/\s+/g, ' ').trim();
+  return cleaned
+    .split(/\s+/)
+    .map(transliterateEnWordToBn)
+    .filter(Boolean)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function stripPersonPrefixes(str) {
+  return String(str || '')
+    .normalize('NFC')
+    .replace(/^(?:মোঃ|মো:|মো\.|মোহাম্মদ|মোহাম্মাদ|মুহাম্মদ|মোছাঃ|মোছা:|মোছা\.|মোসাঃ|মোসা\.|মোসাম্মৎ|মোসাম্মত|শ্রী|শ্রীমতী|মৃত|md\.?|mohammad|mohammed|muhammad|mosammat|most\.?|mst\.?|sri|late)\s+/i, '')
+    .replace(/[\s\u200B-\u200D\uFEFF]+/g, '')
+    .toLowerCase();
+}
+
 function cleanOcrFieldText(val) {
   if (val === null || val === undefined) return '';
-  let s = String(val).replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/\s+/g, ' ').trim();
-  if (!s || /^(null|none|n\/a|na|undefined|-|not\s+available|not\s+printed|নেই|প্রযোজ্য\s*নয়)$/i.test(s)) {
+  let s = String(val).normalize('NFC').replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/\s+/g, ' ').trim();
+  if (!s || /^(null|none|n\/a|na|undefined|-+|—|not\s+available|not\s+printed|নেই|পাওয়া\s*যায়নি|প্রযোজ্য\s*নয়)$/i.test(s)) {
     return '';
   }
-  s = s.replace(/^(?:নিবন্ধিত\s*ব্যক্তির\s*নাম|আবেদনকারীর\s*নাম|নাম\s*\(বাংলা\)|নাম\s*\(ইংরেজি\)|নাম|name(?:\s*\(in\s*english\))?|পিতার?\s*নাম|পিতা|father(?:'s)?\s*name|মাতার?\s*নাম|মাতা|mother(?:'s)?\s*name|স্বামী\s*\/\s*স্ত্রী(?:র\s*নাম)?|স্বামী(?:র\s*নাম)?|স্ত্রী(?:র\s*নাম)?|spouse(?:'s)?\s*name|husband(?:'s)?\s*name|wife(?:'s)?\s*name|জন্ম\s*তারিখ|date\s*of\s*birth|dob|id\s*no\.?|nid\s*no\.?|birth\s*registration\s*no\.?)\s*[:ঃ\-–]+\s*/i, '').trim();
+  s = s.replace(/^(?:নিবন্ধিত\s*ব্যক্তির\s*নাম|আবেদনকারীর\s*নাম|নাম\s*\(বাংলা\)|নাম\s*\(ইংরেজি\)|নাম|name\s*of\s*(?:the\s*)?(?:child|person)|name(?:\s*\(in\s*english\))?|পিতার?\s*নাম|পিতা|father(?:'s)?\s*name|মাতার?\s*নাম|মাতা|mother(?:'s)?\s*name|স্বামী\s*\/\s*স্ত্রী(?:র\s*নাম)?|স্বামী(?:র\s*নাম)?|স্ত্রী(?:র\s*নাম)?|spouse(?:'s)?\s*name|husband(?:'s)?\s*name|wife(?:'s)?\s*name|জন্ম\s*তারিখ|date\s*of\s*birth|dob|id\s*no\.?|nid\s*no\.?|জন্ম\s*নিবন্ধন\s*ন(?:ং|ম্বর)|জাতীয়?\s*পরিচ(?:য়|য়)\s*ন(?:ং|ম্বর)|birth\s*registration\s*no\.?)\s*[:ঃ\-–]+\s*/i, '').trim();
   return s;
 }
 
@@ -486,6 +676,10 @@ function normalizeOcrKeyAliases(rawObj) {
   }
   if (!cleanOcrFieldText(out.nid_number)) out.nid_number = pickAlias(['nid', 'nid_no', 'nidNo', 'nidNumber', 'national_id', 'national_id_no', 'id_no', 'id_number']);
   if (!cleanOcrFieldText(out.birth_reg_no)) out.birth_reg_no = pickAlias(['brc', 'brc_no', 'brcNo', 'brc_number', 'birth_reg', 'birth_reg_number', 'birth_registration_no', 'birth_registration_number', 'brn', 'registration_no', 'registration_number']);
+  if (!cleanOcrFieldText(out.father_nid)) out.father_nid = pickAlias(['fatherNid', 'father_nid_no', 'father_national_id', 'pita_nid']);
+  if (!cleanOcrFieldText(out.mother_nid)) out.mother_nid = pickAlias(['motherNid', 'mother_nid_no', 'mother_national_id', 'mata_nid']);
+  if (!cleanOcrFieldText(out.registration_date)) out.registration_date = pickAlias(['reg_date', 'date_of_registration', 'issue_date', 'date_of_issuance']);
+  if (!cleanOcrFieldText(out.detected_language)) out.detected_language = pickAlias(['language', 'doc_language', 'script']);
   if (!cleanOcrFieldText(out.doc_number)) out.doc_number = pickAlias(['doc_no', 'docNumber', 'document_number', 'document_no', 'id']) || out.birth_reg_no || out.nid_number || '';
 
   if (!cleanOcrFieldText(out.name_bn)) out.name_bn = pickAlias(['nameBn', 'name_bangla', 'bangla_name', 'full_name_bn', 'applicant_name_bn']);
@@ -517,7 +711,8 @@ function normalizeOcrKeyAliases(rawObj) {
   if (!cleanOcrFieldText(out.relation_suggestion)) out.relation_suggestion = pickAlias(['relation', 'relationship', 'relation_to_head']);
 
   for (const k of [
-    'doc_type', 'doc_number', 'nid_number', 'birth_reg_no',
+    'doc_type', 'doc_number', 'nid_number', 'birth_reg_no', 'father_nid', 'mother_nid',
+    'registration_date', 'detected_language',
     'name_bn', 'name_en', 'dob', 'gender',
     'father_name_bn', 'father_name_en', 'mother_name_bn', 'mother_name_en',
     'spouse_name_bn', 'spouse_name_en', 'relation_suggestion',
@@ -526,7 +721,7 @@ function normalizeOcrKeyAliases(rawObj) {
     out[k] = cleanOcrFieldText(out[k] ?? '');
   }
   if (!['high', 'medium', 'low'].includes(String(out.confidence || '').toLowerCase())) {
-    out.confidence = out.name_bn && out.doc_number && out.dob ? 'medium' : 'low';
+    out.confidence = (out.name_bn || out.name_en) && out.doc_number && out.dob ? 'medium' : 'low';
   } else {
     out.confidence = String(out.confidence).toLowerCase();
   }
@@ -543,13 +738,13 @@ function needsIntelligentCompletion(data = {}) {
   ].some(([bnK, enK]) => {
     const bn = cleanOcrFieldText(data[bnK] || '');
     const en = cleanOcrFieldText(data[enK] || '');
-    return (Boolean(bn) && (!en || hasBengaliScript(en))) || (Boolean(en) && !bn);
+    return (Boolean(bn) && (!en || hasBengaliScript(en))) || (Boolean(en) && (!bn || !hasBengaliScript(bn)));
   });
   if (pairsMissing) return true;
   if (!/^\d{2}\/\d{2}\/\d{4}$/.test(standardizeDate(data.dob || ''))) return true;
   const normG = typeof normalizeGenderValue === 'function' ? normalizeGenderValue(data.gender || '') : String(data.gender || '').trim();
   if (!['পুরুষ', 'নারী', 'হিজড়া'].includes(normG)) return true;
-  if (!cleanOcrFieldText(data.marital_status_suggestion) && (cleanOcrFieldText(data.spouse_name_bn) || cleanOcrFieldText(data.dob))) return true;
+  if (!cleanOcrFieldText(data.marital_status_suggestion) && (cleanOcrFieldText(data.spouse_name_bn) || cleanOcrFieldText(data.spouse_name_en) || cleanOcrFieldText(data.dob))) return true;
   return false;
 }
 
@@ -697,6 +892,10 @@ const OCR_RESPONSE_SCHEMA = {
     doc_number: { type: 'string' },
     nid_number: { type: 'string' },
     birth_reg_no: { type: 'string' },
+    father_nid: { type: 'string' },
+    mother_nid: { type: 'string' },
+    registration_date: { type: 'string' },
+    detected_language: { type: 'string', enum: ['bn_only', 'en_only', 'bilingual'] },
     name_bn: { type: 'string' },
     name_en: { type: 'string' },
     dob: { type: 'string' },
@@ -716,37 +915,46 @@ const OCR_RESPONSE_SCHEMA = {
 
 function buildGeminiPrompt(docTypeHint = 'auto') {
   const bilingualRule = `
-CRITICAL BILINGUAL RULE (ESPECIALLY FOR BANGLA-ONLY BIRTH CERTIFICATES / শুধু বাংলায় জন্ম নিবন্ধন সনদ):
-- If the Birth Registration Certificate or NID is printed ONLY in Bengali (no English text printed on paper), you MUST STILL fill EVERY English field (\`name_en\`, \`father_name_en\`, \`mother_name_en\`, \`spouse_name_en\`) by accurately transliterating the Bengali names into standard Bangladeshi ALL-CAPS English spelling (e.g. "মোঃ" -> "MD.", "মোছাঃ" -> "MOSAMMAT", "রফিকুল ইসলাম" -> "RAFIQUL ISLAM").
-- NEVER leave \`name_en\`, \`father_name_en\`, or \`mother_name_en\` blank if the Bengali field is readable, and NEVER put Bengali characters inside \`*_en\` fields.
-- Convert ALL Bengali digits (০-৯) in dates and 17-digit \`birth_reg_no\` / \`nid_number\` / \`doc_number\` into English ASCII digits (0-9). Convert dates like "১২ই জানুয়ারি, ২০১২" into "12/01/2012" (DD/MM/YYYY).
-- Return ONLY raw valid JSON (no markdown fences, never write "null" or "N/A", use "" for absent fields).`;
+CRITICAL BILINGUAL & DIGIT ISOLATION RULES:
+1. VISUAL DOCUMENT CHECK FIRST: Visually inspect whether the image is a Bangladeshi NID Card OR a Bangladeshi Birth Registration Certificate (জন্ম নিবন্ধন সনদপত্র / BRC), regardless of any UI hint. A Birth Certificate typically says "জন্ম নিবন্ধন সনদ" / "Birth Registration Certificate" and has a 17-digit Birth Registration Number (জন্ম নিবন্ধন নম্বর), plus separate boxes for Father's NID / পিতার জাতীয় পরিচয়পত্র নং and Mother's NID / মাতার জাতীয় পরিচয়পত্র নং.
+2. SCRIPT DETECTION ("detected_language"): Set "detected_language" to "bn_only" if printed text is ONLY in Bengali, "en_only" if printed ONLY in English, or "bilingual" if both appear.
+3. BANGLA-ONLY DOCUMENTS (শুধু বাংলায় জন্ম নিবন্ধন / NID): If ONLY Bengali names are printed, extract exact *_bn AND transliterate EVERY name accurately into standard Bangladeshi ALL-CAPS English in \`name_en\`, \`father_name_en\`, \`mother_name_en\`, \`spouse_name_en\` (e.g. "মোঃ" -> "MD.", "মোছাঃ" -> "MOSAMMAT", "রফিকুল ইসলাম" -> "RAFIQUL ISLAM"). NEVER put Bengali characters in \`*_en\`.
+4. ENGLISH-ONLY DOCUMENTS (শুধু ইংরেজিতে জন্ম নিবন্ধন / NID): If ONLY English names are printed, extract exact ALL-CAPS English in \`*_en\` AND translate/transliterate EVERY name accurately into natural Bangladeshi Bengali spelling in \`name_bn\`, \`father_name_bn\`, \`mother_name_bn\`, \`spouse_name_bn\` (e.g. "MD." -> "মোঃ", "MOSAMMAT" -> "মোছাঃ"). NEVER put Latin/English letters in \`*_bn\`.
+5. NUMBER SEPARATION ON BIRTH CERTIFICATES (খুবই গুরুত্বপূর্ণ): On Birth Certificates, read carefully BEFORE copying any number:
+   - Put the 17-digit "Birth Registration Number / জন্ম নিবন্ধন নম্বর" (usually starts with 4-digit birth year, e.g., 1995..., 2012...) ONLY into \`birth_reg_no\` AND \`doc_number\`. Set \`nid_number\`: "".
+   - NEVER copy "Father's National ID / পিতার এনআইডি" or "Mother's National ID / মাতার এনআইডি" into \`birth_reg_no\`, \`nid_number\`, or \`doc_number\`! Put them ONLY in \`father_nid\` and \`mother_nid\` (or "" if not printed).
+   - NEVER use "Date of Registration / নিবন্ধনের তারিখ" or "Date of Issuance" as \`dob\`! Put registration date in \`registration_date\` and ONLY the person's "জন্ম তারিখ / Date of Birth" in \`dob\`.
+6. Convert ALL Bengali digits (০-৯) to ASCII digits (0-9) and format \`dob\` strictly as DD/MM/YYYY (e.g. "১২ই জানুয়ারি, ২০১২" -> "12/01/2012").
+7. Return ONLY raw valid JSON (never write "null", "N/A", or label prefixes like "নাম:", use "" for absent fields).`;
   const hint = docTypeHint === 'nid'
-    ? `HINT: User selected Bangladeshi NID Card (ID Card Size). Focus carefully on extracting ALL fields including the 10, 13, or 17-digit NID number.${bilingualRule}`
+    ? `UI HINT: User mode is Bangladeshi NID Card (unless image visually proves to be a Birth Registration Certificate). Focus on 10, 13, or 17-digit NID.${bilingualRule}`
     : docTypeHint === 'birth_certificate'
-      ? `HINT: User selected Bangladeshi Digital Birth Registration Certificate (A4 Paper / জন্ম নিবন্ধন সনদপত্র). Focus carefully on the 17-digit Birth Registration Number, Date of Birth (NOT Registration Date), and parent names.${bilingualRule}`
+      ? `UI HINT: User mode is Bangladeshi Digital Birth Registration Certificate (জন্ম নিবন্ধন সনদপত্র). Focus on 17-digit Birth Registration Number, Date of Birth (NOT Registration Date), and parent names.${bilingualRule}`
       : `Detect automatically whether this is a Bangladeshi NID Card or Birth Registration Certificate.${bilingualRule}`;
   return `You are an expert OCR AI for Bangladeshi Identity Documents:
 1. Bangladeshi National Identity (NID) Cards (Smart NID and Old Laminated/Paper NID).
-2. Bangladeshi Digital Birth Registration Certificates (ডিজিটাল জন্ম নিবন্ধন সনদপত্র / BRC, A4 printed).
+2. Bangladeshi Digital Birth Registration Certificates (ডিজিটাল জন্ম নিবন্ধন সনদপত্র / BRC, A4 printed in Bangla-only, English-only, or Bilingual).
 ${hint}
 
 Classify and extract ALL visible fields into a valid JSON object:
 - "doc_type": Strictly "nid" or "birth_certificate"
+- "detected_language": Strictly "bn_only", "en_only", or "bilingual"
 1. "doc_number" & "nid_number" & "birth_reg_no":
-   - For NID ("doc_type": "nid"): Smart NID prints 10 digits under "NID No."/"জাতীয় পরিচয় নং"; Old Laminated NID prints 13 or 17 digits at bottom under "ID NO:" (if 13 digits, extract those 13 digits or prepend 4-digit birth year from dob to make 17). Copy exact digits into BOTH "doc_number" and "nid_number", and set "birth_reg_no": "".
-   - For Birth Certificate ("doc_type": "birth_certificate"): Extract exact 17-digit Birth Registration Number (জন্ম নিবন্ধন নম্বর / Personal Identification Number). CRITICAL: NEVER confuse Father's/Mother's NID or Serial No with the 17-digit Birth Registration Number! Copy 17 digits into BOTH "doc_number" and "birth_reg_no", and set "nid_number": "".
+   - For NID ("doc_type": "nid"): Smart NID prints 10 digits under "NID No."/"জাতীয় পরিচয় নং"; Old Laminated NID prints 13 or 17 digits at bottom under "ID NO:". Copy digits into BOTH "doc_number" and "nid_number", and set "birth_reg_no": "".
+   - For Birth Certificate ("doc_type": "birth_certificate"): Extract exact 17-digit Birth Registration Number (জন্ম নিবন্ধন নম্বর). CRITICAL: NEVER confuse Father's NID (\`father_nid\`), Mother's NID (\`mother_nid\`), Register No, or Serial No with the 17-digit Birth Registration Number! Copy 17 digits into BOTH "doc_number" and "birth_reg_no", and set "nid_number": "".
    - Strip spaces/hyphens and convert ALL Bengali digits (০-৯) to English (0-9).
-2. "name_bn": Complete Bengali name.
-3. "name_en": Complete English name in ALL CAPITAL LETTERS (transliterate if not printed).
-4. "dob": Date of Birth in DD/MM/YYYY format (English digits). On Birth Certificates use "জন্ম তারিখ / Date of Birth", NOT Registration/Issuance date.
-5. "gender": Strictly "পুরুষ", "নারী", or "হিজড়া" (infer accurately if omitted on old NID).
-6. "father_name_bn" & "father_name_en": Extract ONLY from "পিতা:"/"পিতার নাম:"/"Father's Name". CRITICAL: For married women's classic laminated NIDs showing "স্বামী:" instead of "পিতা:", NEVER put husband's name into father fields! Leave father fields "" and use spouse fields.
-7. "mother_name_bn" & "mother_name_en": Mother's Bengali & ALL CAPITAL English names.
-8. "spouse_name_bn" & "spouse_name_en": Husband/Wife name from "স্বামী:" / "স্ত্রী:" if printed; otherwise "".
-9. "relation_suggestion": One of ("স্বামী", "স্ত্রী", "পুত্র", "কন্যা", "পিতা", "মাতা", "ভাই", "বোন", "অন্যান্য"). If "স্বামী:" is printed on old NID, suggest "স্ত্রী".
-10. "marital_status_suggestion": One of ("বিবাহিত", "অবিবাহিত", "বিধবা", "বিপত্নীক", "তালাকপ্রাপ্ত").
-11. "confidence": "low" if blurry/glare/cropped/unreadable digits, "medium" if uncertain, "high" if clear.`;
+2. "father_nid" & "mother_nid": Optional parent NID digits printed on BRC ("" if none).
+3. "registration_date": Date of registration/issuance if printed separately from DOB ("" if none).
+4. "name_bn": Complete Bengali name (transliterated into Bengali if card is English-only).
+5. "name_en": Complete English name in ALL CAPITAL LETTERS (transliterated into English if card is Bangla-only).
+6. "dob": Date of Birth in DD/MM/YYYY format (English digits). Never use Registration Date!
+7. "gender": Strictly "পুরুষ", "নারী", or "হিজড়া" (infer accurately if omitted on old NID).
+8. "father_name_bn" & "father_name_en": Extract ONLY from "পিতা:"/"পিতার নাম:"/"Father's Name". CRITICAL: For married women's classic laminated NIDs showing "স্বামী:" instead of "পিতা:", NEVER put husband's name into father fields! Leave father fields "" and use spouse fields.
+9. "mother_name_bn" & "mother_name_en": Mother's complete Bengali & ALL CAPITAL English names.
+10. "spouse_name_bn" & "spouse_name_en": Husband/Wife name from "স্বামী:" / "স্ত্রী:" if printed; otherwise "".
+11. "relation_suggestion": One of ("স্বামী", "স্ত্রী", "পুত্র", "কন্যা", "পিতা", "মাতা", "ভাই", "বোন", "অন্যান্য"). If "স্বামী:" is printed on old NID, suggest "স্ত্রী".
+12. "marital_status_suggestion": One of ("বিবাহিত", "অবিবাহিত", "বিধবা", "বিপত্নীক", "তালাকপ্রাপ্ত").
+13. "confidence": "low" if blurry/glare/cropped/unreadable digits, "medium" if uncertain, "high" if clear.`;
 }
 
 function extractTextFromGemini(res) {
@@ -787,21 +995,48 @@ function extractDigitCandidate(raw) {
   return normalizeDigits(raw || '').replace(/[^0-9]/g, '');
 }
 
-function pickBestDocDigits(candidates, preferredLengths) {
-  const cleaned = candidates.map(extractDigitCandidate).filter(Boolean);
+function pickBestDocDigits(candidates, preferredLengths, opts = {}) {
+  const { excludeSet = null, birthYear = '' } = opts || {};
+  const rawList = candidates.map(extractDigitCandidate).filter(Boolean);
+  const filtered = (excludeSet && excludeSet.size > 0)
+    ? rawList.filter((c) => !excludeSet.has(c))
+    : rawList;
+  const pool = filtered.length ? filtered : rawList;
+  const nonDate = pool.filter((d) => !/^(?:(?:19|20)\d{6}|(?:0[1-9]|[12]\d|3[01])(?:0[1-9]|1[0-2])(?:19|20)\d{2})$/.test(d));
+  const active = nonDate.length ? nonDate : pool;
   for (const len of preferredLengths) {
-    const match = cleaned.find((c) => c.length === len);
-    if (match) return match;
+    const matches = active.filter((c) => c.length === len);
+    if (matches.length) {
+      if (len === 17 && birthYear) {
+        const yrHit = matches.find((c) => c.startsWith(birthYear));
+        if (yrHit) return yrHit;
+      }
+      return matches[0];
+    }
   }
-  return cleaned[0] || '';
+  const longCand = active.find((d) => d.length >= 10);
+  return longCand || active[0] || '';
 }
 
-function isDocDigitsValidForType(docType, parsed) {
+function getDobYear(dobStr) {
+  const m = String(standardizeDate(dobStr || '') || dobStr || '').match(/\b(19\d{2}|20\d{2})\b/);
+  return m ? m[1] : '';
+}
+
+function isDocDigitsValidForType(docType, parsed, extraExclude = null) {
   if (!parsed || typeof parsed !== 'object') return false;
+  const birthYear = getDobYear(parsed.dob || '');
+  const regDigits = extractDigitCandidate(parsed.registration_date);
+  const excludeSet = new Set([
+    extractDigitCandidate(parsed.father_nid),
+    extractDigitCandidate(parsed.mother_nid),
+    regDigits,
+    ...(extraExclude instanceof Set ? Array.from(extraExclude) : [])
+  ].filter(Boolean));
   if (docType === 'birth_certificate') {
-    return pickBestDocDigits([parsed.birth_reg_no, parsed.doc_number, parsed.nid_number], [17]).length === 17;
+    return pickBestDocDigits([parsed.birth_reg_no, parsed.doc_number, parsed.nid_number], [17], { excludeSet, birthYear }).length === 17;
   }
-  const d = pickBestDocDigits([parsed.nid_number, parsed.doc_number, parsed.birth_reg_no], [10, 17, 13]);
+  const d = pickBestDocDigits([parsed.nid_number, parsed.doc_number, parsed.birth_reg_no], [10, 17, 13], { excludeSet, birthYear });
   return d.length === 10 || d.length === 13 || d.length === 17;
 }
 
@@ -828,7 +1063,7 @@ function inferBangladeshiGender(data = {}) {
 
 function validateAndNormalizeOcrData(parsed, body = {}) {
   const warnings = [];
-  for (const k of ['name_bn', 'name_en', 'father_name_bn', 'father_name_en', 'mother_name_bn', 'mother_name_en', 'spouse_name_bn', 'spouse_name_en', 'dob', 'gender', 'relation_suggestion', 'marital_status_suggestion']) {
+  for (const k of ['name_bn', 'name_en', 'father_name_bn', 'father_name_en', 'mother_name_bn', 'mother_name_en', 'spouse_name_bn', 'spouse_name_en', 'dob', 'gender', 'relation_suggestion', 'marital_status_suggestion', 'father_nid', 'mother_nid', 'registration_date', 'detected_language']) {
     parsed[k] = cleanOcrFieldText(parsed[k] ?? '');
   }
   for (const [bnKey, enKey] of [
@@ -837,27 +1072,61 @@ function validateAndNormalizeOcrData(parsed, body = {}) {
     ['mother_name_bn', 'mother_name_en'],
     ['spouse_name_bn', 'spouse_name_en']
   ]) {
-    const bnV = String(parsed[bnKey] || '').trim();
-    const enV = String(parsed[enKey] || '').trim();
-    if (!bnV && hasBengaliScript(enV)) {
+    let bnV = String(parsed[bnKey] || '').trim();
+    let enV = String(parsed[enKey] || '').trim();
+    if (bnV && !hasBengaliScript(bnV) && /[A-Za-z]/.test(bnV) && enV && hasBengaliScript(enV)) {
       parsed[bnKey] = enV;
-      parsed[enKey] = '';
-    } else if (bnV && !hasBengaliScript(bnV) && !enV) {
       parsed[enKey] = bnV.toUpperCase();
-      parsed[bnKey] = '';
+    } else {
+      if (!bnV && hasBengaliScript(enV)) {
+        parsed[bnKey] = enV;
+        parsed[enKey] = '';
+        bnV = enV;
+        enV = '';
+      }
+      if (bnV && !hasBengaliScript(bnV) && /[A-Za-z]/.test(bnV)) {
+        if (!enV || hasBengaliScript(enV)) parsed[enKey] = bnV.toUpperCase();
+        parsed[bnKey] = '';
+      }
+      if (enV && hasBengaliScript(enV)) {
+        if (!parsed[bnKey]) parsed[bnKey] = enV;
+        parsed[enKey] = '';
+      }
     }
   }
 
-  if (body.docType && body.docType !== 'auto') {
-    parsed.doc_type = body.docType;
-  } else if (
-    parsed.doc_type !== 'birth_certificate' &&
-    !extractDigitCandidate(parsed.nid_number) &&
-    extractDigitCandidate(parsed.birth_reg_no).length === 17
-  ) {
-    parsed.doc_type = 'birth_certificate';
-  }
   if (parsed.dob) parsed.dob = standardizeDate(parsed.dob);
+  const birthYear = getDobYear(parsed.dob);
+  const regDigits = extractDigitCandidate(parsed.registration_date);
+  const dobDigits = extractDigitCandidate(parsed.dob);
+  const fatherNid = extractDigitCandidate(parsed.father_nid);
+  const motherNid = extractDigitCandidate(parsed.mother_nid);
+  const parentExclude = new Set([fatherNid, motherNid, dobDigits, regDigits].filter(Boolean));
+  const rawAiNid = extractDigitCandidate(parsed.nid_number);
+  const rawAiBrc = extractDigitCandidate(parsed.birth_reg_no);
+  const rawAiDoc = extractDigitCandidate(parsed.doc_number);
+  const cleanNidNotParent = rawAiNid && !parentExclude.has(rawAiNid) ? rawAiNid : '';
+  const hasBrcEvidence =
+    parsed.doc_type === 'birth_certificate' ||
+    Boolean(fatherNid || motherNid || parsed.registration_date) ||
+    (!cleanNidNotParent && rawAiBrc.length === 17);
+
+  if (body.docType === 'birth_certificate') {
+    parsed.doc_type = 'birth_certificate';
+  } else if (body.docType === 'nid') {
+    if (parsed.doc_type === 'birth_certificate' && rawAiBrc.length === 17 && !cleanNidNotParent) {
+      parsed.doc_type = 'birth_certificate';
+      warnings.push('ডকুমেন্ট ধরন NID থাকলেও ছবিটি জন্ম নিবন্ধন (১৭ ডিজিট BRC) হিসেবে শনাক্ত হয়েছে।');
+    } else {
+      parsed.doc_type = 'nid';
+    }
+  } else {
+    if (parsed.doc_type === 'birth_certificate' || (hasBrcEvidence && !cleanNidNotParent)) {
+      parsed.doc_type = 'birth_certificate';
+    } else {
+      parsed.doc_type = parsed.doc_type || 'nid';
+    }
+  }
 
   if (parsed.gender) parsed.gender = normalizeGenderValue(parsed.gender);
   if (!['পুরুষ', 'নারী', 'হিজড়া'].includes(String(parsed.gender || '').trim())) {
@@ -869,23 +1138,35 @@ function validateAndNormalizeOcrData(parsed, body = {}) {
 
   const spouseBn = String(parsed.spouse_name_bn || '').trim();
   const fatherBn = String(parsed.father_name_bn || '').trim();
-  if (spouseBn && fatherBn && fatherBn === spouseBn) { parsed.father_name_bn = ''; parsed.father_name_en = ''; }
-  if (spouseBn && !parsed.father_name_bn) {
-    warnings.push("পুরাতন NID-তে 'স্বামী' নাম পাওয়া গেছে (পিতার নাম ছাপা নেই) — প্রয়োজনে পিতার নাম যাচাই/লিখুন।");
+  const spouseEn = String(parsed.spouse_name_en || '').trim();
+  const fatherEn = String(parsed.father_name_en || '').trim();
+  const normBnSame = spouseBn && fatherBn && stripPersonPrefixes(spouseBn) === stripPersonPrefixes(fatherBn);
+  const normEnSame = spouseEn && fatherEn && stripPersonPrefixes(spouseEn) === stripPersonPrefixes(fatherEn);
+  if (normBnSame || normEnSame) {
+    parsed.father_name_bn = '';
+    parsed.father_name_en = '';
+  }
+  if ((spouseBn || spouseEn) && !parsed.father_name_bn && !parsed.father_name_en) {
+    warnings.push("পুরাতন NID-তে 'স্বামী' নাম পাওয়া গেছে (পিতার নাম ছাপা নেই) — পিতার নামের ঘরে স্বামী বসেনি, প্রয়োজনে পিতার নাম যাচাই/লিখুন।");
     if (!parsed.relation_suggestion) parsed.relation_suggestion = 'স্ত্রী';
   }
 
   if (parsed.doc_type === 'birth_certificate') {
-    const cleanDoc = pickBestDocDigits([parsed.birth_reg_no, parsed.doc_number, parsed.nid_number], [17]);
+    const cleanDoc = pickBestDocDigits([rawAiBrc, rawAiDoc, rawAiNid], [17], { excludeSet: parentExclude, birthYear });
     parsed.doc_number = cleanDoc;
     parsed.birth_reg_no = cleanDoc;
     parsed.nid_number = '';
+    if (parentExclude.has(rawAiBrc) || parentExclude.has(rawAiDoc)) {
+      warnings.push('জন্ম নিবন্ধন নম্বর থেকে পিতা/মাতার NID নম্বর বাদ দিয়ে সঠিক নম্বর বাছাই করা হয়েছে।');
+    }
+    if (cleanDoc.length === 17 && birthYear && !cleanDoc.startsWith(birthYear)) {
+      warnings.push(`জন্ম নিবন্ধনের প্রথম ৪ অঙ্ক (${cleanDoc.slice(0, 4)}) জন্মসাল (${birthYear})-এর সাথে মিলছে না — ১৭ ডিজিট নম্বর যাচাই করুন।`);
+    }
     if (cleanDoc.length !== 17) warnings.push(`জন্ম নিবন্ধন নম্বরটি ${cleanDoc.length || 0} সংখ্যার (১৭ সংখ্যা প্রয়োজন) — যাচাই করুন।`);
   } else {
-    let cleanDoc = pickBestDocDigits([parsed.nid_number, parsed.doc_number, parsed.birth_reg_no], [10, 17, 13]);
+    let cleanDoc = pickBestDocDigits([rawAiNid, rawAiDoc, rawAiBrc], [10, 17, 13], { excludeSet: parentExclude, birthYear });
     if (cleanDoc.length === 13) {
-      const ym = String(parsed.dob || '').match(/\b(19\d{2}|20\d{2})\b/);
-      if (ym) { cleanDoc = ym[1] + cleanDoc; parsed.nid_converted_to_17 = true; }
+      if (birthYear) { cleanDoc = birthYear + cleanDoc; parsed.nid_converted_to_17 = true; }
       else warnings.push('১৩ সংখ্যার NID-র জন্মসাল না পাওয়ায় ১৭ সংখ্যায় রূপান্তর করা যায়নি।');
     }
     parsed.doc_type = parsed.doc_type || 'nid';
@@ -898,6 +1179,7 @@ function validateAndNormalizeOcrData(parsed, body = {}) {
   }
 
   const enAutoFilled = [];
+  const bnAutoFilled = [];
   for (const [bnKey, enKey] of [
     ['name_bn', 'name_en'],
     ['father_name_bn', 'father_name_en'],
@@ -912,18 +1194,27 @@ function validateAndNormalizeOcrData(parsed, body = {}) {
         parsed[enKey] = tr;
         enAutoFilled.push(enKey);
       }
+    } else if (enVal && (!bnVal || !hasBengaliScript(bnVal))) {
+      const trBn = transliterateEnToBn(enVal);
+      if (trBn && hasBengaliScript(trBn)) {
+        parsed[bnKey] = trBn;
+        bnAutoFilled.push(bnKey);
+      }
     }
   }
   if (enAutoFilled.length > 0) {
     parsed.auto_transliterated_en = true;
     warnings.push('বাংলা-অনলি সনদ থেকে ইংরেজি নাম স্বয়ংক্রিয়ভাবে রূপান্তর করা হয়েছে — বানান যাচাই করুন।');
   }
+  if (bnAutoFilled.length > 0) {
+    parsed.auto_transliterated_bn = true;
+    warnings.push('ইংরেজি-অনলি সনদ থেকে বাংলা নাম স্বয়ংক্রিয়ভাবে রূপান্তর করা হয়েছে — বানান যাচাই করুন।');
+  }
 
   if (!parsed.marital_status_suggestion) {
     if (parsed.spouse_name_bn || parsed.spouse_name_en) parsed.marital_status_suggestion = 'বিবাহিত';
-    else if (/^\d{2}\/\d{2}\/\d{4}$/.test(String(parsed.dob || ''))) {
-      const yr = parseInt(String(parsed.dob).slice(-4), 10);
-      if (yr && (new Date().getFullYear() - yr) <= 18) parsed.marital_status_suggestion = 'অবিবাহিত';
+    else if (birthYear && (new Date().getFullYear() - Number(birthYear)) <= 18) {
+      parsed.marital_status_suggestion = 'অবিবাহিত';
     }
   }
 
@@ -940,7 +1231,7 @@ function validateAndNormalizeOcrData(parsed, body = {}) {
   if (parsed.spouse_name_en) parsed.spouse_name_en = String(parsed.spouse_name_en).toUpperCase().trim();
 
   const missingFields = [];
-  if (!String(parsed.name_bn || '').trim()) missingFields.push('name_bn');
+  if (!String(parsed.name_bn || '').trim() || !hasBengaliScript(parsed.name_bn)) missingFields.push('name_bn');
   if (!String(parsed.name_en || '').trim() || hasBengaliScript(parsed.name_en)) missingFields.push('name_en');
   const validDoc = parsed.doc_type === 'birth_certificate'
     ? String(parsed.birth_reg_no || '').length === 17
@@ -959,7 +1250,7 @@ function validateAndNormalizeOcrData(parsed, body = {}) {
     filledCore,
     totalCore: 7,
     missingFields,
-    repaired: Boolean(parsed.auto_transliterated_en || parsed.deepseek_en_completed || parsed._json_repaired || parsed.gender_inferred)
+    repaired: Boolean(parsed.auto_transliterated_en || parsed.auto_transliterated_bn || parsed.deepseek_en_completed || parsed.gemini_bilingual_completed || parsed._json_repaired || parsed.gender_inferred)
   };
 
   const normMob = body.mobileNumber ? normalizeDigits(body.mobileNumber).replace(/[^0-9]/g, '').trim() : '';
@@ -1027,10 +1318,23 @@ export default {
         function needsWorkerEscalation(p) {
           if (!p || typeof p !== 'object') return true;
           if (p.confidence === 'low') return true;
-          if (!String(p.name_bn || '').trim() || !String(p.name_en || '').trim()) return true;
+          const nb = String(p.name_bn || '').trim();
+          const ne = String(p.name_en || '').trim();
+          if (!nb || !hasBengaliScript(nb) || !ne || hasBengaliScript(ne)) return true;
           if (!/^\d{2}\/\d{2}\/\d{4}$/.test(standardizeDate(p.dob || ''))) return true;
-          const effectiveType = (docType && docType !== 'auto') ? docType : (p.doc_type || 'nid');
-          if (!isDocDigitsValidForType(effectiveType, p)) return true;
+          const rawFn = extractDigitCandidate(p.father_nid);
+          const rawMn = extractDigitCandidate(p.mother_nid);
+          const exc = new Set([rawFn, rawMn].filter(Boolean));
+          const inferredBrc = p.doc_type === 'birth_certificate' || Boolean(rawFn || rawMn || p.registration_date);
+          const effectiveType = (docType === 'birth_certificate' || (docType === 'nid' && inferredBrc && extractDigitCandidate(p.birth_reg_no).length === 17 && !extractDigitCandidate(p.nid_number)))
+            ? 'birth_certificate'
+            : ((docType && docType !== 'auto') ? docType : (inferredBrc ? 'birth_certificate' : (p.doc_type || 'nid')));
+          if (!isDocDigitsValidForType(effectiveType, p, exc)) return true;
+          if (effectiveType === 'birth_certificate') {
+            const by = getDobYear(p.dob);
+            const brc = pickBestDocDigits([p.birth_reg_no, p.doc_number, p.nid_number], [17], { excludeSet: exc, birthYear: by });
+            if (by && brc.length === 17 && !brc.startsWith(by)) return true;
+          }
           const normGender = normalizeGenderValue(p.gender);
           if (!['পুরুষ', 'নারী', 'হিজড়া'].includes(normGender)) return true;
           if (!String(p.mother_name_bn || '').trim() && !String(p.mother_name_en || '').trim()) return true;
@@ -1046,16 +1350,23 @@ export default {
         function mergeWorkerOcrResults(primary, escalated) {
           if (!primary) return escalated;
           if (!escalated) return primary;
-          const effectiveType = (docType && docType !== 'auto')
-            ? docType
-            : (escalated.doc_type && escalated.doc_type !== 'auto' ? escalated.doc_type : (primary.doc_type || 'nid'));
+          const escHasBrc = escalated.doc_type === 'birth_certificate' || Boolean(escalated.father_nid || escalated.mother_nid || escalated.registration_date);
+          const priHasBrc = primary.doc_type === 'birth_certificate' || Boolean(primary.father_nid || primary.mother_nid || primary.registration_date);
+          const effectiveType = docType === 'birth_certificate'
+            ? 'birth_certificate'
+            : ((escHasBrc || (priHasBrc && !extractDigitCandidate(escalated.nid_number))) ? 'birth_certificate' : (docType !== 'auto' ? docType : (escalated.doc_type || primary.doc_type || 'nid')));
           const merged = { ...primary, ...escalated, doc_type: effectiveType };
-          const stringFields = [
-            'name_bn', 'name_en', 'father_name_bn', 'father_name_en',
-            'mother_name_bn', 'mother_name_en', 'spouse_name_bn', 'spouse_name_en',
-            'relation_suggestion', 'marital_status_suggestion'
-          ];
-          for (const f of stringFields) {
+          for (const f of ['name_bn', 'father_name_bn', 'mother_name_bn', 'spouse_name_bn']) {
+            const ev = String(escalated[f] || '').trim();
+            const pv = String(primary[f] || '').trim();
+            merged[f] = (ev && hasBengaliScript(ev)) ? ev : ((pv && hasBengaliScript(pv)) ? pv : (ev || pv));
+          }
+          for (const f of ['name_en', 'father_name_en', 'mother_name_en', 'spouse_name_en']) {
+            const ev = String(escalated[f] || '').trim();
+            const pv = String(primary[f] || '').trim();
+            merged[f] = (ev && !hasBengaliScript(ev)) ? ev.toUpperCase() : ((pv && !hasBengaliScript(pv)) ? pv.toUpperCase() : (ev || pv));
+          }
+          for (const f of ['relation_suggestion', 'marital_status_suggestion', 'father_nid', 'mother_nid', 'registration_date', 'detected_language']) {
             merged[f] = String(escalated[f] || '').trim() || String(primary[f] || '').trim();
           }
           const escDob = standardizeDate(escalated.dob || '');
@@ -1068,7 +1379,8 @@ export default {
           merged.gender = ['পুরুষ', 'নারী', 'হিজড়া'].includes(escG)
             ? escG
             : (['পুরুষ', 'নারী', 'হিজড়া'].includes(priG) ? priG : (escG || priG));
-          if (!isDocDigitsValidForType(effectiveType, escalated) && isDocDigitsValidForType(effectiveType, primary)) {
+          const exc = new Set([extractDigitCandidate(merged.father_nid), extractDigitCandidate(merged.mother_nid)].filter(Boolean));
+          if (!isDocDigitsValidForType(effectiveType, escalated, exc) && isDocDigitsValidForType(effectiveType, primary, exc)) {
             merged.doc_number = primary.doc_number || '';
             merged.nid_number = primary.nid_number || '';
             merged.birth_reg_no = primary.birth_reg_no || '';
@@ -1116,7 +1428,7 @@ export default {
           const attempts = [];
           for (const model of modelsOrder) {
             if (INTERACTIONS_API_MODELS.has(model)) {
-              const useUltraHigh = (model === 'gemini-3.8-flash' || model === 'gemini-4-argon') && (docType === 'birth_certificate' || isEscalation);
+              const useUltraHigh = (model === 'gemini-3.8-flash' || model === 'gemini-4-argon') && (docType === 'birth_certificate' || docType === 'auto' || isEscalation);
               const imageResolution = useUltraHigh ? 'ultra_high' : 'high';
               const ibody = {
                 model,
@@ -1125,12 +1437,12 @@ export default {
                   { type: 'image', data: rawBase64, mime_type: mimeType, resolution: imageResolution }
                 ],
                 response_format: { type: 'text', mime_type: 'application/json', schema: OCR_RESPONSE_SCHEMA },
-                generation_config: { thinking_level: isEscalation ? 'medium' : 'low' },
+                generation_config: { thinking_level: (isEscalation || docType === 'birth_certificate') ? 'medium' : 'low' },
                 store: false
               };
               attempts.push({
                 model,
-                timeoutMs: useUltraHigh || isEscalation ? 35000 : 28000,
+                timeoutMs: useUltraHigh || isEscalation ? 38000 : 28000,
                 label: `${model} (interactions/${imageResolution})`,
                 url: 'https://generativelanguage.googleapis.com/v1beta/interactions',
                 headers: { 'Content-Type': 'application/json', 'x-goog-api-key': gKey, 'Api-Revision': '2026-05-20' },
@@ -1139,13 +1451,13 @@ export default {
             }
             attempts.push({
               model,
-              timeoutMs: isEscalation ? 35000 : 28000,
+              timeoutMs: isEscalation ? 38000 : 28000,
               label: `${model} (generateContent)`,
               url: `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
               headers: { 'Content-Type': 'application/json', 'x-goog-api-key': gKey },
               body: {
                 contents: [{ parts: [{ text: promptText }, { inline_data: { mime_type: mimeType, data: rawBase64 } }] }],
-                generationConfig: { response_mime_type: 'application/json', responseSchema: OCR_RESPONSE_SCHEMA }
+                generationConfig: { temperature: 0, response_mime_type: 'application/json', responseSchema: OCR_RESPONSE_SCHEMA }
               }
             });
           }
@@ -1188,16 +1500,12 @@ export default {
           throw new Error(`Gemini Error: ${lastErr}`);
         }
 
-        async function completeWorkerBanglaWithDeepSeek(partialData, preferredModel = 'deepseek-chat') {
-          if (!dKey || !partialData || !needsIntelligentCompletion(partialData)) return partialData;
-          const models = preferredModel === 'deepseek-flash'
-            ? ['deepseek-flash', 'deepseek-chat']
-            : ['deepseek-chat', 'deepseek-flash'];
-          const compPrompt = `Complete ALL missing or incomplete fields in this Bangladeshi Birth Certificate / NID JSON using your linguistic and domain intelligence:
-1. If any Bengali field (*_bn) is readable and its English counterpart (*_en) is blank or contains Bengali, accurately transliterate/translate into Bangladeshi ALL-CAPS English (e.g. "মোঃ" -> "MD.", "মোছাঃ" -> "MOSAMMAT", "রফিকুল ইসলাম" -> "RAFIQUL ISLAM").
-2. If any English field (*_en) is present and its Bengali counterpart (*_bn) is blank, provide accurate Bangladeshi Bengali spelling (*_bn) (e.g. "MD." -> "মোঃ", "MOSAMMAT" -> "মোছাঃ").
-3. Ensure "dob" is strict ASCII "DD/MM/YYYY", infer "gender" ("পুরুষ" or "নারী" or "হিজড়া") from names/context if missing, and provide sensible "marital_status_suggestion" ("বিবাহিত"/"অবিবাহিত"), "relation_suggestion", and "doc_type" ("nid" or "birth_certificate").
-4. Never return "null", "N/A", label prefixes like "নাম:", or Bengali characters inside *_en.
+        function buildWorkerBilingualPrompt(partialData) {
+          return `Complete ALL missing or wrong-script fields in this Bangladeshi Birth Certificate / NID JSON:
+1. If any Bengali field (*_bn) contains Bengali text and its English counterpart (*_en) is blank or contains Bengali, accurately transliterate into standard Bangladeshi ALL-CAPS English (e.g. "মোঃ" -> "MD.", "মোছাঃ" -> "MOSAMMAT", "রফিকুল ইসলাম" -> "RAFIQUL ISLAM").
+2. If any English field (*_en) contains English letters and its Bengali counterpart (*_bn) is blank or contains non-Bengali Latin text, accurately translate/transliterate into natural Bangladeshi Bengali spelling (*_bn) (e.g. "MD." -> "মোঃ", "MOSAMMAT" -> "মোছাঃ", "ISLAM" -> "ইসলাম").
+3. Ensure "dob" is strict ASCII "DD/MM/YYYY", infer "gender" ("পুরুষ", "নারী", or "হিজড়া") from names/context if missing, and provide sensible "marital_status_suggestion" ("বিবাহিত"/"অবিবাহিত"), "relation_suggestion", and "doc_type" ("nid" or "birth_certificate").
+4. Never copy husband/spouse name into father fields, never return "null", "N/A", label prefixes like "নাম:", Latin text inside *_bn, or Bengali text inside *_en.
 Return ONLY one valid JSON object with keys: doc_type, name_bn, name_en, father_name_bn, father_name_en, mother_name_bn, mother_name_en, spouse_name_bn, spouse_name_en, dob, gender, marital_status_suggestion, relation_suggestion.
 Input JSON:
 ${JSON.stringify({
@@ -1216,6 +1524,97 @@ ${JSON.stringify({
             relation_suggestion: partialData.relation_suggestion || '',
             marital_status_suggestion: partialData.marital_status_suggestion || ''
           })}`;
+        }
+
+        function applyWorkerBilingualCompletion(partialData, completed, addCost, tagKey) {
+          const out = { ...partialData };
+          for (const k of ['name_en', 'father_name_en', 'mother_name_en', 'spouse_name_en']) {
+            const cur = cleanOcrFieldText(out[k] || '');
+            const cand = cleanOcrFieldText(completed[k] || '');
+            if ((!cur || hasBengaliScript(cur)) && cand && !hasBengaliScript(cand)) {
+              out[k] = cand.toUpperCase();
+            }
+          }
+          for (const k of ['name_bn', 'father_name_bn', 'mother_name_bn', 'spouse_name_bn']) {
+            const cur = cleanOcrFieldText(out[k] || '');
+            const cand = cleanOcrFieldText(completed[k] || '');
+            if ((!cur || !hasBengaliScript(cur)) && cand && hasBengaliScript(cand)) {
+              out[k] = cand;
+            }
+          }
+          if (!['nid', 'birth_certificate'].includes(String(out.doc_type || '').trim()) && ['nid', 'birth_certificate'].includes(String(completed.doc_type || '').trim())) {
+            out.doc_type = String(completed.doc_type).trim();
+          }
+          if (!/^\d{2}\/\d{2}\/\d{4}$/.test(standardizeDate(out.dob || '')) && completed.dob) {
+            const std = standardizeDate(completed.dob);
+            if (/^\d{2}\/\d{2}\/\d{4}$/.test(std)) out.dob = std;
+          }
+          if (!['পুরুষ', 'নারী', 'হিজড়া'].includes(normalizeGenderValue(out.gender)) && completed.gender) {
+            const ng = normalizeGenderValue(completed.gender);
+            if (['পুরুষ', 'নারী', 'হিজড়া'].includes(ng)) out.gender = ng;
+          }
+          if (!cleanOcrFieldText(out.marital_status_suggestion) && cleanOcrFieldText(completed.marital_status_suggestion)) {
+            out.marital_status_suggestion = cleanOcrFieldText(completed.marital_status_suggestion);
+          }
+          if (!cleanOcrFieldText(out.relation_suggestion) && cleanOcrFieldText(completed.relation_suggestion)) {
+            out.relation_suggestion = cleanOcrFieldText(completed.relation_suggestion);
+          }
+          if (addCost) {
+            if (out.ocr_usage) {
+              out.ocr_usage = {
+                ...out.ocr_usage,
+                inputTokens: (out.ocr_usage.inputTokens || 0) + (addCost.inputTokens || 0),
+                outputTokens: (out.ocr_usage.outputTokens || 0) + (addCost.outputTokens || 0),
+                totalTokens: (out.ocr_usage.totalTokens || 0) + (addCost.totalTokens || 0),
+                costUsd: Number(((out.ocr_usage.costUsd || 0) + (addCost.costUsd || 0)).toFixed(7)),
+                costBdt: Number(((out.ocr_usage.costBdt || 0) + (addCost.costBdt || 0)).toFixed(4))
+              };
+            } else {
+              out.ocr_usage = addCost;
+            }
+          }
+          out[tagKey] = true;
+          return out;
+        }
+
+        async function completeWorkerBilingualWithGemini(partialData) {
+          if (!gKey || !partialData || !needsIntelligentCompletion(partialData)) return partialData;
+          const compPrompt = buildWorkerBilingualPrompt(partialData);
+          const compModels = Array.from(new Set(['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', prefGemModel || DEFAULT_GEMINI_MODEL])).filter(Boolean);
+          for (const model of compModels) {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 16000);
+            try {
+              const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'x-goog-api-key': gKey },
+                body: JSON.stringify({
+                  contents: [{ parts: [{ text: compPrompt }] }],
+                  generationConfig: { temperature: 0, response_mime_type: 'application/json' }
+                }),
+                signal: controller.signal
+              });
+              clearTimeout(timer);
+              if (!res.ok) continue;
+              const j = await res.json().catch(() => ({}));
+              const txt = extractTextFromGemini(j);
+              if (!txt) continue;
+              const completed = parseOcrJsonText(txt);
+              const addCost = j?.usageMetadata ? computeScanUsageAndCost(model, j) : null;
+              const out = applyWorkerBilingualCompletion(partialData, completed, addCost, 'gemini_bilingual_completed');
+              out.gemini_bilingual_completed = model;
+              return out;
+            } catch (_) { clearTimeout(timer); }
+          }
+          return partialData;
+        }
+
+        async function completeWorkerBanglaWithDeepSeek(partialData, preferredModel = 'deepseek-chat') {
+          if (!dKey || !partialData || !needsIntelligentCompletion(partialData)) return partialData;
+          const models = preferredModel === 'deepseek-flash'
+            ? ['deepseek-flash', 'deepseek-chat']
+            : ['deepseek-chat', 'deepseek-flash'];
+          const compPrompt = buildWorkerBilingualPrompt(partialData);
           for (const model of models) {
             const controller = new AbortController();
             const timer = setTimeout(() => controller.abort(), 18000);
@@ -1225,6 +1624,7 @@ ${JSON.stringify({
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${dKey}` },
                 body: JSON.stringify({
                   model,
+                  temperature: 0,
                   messages: [
                     { role: 'system', content: 'You are an expert Bangladeshi identity document specialist. Output ONLY one valid JSON object completing both Bengali (*_bn) and ALL-CAPS English (*_en) fields cleanly.' },
                     { role: 'user', content: compPrompt }
@@ -1240,53 +1640,8 @@ ${JSON.stringify({
               const txt = j?.choices?.[0]?.message?.content;
               if (!txt) continue;
               const completed = parseOcrJsonText(txt);
-              const out = { ...partialData };
-              for (const k of ['name_en', 'father_name_en', 'mother_name_en', 'spouse_name_en']) {
-                const cur = cleanOcrFieldText(out[k] || '');
-                const cand = cleanOcrFieldText(completed[k] || '');
-                if ((!cur || hasBengaliScript(cur)) && cand && !hasBengaliScript(cand)) {
-                  out[k] = cand.toUpperCase();
-                }
-              }
-              for (const k of ['name_bn', 'father_name_bn', 'mother_name_bn', 'spouse_name_bn']) {
-                const cur = cleanOcrFieldText(out[k] || '');
-                const cand = cleanOcrFieldText(completed[k] || '');
-                if (!cur && cand && hasBengaliScript(cand)) {
-                  out[k] = cand;
-                }
-              }
-              if (!['nid', 'birth_certificate'].includes(String(out.doc_type || '').trim()) && ['nid', 'birth_certificate'].includes(String(completed.doc_type || '').trim())) {
-                out.doc_type = String(completed.doc_type).trim();
-              }
-              if (!/^\d{2}\/\d{2}\/\d{4}$/.test(standardizeDate(out.dob || '')) && completed.dob) {
-                const std = standardizeDate(completed.dob);
-                if (/^\d{2}\/\d{2}\/\d{4}$/.test(std)) out.dob = std;
-              }
-              if (!['পুরুষ', 'নারী', 'হিজড়া'].includes(normalizeGenderValue(out.gender)) && completed.gender) {
-                const ng = normalizeGenderValue(completed.gender);
-                if (['পুরুষ', 'নারী', 'হিজড়া'].includes(ng)) out.gender = ng;
-              }
-              if (!cleanOcrFieldText(out.marital_status_suggestion) && cleanOcrFieldText(completed.marital_status_suggestion)) {
-                out.marital_status_suggestion = cleanOcrFieldText(completed.marital_status_suggestion);
-              }
-              if (!cleanOcrFieldText(out.relation_suggestion) && cleanOcrFieldText(completed.relation_suggestion)) {
-                out.relation_suggestion = cleanOcrFieldText(completed.relation_suggestion);
-              }
-              if (j?.usage) {
-                const addCost = computeScanUsageAndCost(model, j);
-                if (out.ocr_usage) {
-                  out.ocr_usage = {
-                    ...out.ocr_usage,
-                    inputTokens: (out.ocr_usage.inputTokens || 0) + (addCost.inputTokens || 0),
-                    outputTokens: (out.ocr_usage.outputTokens || 0) + (addCost.outputTokens || 0),
-                    totalTokens: (out.ocr_usage.totalTokens || 0) + (addCost.totalTokens || 0),
-                    costUsd: Number(((out.ocr_usage.costUsd || 0) + (addCost.costUsd || 0)).toFixed(7)),
-                    costBdt: Number(((out.ocr_usage.costBdt || 0) + (addCost.costBdt || 0)).toFixed(4))
-                  };
-                } else {
-                  out.ocr_usage = addCost;
-                }
-              }
+              const addCost = j?.usage ? computeScanUsageAndCost(model, j) : null;
+              const out = applyWorkerBilingualCompletion(partialData, completed, addCost, 'deepseek_en_completed');
               out.deepseek_en_completed = model;
               return out;
             } catch (_) { clearTimeout(timer); }
@@ -1304,6 +1659,7 @@ ${JSON.stringify({
               try {
                 const payload = {
                   model,
+                  temperature: 0,
                   messages: [
                     {
                       role: 'system',
@@ -1355,8 +1711,9 @@ ${JSON.stringify({
                 let p = parseOcrJsonText(outText);
                 p.ocr_model_used = `${model} (api.deepseek.com)`;
                 p.ocr_usage = computeScanUsageAndCost(model, dsJson);
-                if (needsEnglishCompletion(p)) {
-                  p = await completeWorkerBanglaWithDeepSeek(p, model);
+                if (needsIntelligentCompletion(p)) {
+                  if (gKey) p = await completeWorkerBilingualWithGemini(p);
+                  if (dKey && needsIntelligentCompletion(p)) p = await completeWorkerBanglaWithDeepSeek(p, model);
                 }
                 return p;
               } catch (e) {
@@ -1464,6 +1821,9 @@ ${JSON.stringify({
           if (!parsed) throw new Error(errs.join(' | '));
         }
 
+        if (gKey && needsIntelligentCompletion(parsed)) {
+          parsed = await completeWorkerBilingualWithGemini(parsed);
+        }
         if (dKey && needsIntelligentCompletion(parsed)) {
           parsed = await completeWorkerBanglaWithDeepSeek(parsed, prefDsModel);
         }

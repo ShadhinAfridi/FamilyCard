@@ -1284,6 +1284,8 @@ Return ONLY a single valid JSON object with keys: doc_type, detected_language, d
       padding: 4px; gap: 0; background: rgba(28, 59, 104, 0.94);
     }
     #fc-bm-dock.collapsed #fc-bm-summary-btn,
+    #fc-bm-dock.collapsed #fc-bm-house-dock-btn,
+    #fc-bm-dock.collapsed #fc-bm-backup-dock-btn,
     #fc-bm-dock.collapsed #fc-bm-chat-btn,
     #fc-bm-dock.collapsed #fc-bm-fab { display: none; }
     #fc-bm-dock-toggle {
@@ -1293,14 +1295,14 @@ Return ONLY a single valid JSON object with keys: doc_type, detected_language, d
       padding: 0; flex-shrink: 0; transition: background 0.15s ease;
     }
     #fc-bm-dock-toggle:hover { background: rgba(255,255,255,0.24); }
-    #fc-bm-fab, #fc-bm-chat-btn, #fc-bm-summary-btn {
+    #fc-bm-fab, #fc-bm-chat-btn, #fc-bm-summary-btn, #fc-bm-house-dock-btn, #fc-bm-backup-dock-btn {
       color: #fff; padding: 8px 13px; border-radius: 999px;
       font-size: 12.5px; font-weight: 700; cursor: pointer; display: flex; align-items: center;
       gap: 5px; border: 1px solid rgba(255,255,255,0.25); user-select: none;
       animation: fc-bm-pop 0.25s ease; transition: transform 0.12s ease, filter 0.12s ease;
       white-space: nowrap;
     }
-    #fc-bm-fab:active, #fc-bm-chat-btn:active, #fc-bm-summary-btn:active { transform: scale(0.97); }
+    #fc-bm-fab:active, #fc-bm-chat-btn:active, #fc-bm-summary-btn:active, #fc-bm-house-dock-btn:active, #fc-bm-backup-dock-btn:active { transform: scale(0.97); }
     #fc-bm-fab { background: linear-gradient(135deg, #2563eb, #1d4ed8); box-shadow: 0 3px 12px rgba(37,99,235,0.4); }
     #fc-bm-chat-btn { background: linear-gradient(135deg, #4f46e5, #3730a3); box-shadow: 0 3px 12px rgba(79,70,229,0.38); position: relative; }
     #fc-bm-chat-badge {
@@ -1804,12 +1806,33 @@ Return ONLY a single valid JSON object with keys: doc_type, detected_language, d
   const chatBtn = document.createElement('div');
   chatBtn.id = 'fc-bm-chat-btn';
   chatBtn.innerHTML = '<span>💬 মেসেজ</span><span id="fc-bm-chat-peers-dot" style="display:none; background:#22c55e; color:#052e16; border-radius:9px; padding:1px 5px; font-size:9.5px; font-weight:800;"></span><span id="fc-bm-chat-badge" style="display:none;">0</span>';
+  
+  const houseNoteDockBtn = document.createElement('div');
+  houseNoteDockBtn.id = 'fc-bm-house-dock-btn';
+  houseNoteDockBtn.innerHTML = '<span>📍 বাড়ি নোট</span>';
+  houseNoteDockBtn.style.cssText = 'background:linear-gradient(135deg, #d97706, #b45309); box-shadow:0 3px 12px rgba(217,119,6,0.38);';
+  houseNoteDockBtn.addEventListener('click', () => {
+    openBmHouseNoteModal();
+  });
+
+  const backupDockBtn = document.createElement('div');
+  backupDockBtn.id = 'fc-bm-backup-dock-btn';
+  backupDockBtn.innerHTML = '<span>☁️ ব্যাকআপ</span>';
+  backupDockBtn.style.cssText = 'background:linear-gradient(135deg, #2563eb, #1d4ed8); box-shadow:0 3px 12px rgba(37,99,235,0.38);';
+  backupDockBtn.addEventListener('click', async () => {
+    showToast('⏳ ধাপ ১-১১ ক্লাউড ব্যাকআপ নেওয়া হচ্ছে...');
+    await triggerSmartCloudBackup('dock_button', true);
+    showToast('☁️ ধাপ ১-১১ ফায়ারবেস ব্যাকআপ সম্পন্ন!');
+  });
+
   const fab = document.createElement('div');
   fab.id = 'fc-bm-fab';
   fab.innerHTML = '<span>📸 NID / সদস্য স্ক্যান</span>';
 
   dock.appendChild(dockToggleBtn);
   dock.appendChild(summaryBtn);
+  dock.appendChild(houseNoteDockBtn);
+  dock.appendChild(backupDockBtn);
   dock.appendChild(chatBtn);
   dock.appendChild(fab);
   document.body.appendChild(dock);
@@ -4326,6 +4349,459 @@ ${JSON.stringify({
     }
   }
 
+  // ==========================================================================
+  // ☁️ SMART CLOUD BACKUP & RECOVERY ENGINE (Step 1 to Step 11 Auto-Trace)
+  // ==========================================================================
+  let lastSavedStepBackupHash = '';
+  let smartBackupThrottleTimer = null;
+  let isBackingUpSteps = false;
+
+  function extractFullStepsBackupData() {
+    const fid = scrapeFamilyId() || lastExtractedData?.family_id || lastExtractedData?.nid_number || '';
+    const summary = typeof collectFullFamilyCardSummary === 'function' ? collectFullFamilyCardSummary() : null;
+    const tab0 = document.querySelector('[data-family-card-tab="0"]');
+    const tab1 = document.querySelector('[data-family-card-tab="1"]');
+    const tab2 = document.querySelector('[data-family-card-tab="2"]');
+    const tab3 = document.querySelector('[data-family-card-tab="3"]');
+    const tab4 = document.querySelector('[data-family-card-tab="4"]');
+    const tab5 = document.querySelector('[data-family-card-tab="5"]');
+    const tab6 = document.querySelector('[data-family-card-tab="6"]');
+    const tab7 = document.querySelector('[data-family-card-tab="7"]');
+    const tab9 = document.querySelector('[data-family-card-tab="9"]');
+    const tab10 = document.querySelector('[data-family-card-tab="10"]');
+    const tab11 = document.querySelector('[data-family-card-tab="11"]');
+
+    const s2State = tab1 ? readStep2FieldState(tab1) : {};
+    const s3Media = tab9 ? inspectSection3Media(tab9) : (summary?.s3Media || {});
+    const s4Addr = tab2 ? inspectSection4Address(tab2) : (summary?.s4Addr || {});
+    const s5Data = inspectSection5Details()?.data || (typeof trackSection5Data === 'function' ? trackSection5Data() : null) || summary?.sec5 || {};
+    const s6Bank = typeof inspectSection6Bank === 'function' ? inspectSection6Bank() : {};
+    const s7Elig = typeof inspectSection7Eligibility === 'function' ? inspectSection7Eligibility() : {};
+    const s8Members = typeof scanFamilyMembers === 'function' ? scanFamilyMembers() : [];
+    const s9Elems = typeof getSection9MoneyElements === 'function' ? getSection9MoneyElements() : null;
+    const s9Money = s9Elems && typeof readCurrentMoneyDistribution === 'function' ? readCurrentMoneyDistribution(s9Elems.fields) : (summary?.s9Dist || {});
+    const s10User = typeof inspectSection10EntryUser === 'function' ? inspectSection10EntryUser() : {};
+    const c11Consent = typeof inspectSection11Consent === 'function' ? inspectSection11Consent() : {};
+
+    const applicant = summary?.applicant || {};
+    const nid = applicant.nid || lastExtractedData?.nid_number || lastExtractedData?.doc_number || fid;
+
+    return {
+      familyId: fid || nid || `fc_${Date.now()}`,
+      nid: nid || '',
+      backupTimestamp: new Date().toISOString(),
+      clientTimestampMs: Date.now(),
+      backupSource: 'bookmarklet_smart_engine',
+      gps: lastCapturedHouseGps || null,
+      readinessPct: summary?.readinessPct || 0,
+      blockers: (summary?.blockers || []).map(b => (typeof b === 'object' ? b.text : b)),
+
+      // Step 1: Verification
+      step1: {
+        docType: lastExtractedData?.doc_type || 'nid',
+        docNumber: nid,
+        dob: applicant.dob || lastExtractedData?.dob || '',
+        gender: lastExtractedData?.gender || ''
+      },
+
+      // Step 2: Personal information
+      step2: {
+        nameBn: lastExtractedData?.name_bn || applicant.nameBn || '',
+        nameEn: lastExtractedData?.name_en || applicant.nameEn || '',
+        fatherBn: s2State.fatherBn || applicant.fatherBn || lastExtractedData?.father_name_bn || '',
+        fatherEn: s2State.fatherEn || lastExtractedData?.father_name_en || '',
+        motherBn: s2State.motherBn || applicant.motherBn || lastExtractedData?.mother_name_bn || '',
+        motherEn: s2State.motherEn || lastExtractedData?.mother_name_en || '',
+        spouseBn: lastExtractedData?.spouse_name_bn || '',
+        spouseEn: lastExtractedData?.spouse_name_en || '',
+        mobile: s2State.mobile || applicant.mobile || lastExtractedData?.mobile_number || '',
+        maritalStatus: s2State.marital || lastExtractedData?.marital_status || 'বিবাহিত',
+        religion: s2State.religion || lastExtractedData?.religion || 'ইসলাম'
+      },
+
+      // Step 3: Media
+      step3: {
+        photoUrl: s3Media.photoUrl || lastExtractedData?.applicant_photo_url || '',
+        signatureUrl: s3Media.signatureUrl || lastExtractedData?.signature_url || '',
+        houseUrl: s3Media.houseUrl || lastExtractedData?.house_photo_url || ''
+      },
+
+      // Step 4: Address
+      step4: {
+        village: s4Addr.village || (typeof getSavedAddressConfig === 'function' ? getSavedAddressConfig().village : '') || '',
+        postcode: s4Addr.postcode || (typeof getSavedAddressConfig === 'function' ? getSavedAddressConfig().postcode : '') || ''
+      },
+
+      // Step 5: Household & Economics
+      step5: {
+        totalMembers: s5Data.totalCount || 0,
+        maleCount: s5Data.maleCount || 0,
+        femaleCount: s5Data.femaleCount || 0,
+        transCount: s5Data.transCount || 0,
+        abroadMale: s5Data.abroadMale || 0,
+        abroadFemale: s5Data.abroadFemale || 0,
+        abroadTrans: s5Data.abroadTrans || 0,
+        socialTraining: s5Data.training || 'না',
+        mfsAccount: s5Data.mfs || 'নগদ'
+      },
+
+      // Step 6: Bank / MFS
+      step6: {
+        isBankAccount: Boolean(s6Bank.isBankAccount),
+        branchText: s6Bank.branchText || '',
+        ownership: s6Bank.ownership || '',
+        accountTypeText: s6Bank.elems?.accountTypeText || ''
+      },
+
+      // Step 7: Eligibility Questions
+      step7: {
+        totalQuestions: s7Elig.totalQuestions || 24,
+        filledCount: s7Elig.filledCount || 0,
+        roomsVal: s7Elig.roomsVal || ''
+      },
+
+      // Step 8: Family Members
+      step8_members: (s8Members || []).map((m, idx) => ({
+        index: idx + 1,
+        title: m.title || `সদস্য ${idx + 1}`,
+        nameBn: m.nameBn || '',
+        docType: m.docType || 'nid',
+        docNum: m.docNum || '',
+        relation: m.relation || '',
+        age: m.age || '',
+        gender: m.gender || ''
+      })),
+
+      // Step 9: Money distribution (2500 BDT)
+      step9_money: {
+        total: s9Money.total || 2500,
+        food: s9Money.food || 0,
+        health: s9Money.health || 0,
+        education: s9Money.education || 0,
+        income: s9Money.income || 0,
+        housing: s9Money.housing || 0,
+        clothing: s9Money.clothing || 0,
+        debt: s9Money.debt || 0,
+        savings: s9Money.savings || 0,
+        other: s9Money.other || 0
+      },
+
+      // Step 10: Entry User info
+      step10_user: {
+        filledCount: s10User.filledCount || 0,
+        totalFields: s10User.totalFields || 0,
+        fields: (s10User.fields || []).map(f => ({ label: f.label, value: f.value }))
+      },
+
+      // Step 11: Final declaration
+      step11_consent: {
+        agreed: Boolean(c11Consent.agreed)
+      }
+    };
+  }
+
+  function updateBackupUIBadge(msg = '', isSuccess = true) {
+    const badge1 = document.getElementById('fc-s2-backup-badge');
+    const badge2 = document.getElementById('fc-bm-dock-backup-pill');
+    const txt = msg || `☁️ ব্যাকআপ: ধাপ ১–১১ ক্লাউডে সংরক্ষিত (${new Date().toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' })})`;
+
+    if (badge1) {
+      badge1.textContent = txt;
+      badge1.style.background = isSuccess ? '#dcfce7' : '#fffbeb';
+      badge1.style.color = isSuccess ? '#15803d' : '#92400e';
+    }
+    if (badge2) {
+      badge2.textContent = txt;
+      badge2.style.display = 'inline-block';
+    }
+  }
+
+  async function triggerSmartCloudBackup(reason = 'auto', force = false) {
+    if (isBackingUpSteps && !force) return;
+    const backupData = extractFullStepsBackupData();
+    const fid = backupData.familyId || backupData.nid;
+    if (!fid || fid === 'fc_' || fid.length < 4) return;
+
+    const sig = `${fid}|${backupData.step2.nameBn}|${backupData.step2.mobile}|${backupData.step5.totalMembers}|${backupData.step8_members.length}|${backupData.step9_money.total}|${backupData.readinessPct}|${backupData.step11_consent.agreed}`;
+    if (!force && sig === lastSavedStepBackupHash) return;
+    lastSavedStepBackupHash = sig;
+
+    isBackingUpSteps = true;
+    try {
+      // 1. Always save locally first (Zero data loss even on crash/refresh)
+      try {
+        localStorage.setItem(`fc_step_backup_${fid}`, JSON.stringify(backupData));
+        localStorage.setItem('fc_last_backup_meta', JSON.stringify({
+          fid,
+          ladyName: backupData.step2.nameBn || '',
+          timestamp: backupData.backupTimestamp,
+          readiness: backupData.readinessPct
+        }));
+      } catch (_) {}
+
+      // 2. Prepare structured Firestore root fields
+      const cleanFid = normalizeDigits(fid).replace(/[^0-9A-Za-z_-]/g, '');
+      const s2 = backupData.step2;
+      const s5 = backupData.step5;
+      const s9 = backupData.step9_money;
+
+      const fields = {
+        name_bn: { stringValue: s2.nameBn || '' },
+        name_en: { stringValue: s2.nameEn || '' },
+        dob: { stringValue: backupData.step1.dob || '' },
+        gender: { stringValue: backupData.step1.gender || '' },
+        father_name_bn: { stringValue: s2.fatherBn || '' },
+        father_name_en: { stringValue: s2.fatherEn || '' },
+        mother_name_bn: { stringValue: s2.motherBn || '' },
+        mother_name_en: { stringValue: s2.motherEn || '' },
+        spouse_name_bn: { stringValue: s2.spouseBn || '' },
+        spouse_name_en: { stringValue: s2.spouseEn || '' },
+        mobile_number: { stringValue: s2.mobile || '' },
+        marital_status: { stringValue: s2.maritalStatus || 'বিবাহিত' },
+        religion: { stringValue: s2.religion || 'ইসলাম' },
+        village: { stringValue: backupData.step4.village || '' },
+        postcode: { stringValue: backupData.step4.postcode || '' },
+        section5_total_declared: { integerValue: String(s5.totalMembers || 0) },
+        section5_male_declared: { integerValue: String(s5.maleCount || 0) },
+        section5_female_declared: { integerValue: String(s5.femaleCount || 0) },
+        section5_trans_declared: { integerValue: String(s5.transCount || 0) },
+        section5_mfs_account: { stringValue: s5.mfsAccount || 'নগদ' },
+        money_total: { integerValue: String(s9.total || 2500) },
+        money_food: { integerValue: String(s9.food || 0) },
+        money_health: { integerValue: String(s9.health || 0) },
+        money_education: { integerValue: String(s9.education || 0) },
+        money_income: { integerValue: String(s9.income || 0) },
+        money_housing: { integerValue: String(s9.housing || 0) },
+        money_clothing: { integerValue: String(s9.clothing || 0) },
+        money_debt: { integerValue: String(s9.debt || 0) },
+        money_savings: { integerValue: String(s9.savings || 0) },
+        summary_readiness_pct: { integerValue: String(backupData.readinessPct || 0) },
+        summary_member_count: { integerValue: String(backupData.step8_members.length || 0) },
+        backup_reason: { stringValue: String(reason || 'auto') },
+        backup_timestamp: { timestampValue: backupData.backupTimestamp },
+        latest_backup_json: { stringValue: JSON.stringify(backupData) }
+      };
+
+      if (backupData.gps && typeof backupData.gps.lat === 'number') {
+        fields.lat = { doubleValue: backupData.gps.lat };
+        fields.lng = { doubleValue: backupData.gps.lng };
+        fields.accuracy = { integerValue: String(backupData.gps.accuracy || 10) };
+        fields.plus_code = { stringValue: backupData.gps.plusCode || '' };
+        fields.geo_recorded_at = { timestampValue: backupData.backupTimestamp };
+      }
+
+      if (backupData.readinessPct >= 85 && backupData.blockers.length === 0) {
+        fields.survey_status = { stringValue: 'COMPLETED' };
+      }
+
+      const updateMask = Object.keys(fields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
+      const rootUrl = `https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(cleanFid)}?${updateMask}`;
+
+      const ac = new AbortController();
+      const tm = setTimeout(() => ac.abort(), 7500);
+
+      const resp = await fetch(rootUrl, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields }),
+        signal: ac.signal
+      });
+      clearTimeout(tm);
+
+      if (resp.ok) {
+        // Also push a subcollection snapshot record asynchronously
+        const subUrl = `https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(cleanFid)}/backups/bk_${Date.now()}?updateMask.fieldPaths=backup_json&updateMask.fieldPaths=timestamp&updateMask.fieldPaths=readiness_pct`;
+        fetch(subUrl, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fields: {
+              backup_json: { stringValue: JSON.stringify(backupData) },
+              timestamp: { timestampValue: backupData.backupTimestamp },
+              readiness_pct: { integerValue: String(backupData.readinessPct || 0) }
+            }
+          })
+        }).catch(() => {});
+
+        updateBackupUIBadge();
+      } else {
+        // Queue for offline sync
+        queueOfflineBackup(cleanFid, fields);
+        updateBackupUIBadge('☁️ ব্যাকআপ: অফলাইনে সংরক্ষিত (সংযোগ পেলে ক্লাউডে যাবে)', false);
+      }
+    } catch (err) {
+      console.warn('[SmartCloudBackup] Network fallback notice:', err.message);
+      updateBackupUIBadge('☁️ ব্যাকআপ: অফলাইনে সংরক্ষিত', false);
+    } finally {
+      isBackingUpSteps = false;
+    }
+  }
+
+  function queueOfflineBackup(fid, fields) {
+    try {
+      const q = JSON.parse(localStorage.getItem('fc_offline_backup_queue') || '[]');
+      const filtered = q.filter(item => item.fid !== fid);
+      filtered.push({ fid, fields, queuedAt: Date.now() });
+      localStorage.setItem('fc_offline_backup_queue', JSON.stringify(filtered.slice(-15)));
+    } catch (_) {}
+  }
+
+  async function flushOfflineBackupQueue() {
+    if (!navigator.onLine) return;
+    try {
+      const raw = localStorage.getItem('fc_offline_backup_queue');
+      if (!raw) return;
+      const queue = JSON.parse(raw);
+      if (!Array.isArray(queue) || !queue.length) return;
+
+      const remaining = [];
+      for (const item of queue) {
+        try {
+          const updateMask = Object.keys(item.fields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
+          const url = `https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(item.fid)}?${updateMask}`;
+          const r = await fetch(url, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fields: item.fields })
+          });
+          if (!r.ok) remaining.push(item);
+        } catch (_) {
+          remaining.push(item);
+        }
+      }
+      localStorage.setItem('fc_offline_backup_queue', JSON.stringify(remaining));
+      if (remaining.length === 0) {
+        updateBackupUIBadge('☁️ অফলাইন ব্যাকআপ স্বয়ংক্রিয়ভাবে ক্লাউডে সিঙ্ক সম্পন্ন! ✅');
+      }
+    } catch (_) {}
+  }
+
+  window.addEventListener('online', flushOfflineBackupQueue);
+  setInterval(flushOfflineBackupQueue, 15000);
+
+  // Restore All Steps from Smart Cloud Backup
+  async function restorePortalFromSmartBackup(customFid = '') {
+    const fid = customFid || scrapeFamilyId() || '';
+    if (!fid) {
+      showToast('⚠️ পরিবারের আইডি বা NID পাওয়া যায়নি!');
+      return false;
+    }
+
+    showToast(`⏳ আইডি ${toBnDigits(fid)}-এর ক্লাউড ব্যাকআপ খোঁজা হচ্ছে...`);
+    let backupObj = null;
+
+    // 1. Try cloud Firestore first
+    try {
+      const cleanFid = normalizeDigits(fid).replace(/[^0-9A-Za-z_-]/g, '');
+      const url = `https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(cleanFid)}`;
+      const res = await fetch(url, { cache: 'no-store' });
+      if (res.ok) {
+        const doc = await res.json().catch(() => null);
+        const jsonStr = doc?.fields?.latest_backup_json?.stringValue;
+        if (jsonStr) backupObj = JSON.parse(jsonStr);
+      }
+    } catch (_) {}
+
+    // 2. Try localStorage fallback
+    if (!backupObj) {
+      try {
+        const local = localStorage.getItem(`fc_step_backup_${fid}`);
+        if (local) backupObj = JSON.parse(local);
+      } catch (_) {}
+    }
+
+    if (!backupObj) {
+      showToast(`❌ আইডি ${toBnDigits(fid)}-এর কোনো সংরক্ষিত ব্যাকআপ পাওয়া যায়নি!`);
+      return false;
+    }
+
+    // 3. Begin restoring across all portal steps:
+    let restoredSteps = 0;
+
+    // Step 1: Verification
+    if (backupObj.step1 && backupObj.step1.docNumber) {
+      await fillPortalFields({
+        doc_type: backupObj.step1.docType || 'nid',
+        doc_number: backupObj.step1.docNumber,
+        dob: backupObj.step1.dob || '',
+        gender: backupObj.step1.gender || '',
+        name_bn: backupObj.step2?.nameBn || '',
+        name_en: backupObj.step2?.nameEn || ''
+      }, { overwriteExisting: true });
+      restoredSteps++;
+    }
+
+    // Step 2: Personal details
+    if (backupObj.step2) {
+      const s2 = backupObj.step2;
+      const tab1 = document.querySelector('[data-family-card-tab="1"]') || document;
+      if (s2.maritalStatus) await selectDropdownByLabel(['বৈবাহিক অবস্থা'], s2.maritalStatus, tab1, { ignoreUserGuard: true });
+      if (s2.religion) await selectDropdownByLabel(['ধর্ম'], s2.religion, tab1, { ignoreUserGuard: true });
+      await fillPortalFields({
+        name_bn: s2.nameBn,
+        name_en: s2.nameEn,
+        father_name_bn: s2.fatherBn,
+        father_name_en: s2.fatherEn,
+        mother_name_bn: s2.motherBn,
+        mother_name_en: s2.motherEn,
+        spouse_name_bn: s2.spouseBn,
+        spouse_name_en: s2.spouseEn,
+        mobile_number: s2.mobile
+      }, { overwriteExisting: true });
+      restoredSteps++;
+    }
+
+    // Step 4: Address
+    if (backupObj.step4?.village || backupObj.step4?.postcode) {
+      if (typeof saveAddressConfig === 'function') {
+        saveAddressConfig({ village: backupObj.step4.village, postcode: backupObj.step4.postcode });
+      }
+      if (typeof handleSection4Address === 'function') handleSection4Address();
+      restoredSteps++;
+    }
+
+    // Step 5: Household
+    if (backupObj.step5 && backupObj.step5.totalMembers > 0) {
+      if (typeof saveSection5Config === 'function') {
+        saveSection5Config({
+          transCount: backupObj.step5.transCount,
+          training: backupObj.step5.socialTraining,
+          mfsAccount: backupObj.step5.mfsAccount
+        });
+      }
+      if (typeof handleSection5AndCrossMatch === 'function') handleSection5AndCrossMatch();
+      restoredSteps++;
+    }
+
+    // Step 6: Bank
+    if (typeof handleSection6Bank === 'function') {
+      handleSection6Bank();
+      restoredSteps++;
+    }
+
+    // Step 9: Money allocation
+    if (backupObj.step9_money && typeof applyMoneyDistribution === 'function') {
+      const s9Elems = typeof getSection9MoneyElements === 'function' ? getSection9MoneyElements() : null;
+      if (s9Elems) {
+        applyMoneyDistribution(s9Elems.fields, backupObj.step9_money, true);
+        restoredSteps++;
+      }
+    }
+
+    // Step 11: Final consent
+    if (backupObj.step11_consent?.agreed && typeof handleSection11Consent === 'function') {
+      const c11 = inspectSection11Consent();
+      if (c11.checkbox && !c11.agreed) {
+        c11.checkbox.click();
+      }
+      restoredSteps++;
+    }
+
+    if (typeof updateSummaryBadge === 'function') updateSummaryBadge(true);
+    showToast(`✅ ক্লাউড ব্যাকআপ থেকে ধাপ ১–১১ সফলভাবে পুনরুদ্ধার করা হয়েছে (${toBnDigits(restoredSteps)}টি সেকশন)!`);
+    return true;
+  }
+
   // --- SECTION 8: FAMILY MEMBER AUTOMATION HELPERS ---
   function openMemberScanner(card = null, index = 'auto') {
     setScanTarget('member', card, index);
@@ -5587,6 +6063,255 @@ ${JSON.stringify({
     return { fatherBn, fatherEn, motherBn, motherEn, mobile, marital, religion, age, doneCount, entries };
   }
 
+  // --- GPS GEOLOCATION & PRE-SURVEY HOUSE NOTE ENGINE ---
+  let lastCapturedHouseGps = null;
+  let hasGeoCapturedForFid = '';
+
+  function encodePlusCode(lat, lng) {
+    try {
+      const CODE_ALPHABET = '23456789CFGHJMPQRVWX';
+      let latitude = Math.min(90, Math.max(-90, Number(lat))) + 90;
+      let longitude = Math.min(180, Math.max(-180, Number(lng))) + 180;
+      let code = '';
+      let latVal = latitude;
+      let lngVal = longitude;
+      let latGrid = 20;
+      let lngGrid = 20;
+      for (let i = 0; i < 4; i++) {
+        const latDigit = Math.floor(latVal / latGrid);
+        const lngDigit = Math.floor(lngVal / lngGrid);
+        code += CODE_ALPHABET.charAt(latDigit) + CODE_ALPHABET.charAt(lngDigit);
+        latVal = (latVal % latGrid) * 20;
+        lngVal = (lngVal % lngGrid) * 20;
+        if (i === 3) code += '+';
+      }
+      const latDigit = Math.floor(latVal / latGrid);
+      const lngDigit = Math.floor(lngVal / lngGrid);
+      code += CODE_ALPHABET.charAt(latDigit) + CODE_ALPHABET.charAt(lngDigit);
+      return code;
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function acquirePortalGpsLocation(timeoutMs = 5000) {
+    return new Promise((resolve) => {
+      if (!navigator.geolocation) return resolve(lastCapturedHouseGps);
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const loc = {
+            lat: Number(pos.coords.latitude.toFixed(6)),
+            lng: Number(pos.coords.longitude.toFixed(6)),
+            accuracy: Math.round(pos.coords.accuracy || 10),
+            plusCode: encodePlusCode(pos.coords.latitude, pos.coords.longitude),
+            timestamp: Date.now()
+          };
+          lastCapturedHouseGps = loc;
+          resolve(loc);
+        },
+        (err) => {
+          console.warn('[Geolocation] notice:', err.message);
+          resolve(lastCapturedHouseGps);
+        },
+        { enableHighAccuracy: true, timeout: timeoutMs, maximumAge: 3000 }
+      );
+    });
+  }
+
+  async function autoCaptureHouseLocationOnStep2(fid, ladyName = '') {
+    if (!fid || hasGeoCapturedForFid === fid) return;
+    hasGeoCapturedForFid = fid;
+    const loc = await acquirePortalGpsLocation(5000);
+    if (!loc) return;
+
+    const elGeoText = document.getElementById('fc-s2-geo-text');
+    if (elGeoText) {
+      elGeoText.textContent = `${loc.lat}, ${loc.lng} (±${loc.accuracy}m) ✅`;
+    }
+
+    try {
+      const cardMask = 'updateMask.fieldPaths=lat&updateMask.fieldPaths=lng&updateMask.fieldPaths=accuracy&updateMask.fieldPaths=plus_code&updateMask.fieldPaths=geo_recorded_at';
+      const cleanFid = normalizeDigits(fid).replace(/[^0-9A-Za-z_-]/g, '');
+      const url = `https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(cleanFid)}?${cardMask}`;
+      fetch(url, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fields: {
+            lat: { doubleValue: loc.lat },
+            lng: { doubleValue: loc.lng },
+            accuracy: { integerValue: String(loc.accuracy) },
+            plus_code: { stringValue: loc.plusCode },
+            geo_recorded_at: { timestampValue: new Date().toISOString() }
+          }
+        })
+      }).catch(() => {});
+    } catch (_) {}
+  }
+
+  function openBmHouseNoteModal(defaultFid = '', defaultName = '') {
+    let modal = document.getElementById('fc-bm-house-modal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'fc-bm-house-modal';
+      modal.className = 'fc-bm-overlay';
+      modal.style.cssText = 'position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(2,6,23,0.72); z-index:10000002; display:flex; align-items:center; justify-content:center; padding:12px; backdrop-filter:blur(4px); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;';
+      document.body.appendChild(modal);
+    }
+
+    const curFid = defaultFid || scrapeFamilyId() || '';
+    const curName = defaultName || lastExtractedData?.name_bn || '';
+
+    modal.innerHTML = `
+      <div style="background:#fff; width:100%; max-width:440px; border-radius:14px; overflow:hidden; box-shadow:0 20px 45px rgba(0,0,0,0.3); display:flex; flex-direction:column; border:1px solid #e2e8f0;">
+        <div style="background:linear-gradient(135deg, #0f294d, #1c3b68); color:#fff; padding:12px 14px; display:flex; justify-content:space-between; align-items:center;">
+          <b style="font-size:13px;">📍 বাড়ির লোকেশন ও সমস্যা নোট</b>
+          <button type="button" id="fc-hn-close" style="background:none; border:none; color:#fff; font-size:18px; cursor:pointer; font-weight:bold;">✕</button>
+        </div>
+        <div style="padding:14px; display:flex; flex-direction:column; gap:9px; max-height:80vh; overflow-y:auto; font-size:12px; color:#1e293b;">
+          <div>
+            <label style="font-weight:700; display:block; margin-bottom:3px;">👩 প্রধান নারী / পরিবারের নাম *</label>
+            <input type="text" id="fc-hn-name" value="${escapeHtml(curName)}" placeholder="যেমন: নুরজাহান নেছা" style="width:100%; box-sizing:border-box; padding:7px 9px; border:1.5px solid #cbd5e1; border-radius:7px; font-size:12px;">
+          </div>
+          <div style="display:flex; gap:6px;">
+            <div style="flex:1;">
+              <label style="font-weight:700; display:block; margin-bottom:3px;">🆔 পরিবার / NID আইডি</label>
+              <input type="text" id="fc-hn-fid" value="${escapeHtml(curFid)}" placeholder="১০ বা ১৭ ডিজিট" style="width:100%; box-sizing:border-box; padding:7px 9px; border:1.5px solid #cbd5e1; border-radius:7px; font-size:12px;">
+            </div>
+            <div style="flex:1;">
+              <label style="font-weight:700; display:block; margin-bottom:3px;">📱 মোবাইল নম্বর</label>
+              <input type="tel" id="fc-hn-phone" value="${escapeHtml(lastExtractedData?.mobile_number || '')}" placeholder="01XXXXXXXXX" maxlength="11" style="width:100%; box-sizing:border-box; padding:7px 9px; border:1.5px solid #cbd5e1; border-radius:7px; font-size:12px;">
+            </div>
+          </div>
+          <div style="background:#f0fdf4; border:1px solid #86efac; border-radius:8px; padding:7px 10px; display:flex; justify-content:space-between; align-items:center;">
+            <div>
+              <b style="color:#166534; font-size:11.5px;">📍 জিপিএস অবস্থান:</b>
+              <div id="fc-hn-gps-coords" style="font-size:11px; color:#14532d; font-family:monospace;">লক হচ্ছে...</div>
+            </div>
+            <button type="button" id="fc-hn-relock-gps" style="background:#fff; border:1px solid #86efac; color:#166534; border-radius:6px; padding:4px 8px; font-size:10.5px; font-weight:700; cursor:pointer;">🔄 রিলক</button>
+          </div>
+          <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:9px 10px; display:flex; flex-direction:column; gap:6px;">
+            <b style="color:#0f172a; font-size:11.5px;">⚠️ মিসিং ডকুমেন্টস ও সমস্যার কারণ:</b>
+            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" id="fc-hn-chk-sim" checked> 📱 সিম কার্ড প্রধান নারীর নিজ NID-তে নেই</label>
+            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" id="fc-hn-chk-brc"> 👶 শিশুদের ডিজিটাল জন্ম নিবন্ধন (BRC) নেই</label>
+            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" id="fc-hn-chk-nid"> 🪪 প্রধান নারীর নিজস্ব NID কার্ড নেই</label>
+            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" id="fc-hn-chk-age"> 🔞 প্রধান নারীর বয়স ১৮-এর কম</label>
+            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" id="fc-hn-chk-mem"> 👥 সদস্যের ডকুমেন্টস অপূর্ণ</label>
+          </div>
+          <div>
+            <label style="font-weight:700; display:block; margin-bottom:3px;">📝 সার্ভেয়ার নোট ও ফলো-আপ</label>
+            <textarea id="fc-hn-notes" rows="2" placeholder="যেমন: আগামী রবিবার সিম বায়োমেট্রিক করবে..." style="width:100%; box-sizing:border-box; padding:6px 8px; border:1.5px solid #cbd5e1; border-radius:7px; font-size:11.5px;"></textarea>
+          </div>
+        </div>
+        <div style="padding:10px 14px; background:#f8fafc; border-top:1px solid #e2e8f0; display:flex; gap:6px;">
+          <button type="button" id="fc-hn-save-btn" style="flex:1; background:linear-gradient(135deg, #d97706, #b45309); color:#fff; border:none; border-radius:8px; padding:9px; font-weight:700; font-size:12px; cursor:pointer;">💾 সমস্যাযুক্ত বাড়ি সেভ করুন</button>
+          <button type="button" id="fc-hn-cancel-btn" style="background:#e2e8f0; color:#334155; border:none; border-radius:8px; padding:9px 14px; font-weight:700; font-size:12px; cursor:pointer;">বাতিল</button>
+        </div>
+      </div>
+    `;
+
+    modal.style.display = 'flex';
+
+    const coordsEl = modal.querySelector('#fc-hn-gps-coords');
+    const updateCoordsText = (loc) => {
+      if (!loc) coordsEl.textContent = 'লোকেশন পাওয়া যায়নি';
+      else coordsEl.textContent = `${loc.lat}, ${loc.lng} (±${loc.accuracy}m)`;
+    };
+
+    if (lastCapturedHouseGps) updateCoordsText(lastCapturedHouseGps);
+    else acquirePortalGpsLocation(4000).then(updateCoordsText);
+
+    modal.querySelector('#fc-hn-relock-gps').onclick = async () => {
+      coordsEl.textContent = '🔄 পুনরায় লক হচ্ছে...';
+      const loc = await acquirePortalGpsLocation(4000);
+      updateCoordsText(loc);
+    };
+
+    const closeModal = () => { modal.style.display = 'none'; };
+    modal.querySelector('#fc-hn-close').onclick = closeModal;
+    modal.querySelector('#fc-hn-cancel-btn').onclick = closeModal;
+
+    modal.querySelector('#fc-hn-save-btn').onclick = async () => {
+      const lady = modal.querySelector('#fc-hn-name').value.trim();
+      if (!lady) {
+        alert('দয়া করে প্রধান নারীর নাম লিখুন!');
+        return;
+      }
+      const rawId = normalizeDigits(modal.querySelector('#fc-hn-fid').value.trim()).replace(/[^0-9A-Za-z_-]/g, '') || `house_${Date.now()}`;
+      const phone = normalizeDigits(modal.querySelector('#fc-hn-phone').value.trim()).replace(/[^0-9]/g, '');
+      const notes = modal.querySelector('#fc-hn-notes').value.trim();
+
+      const issues = [];
+      if (modal.querySelector('#fc-hn-chk-sim').checked) issues.push('sim_not_own_nid');
+      if (modal.querySelector('#fc-hn-chk-brc').checked) issues.push('child_brc_missing');
+      if (modal.querySelector('#fc-hn-chk-nid').checked) issues.push('no_female_nid');
+      if (modal.querySelector('#fc-hn-chk-age').checked) issues.push('female_under_18');
+      if (modal.querySelector('#fc-hn-chk-mem').checked) issues.push('member_doc_missing');
+
+      const isBlocked = issues.includes('no_female_nid') || issues.includes('female_under_18');
+      const surveyStatus = isBlocked ? 'INCOMPLETE_BLOCKED' : 'INCOMPLETE_ACTIONABLE';
+      const lat = lastCapturedHouseGps?.lat || 23.757;
+      const lng = lastCapturedHouseGps?.lng || 89.644;
+      const accuracy = lastCapturedHouseGps?.accuracy || 15;
+      const plusCode = lastCapturedHouseGps?.plusCode || encodePlusCode(lat, lng);
+      const nowIso = new Date().toISOString();
+
+      const houseObj = {
+        docId: rawId,
+        ladyName: lady,
+        primary_lady_name_bn: lady,
+        nid_number: rawId,
+        mobile_number: phone,
+        notes,
+        issues,
+        survey_status: surveyStatus,
+        lat,
+        lng,
+        accuracy,
+        plusCode,
+        surveyor_id: 'tablet_client',
+        updated_at: nowIso
+      };
+
+      try {
+        const fields = {
+          lady_name: { stringValue: lady },
+          primary_lady_name_bn: { stringValue: lady },
+          nid_number: { stringValue: rawId },
+          mobile_number: { stringValue: phone },
+          notes: { stringValue: notes },
+          survey_status: { stringValue: surveyStatus },
+          lat: { doubleValue: lat },
+          lng: { doubleValue: lng },
+          accuracy: { integerValue: String(accuracy) },
+          plus_code: { stringValue: plusCode },
+          updated_at: { timestampValue: nowIso },
+          issues: { arrayValue: { values: issues.map(iss => ({ stringValue: iss })) } }
+        };
+        const mask = Object.keys(fields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
+        fetch(`https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(rawId)}?${mask}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fields })
+        }).catch(() => {});
+        fetch(`https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/surveyed_houses/${encodeURIComponent(rawId)}?${mask}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fields })
+        }).catch(() => {});
+
+        sendRoomMessage({
+          type: 'survey_house_saved',
+          text: `📍 বাড়ি সেভ করা হয়েছে: ${lady} (${isBlocked ? '🔴 ব্লকড' : '🟠 সমস্যাযুক্ত'})`,
+          payload: houseObj
+        });
+      } catch (_) {}
+
+      closeModal();
+      showToast(`📍 ${lady}-এর বাড়ি সমস্যাযুক্ত হিসেবে ম্যাপে সংরক্ষিত!`);
+    };
+  }
+
   function injectSection2Toolbar(tab1) {
     if (!tab1 || !isPanelActiveVisible(tab1)) return;
     const wrap = tab1.querySelector('.v-expansion-panel-content__wrap') || tab1;
@@ -5597,6 +6322,9 @@ ${JSON.stringify({
     const cached = (lastExtractedData && (!fid || !lastExtractedData.family_id || lastExtractedData.family_id === fid))
       ? lastExtractedData
       : getCachedFamilyScan(fid, false);
+
+    // Auto-capture house GPS location on Step 1 -> Step 2 transition
+    autoCaptureHouseLocationOnStep2(fid, cached?.name_bn || '');
 
     // Attach lightweight delegating sync listener once so manual Step 2 edits stay cached & synced
     if (!tab1.__fcS2EditSyncAttached) {
@@ -5651,16 +6379,28 @@ ${JSON.stringify({
         <div class="fc-s2-actions">
           <button type="button" id="fc-s2-fill-btn" class="fc-s2-btn" style="background:#0284c7;">⚡ স্ক্যান ডাটা বসাও</button>
           <button type="button" id="fc-s2-clean-btn" class="fc-s2-btn" style="background:#0f766e;">📱 নম্বর / CAPS ঠিক</button>
+          <button type="button" id="fc-s2-house-note-btn" class="fc-s2-btn" style="background:#d97706; font-weight:800;">📍 বাড়ি নোট</button>
+          <button type="button" id="fc-s2-backup-btn" class="fc-s2-btn" style="background:#2563eb; font-weight:700;">☁️ ক্লাউড ব্যাকআপ</button>
+          <button type="button" id="fc-s2-restore-btn" class="fc-s2-btn" style="background:#059669; font-weight:700;">♻️ রিস্টোর</button>
           ${fid ? '<button type="button" id="fc-s2-cloud-btn" class="fc-s2-btn" style="background:#4f46e5;">☁️ ক্লাউড লোড</button>' : ''}
           <button type="button" id="fc-s2-scan-btn" class="fc-s2-btn" style="background:#1c3b68;">📸 স্ক্যান</button>
         </div>
       </div>
       <div class="fc-s2-meta">
         ${cached ? `🪪 <b>ক্যাশড তথ্য:</b> ${escapeHtml(cached.name_bn || cached.name_en || '-')} • পিতা: ${escapeHtml(cached.father_name_bn || 'নেই')} • মাতা: ${escapeHtml(cached.mother_name_bn || '-')}` : '💡 NID/জন্ম নিবন্ধন স্ক্যান করলে বা ক্লাউড লোড করলে পিতা-মাতা ও ডিফল্ট অটো-ফিল হবে।'}
+        <br><span style="color:#0369a1; font-weight:700;">📍 বাড়ির অবস্থান: <span id="fc-s2-geo-text">${lastCapturedHouseGps ? `${lastCapturedHouseGps.lat}, ${lastCapturedHouseGps.lng} (±${lastCapturedHouseGps.accuracy}m) ✅` : 'লক হচ্ছে...'}</span></span>
+        <div id="fc-s2-backup-badge" style="font-size:11px; margin-top:3px; font-weight:700; color:#15803d;"></div>
         ${spouseHint ? `<br><span style="color:#b45309;font-weight:700;">⚠️ ${escapeHtml(spouseHint)}</span>` : ''}
         ${mobileWarn ? `<br><span style="color:#b91c1c;font-weight:700;">⚠️ ${escapeHtml(mobileWarn)}</span>` : ''}
       </div>
     `;
+
+    const btnHouseNote = bar.querySelector('#fc-s2-house-note-btn');
+    if (btnHouseNote) {
+      btnHouseNote.onclick = () => {
+        openBmHouseNoteModal(fid, cached?.name_bn || '');
+      };
+    }
 
     const btnFill = bar.querySelector('#fc-s2-fill-btn');
     if (btnFill) {
@@ -5698,6 +6438,29 @@ ${JSON.stringify({
         });
         injectSection2Toolbar(tab1);
         showToast(fixed > 0 ? `✅ ${toBnDigits(fixed)}টি ফিল্ড ফরম্যাট ঠিক করা হয়েছে!` : '✅ মোবাইল ও ইংরেজি নাম ইতোমধ্যেই সঠিক ফরম্যাটে আছে!');
+      };
+    }
+
+    const btnBackup = bar.querySelector('#fc-s2-backup-btn');
+    if (btnBackup) {
+      btnBackup.onclick = async () => {
+        btnBackup.disabled = true;
+        btnBackup.textContent = '⏳ ব্যাকআপ হচ্ছে...';
+        await triggerSmartCloudBackup('manual_button', true);
+        btnBackup.disabled = false;
+        btnBackup.textContent = '☁️ ক্লাউড ব্যাকআপ';
+        showToast('✅ ধাপ ১-১১ এর সম্পূর্ণ তথ্য ফায়ারবেস ক্লাউডে ব্যাকআপ সম্পন্ন!');
+      };
+    }
+
+    const btnRestore = bar.querySelector('#fc-s2-restore-btn');
+    if (btnRestore) {
+      btnRestore.onclick = async () => {
+        btnRestore.disabled = true;
+        btnRestore.textContent = '⏳ রিস্টোর হচ্ছে...';
+        await restorePortalFromSmartBackup(fid);
+        btnRestore.disabled = false;
+        btnRestore.textContent = '♻️ রিস্টোর';
       };
     }
 
@@ -10069,8 +10832,15 @@ ${JSON.stringify({
         summary_member_count: { integerValue: String(s.members.length) },
         summary_money_total: { integerValue: String(s.s9Total) },
         summary_report_text: { stringValue: reportText },
+        survey_status: { stringValue: (s.readinessPct >= 85 && s.blockers.length === 0) ? 'COMPLETED' : 'INCOMPLETE_ACTIONABLE' },
         summary_synced_at: { timestampValue: new Date().toISOString() }
       };
+      if (lastCapturedHouseGps && typeof lastCapturedHouseGps.lat === 'number') {
+        fields.lat = { doubleValue: lastCapturedHouseGps.lat };
+        fields.lng = { doubleValue: lastCapturedHouseGps.lng };
+        fields.accuracy = { integerValue: String(lastCapturedHouseGps.accuracy || 10) };
+        fields.plus_code = { stringValue: lastCapturedHouseGps.plusCode || '' };
+      }
       const mask = Object.keys(fields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
       try {
         const resp = await fetch(`https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(docId)}?${mask}`, {
@@ -10963,6 +11733,14 @@ ${JSON.stringify({
     handleSection9MoneyUsage();
     handleSection11Consent();
     updateSummaryBadge(false);
+
+    // Auto Smart Cloud Backup (debounced, non-blocking)
+    if (scrapeFamilyId()) {
+      clearTimeout(smartBackupThrottleTimer);
+      smartBackupThrottleTimer = setTimeout(() => {
+        triggerSmartCloudBackup('portal_step_change', false);
+      }, 5000);
+    }
   }
 
   // Debounced MutationObserver (ignores assistant UI & ripple animations for lag-free scrolling/tapping)

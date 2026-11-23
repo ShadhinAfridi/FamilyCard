@@ -4,7 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>NID Scanner - Family Card Assistant</title>
-  <link rel="stylesheet" href="style.css?v=1.9.0">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <link rel="stylesheet" href="style.css?v=2.0.0">
 </head>
 <body>
   <div class="app-container">
@@ -21,6 +22,19 @@
         <span class="label">বিচ্ছিন্ন</span>
       </div>
     </header>
+
+    <!-- Top View Switcher & Action Tabs -->
+    <nav class="main-nav-tabs">
+      <button type="button" id="navTabScanner" class="nav-tab-btn active">📸 NID স্ক্যানার</button>
+      <button type="button" id="navTabMap" class="nav-tab-btn">
+        🗺️ হাউজ ম্যাপ ও সার্ভে নোট
+        <span id="mapHouseCountBadge" class="nav-tab-badge">0</span>
+      </button>
+      <button type="button" id="btnOpenQuickCheck" class="nav-tab-btn highlight-btn">📍 দ্রুত বাড়ি যাচাই</button>
+    </nav>
+
+    <!-- Main Scanner View Container -->
+    <div id="viewScanner" class="view-panel active">
 
     <!-- Chrome Tablet Bookmarklet Notice Banner -->
     <div style="background: linear-gradient(135deg, #e0f2fe, #bae6fd); border: 1.5px solid #0284c7; border-radius: 12px; padding: 12px 16px; margin-bottom: 14px; display: flex; align-items: center; justify-content: space-between; gap: 10px; box-shadow: 0 2px 8px rgba(2,132,199,0.15);">
@@ -307,12 +321,211 @@
       </div>
     </section>
 
+    </div> <!-- End of #viewScanner -->
+
+    <!-- Map & Survey Notes View Container -->
+    <div id="viewMap" class="view-panel" style="display: none;">
+      <!-- Stats Summary Card -->
+      <section class="card map-stats-card">
+        <div class="stats-row">
+          <div class="stat-box">
+            <span class="stat-num" id="statTotalHouses">0</span>
+            <span class="stat-lbl">মোট চিহ্নিত বাড়ি</span>
+          </div>
+          <div class="stat-box stat-done">
+            <span class="stat-num" id="statCompletedHouses">0</span>
+            <span class="stat-lbl">🟢 সম্পন্ন (কাজ শেষ)</span>
+          </div>
+          <div class="stat-box stat-fixable">
+            <span class="stat-num" id="statFixableHouses">0</span>
+            <span class="stat-lbl">🟠 সিম/জন্ম সনদ বাকি</span>
+          </div>
+          <div class="stat-box stat-blocked">
+            <span class="stat-num" id="statBlockedHouses">0</span>
+            <span class="stat-lbl">🔴 NID নেই / ব্লকড</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Map Control & Action Card -->
+      <section class="card map-control-card">
+        <div class="map-action-bar">
+          <div class="search-input-wrap">
+            <span class="search-icon">🔍</span>
+            <input type="text" id="houseSearchInput" placeholder="প্রধান নারীর নাম, NID, মোবাইল বা হোল্ডিং খুঁজুন...">
+          </div>
+          <div class="map-btns-row">
+            <button type="button" id="btnMapNewHouse" class="btn btn-primary btn-sm">📍 নতুন বাড়ি ট্যাগ</button>
+            <button type="button" id="btnCenterMyLocation" class="btn btn-outline btn-sm" title="আমার বর্তমান অবস্থানে যান">🎯 অবস্থান</button>
+            <button type="button" id="btnToggleSatellite" class="btn btn-outline btn-sm" title="স্যাটেলাইট / সাধারণ ম্যাপ সুইচ">🛰️ স্যাটেলাইট</button>
+            <button type="button" id="btnRefreshHouses" class="btn btn-outline btn-sm" title="রিফ্রেশ">🔄</button>
+          </div>
+        </div>
+
+        <!-- Filter Chips Bar -->
+        <div class="filter-chips-bar">
+          <button type="button" class="filter-chip active" data-filter="all">সব বাড়ি (<span id="countFilterAll">0</span>)</button>
+          <button type="button" class="filter-chip chip-done" data-filter="completed">🟢 সম্পন্ন (<span id="countFilterDone">0</span>)</button>
+          <button type="button" class="filter-chip chip-sim" data-filter="sim_missing">📱 সিম বাকি (<span id="countFilterSim">0</span>)</button>
+          <button type="button" class="filter-chip chip-brc" data-filter="brc_missing">👶 জন্ম সনদ বাকি (<span id="countFilterBrc">0</span>)</button>
+          <button type="button" class="filter-chip chip-blocked" data-filter="blocked">🔴 NID নেই/১৮-এর কম (<span id="countFilterBlocked">0</span>)</button>
+        </div>
+
+        <!-- Live Map Canvas -->
+        <div class="map-wrapper">
+          <div id="surveyMap" class="survey-map-canvas"></div>
+          <div id="mapLocationToast" class="map-toast" style="display: none;"></div>
+        </div>
+      </section>
+
+      <!-- Surveyed House Cards List -->
+      <section class="card house-list-card">
+        <div class="house-list-hdr">
+          <h3>📋 চিহ্নিত বাড়ি ও নোটের তালিকা</h3>
+          <span id="filteredHouseCount" class="badge-sub">০টি বাড়ি দেখানো হচ্ছে</span>
+        </div>
+        <div id="houseListFeed" class="house-list-feed">
+          <div class="empty-state">ম্যাপের ডাটা লোড হচ্ছে...</div>
+        </div>
+      </section>
+    </div> <!-- End of #viewMap -->
+
+    <!-- Quick House Check & Location Tagger Modal -->
+    <div id="quickHouseModal" class="fc-modal-overlay" style="display: none;">
+      <div class="fc-modal-box">
+        <div class="fc-modal-hdr">
+          <div class="hdr-title-group">
+            <span class="icon">📍</span>
+            <div>
+              <h3>নতুন বাড়ি যাচাই ও লোকেশন ট্যাগ</h3>
+              <p>পোর্টালে যাওয়ার আগে প্রাক-যাচাই ও সমস্যা চিহ্নিতকরণ</p>
+            </div>
+          </div>
+          <button type="button" id="btnModalCloseHouse" class="modal-close-btn">✕</button>
+        </div>
+
+        <div class="fc-modal-body">
+          <input type="hidden" id="modalHouseDocId" value="">
+
+          <!-- House / Primary Lady Basic Info -->
+          <div class="form-group">
+            <label for="modalLadyName">👩 প্রধান নারীর নাম / পরিবারের নাম *</label>
+            <input type="text" id="modalLadyName" placeholder="যেমন: নুরজাহান নেছা / সিরাজের বাড়ি" required>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label for="modalLadyNid">🪪 প্রধান নারীর NID (যদি থাকে)</label>
+              <input type="text" id="modalLadyNid" placeholder="১০ বা ১৭ সংখ্যার এনআইডি" maxlength="17">
+            </div>
+            <div class="form-group flex-1">
+              <label for="modalContactPhone">📱 মোবাইল নম্বর (যদি থাকে)</label>
+              <input type="tel" id="modalContactPhone" placeholder="01XXXXXXXXX" maxlength="11">
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="modalVillage">🏠 গ্রাম / পাড়া / রোড / হোল্ডিং</label>
+            <input type="text" id="modalVillage" placeholder="যেমন: ভবানীপুর, মধ্যপাড়া">
+          </div>
+
+          <!-- GPS Location Box -->
+          <div class="geo-status-box">
+            <div class="geo-status-top">
+              <span class="geo-icon">🎯</span>
+              <div>
+                <b id="modalGpsStatusText">জিপিএস অবস্থান যাচাই হচ্ছে...</b>
+                <div id="modalGpsCoords" class="geo-sub">অক্ষাংশ: --, দ্রাঘিমাংশ: --</div>
+              </div>
+              <button type="button" id="btnModalRefreshGps" class="btn-sm btn-outline">🔄 রিলক</button>
+            </div>
+            <div class="geo-meta-row">
+              <span id="modalGpsAccuracyBadge" class="acc-pill">নির্ভুলতা: --</span>
+              <span id="modalPlusCodeBadge" class="plus-code-pill">প্লাস কোড: --</span>
+            </div>
+          </div>
+
+          <!-- 5 Eligibility Checklist Checkboxes -->
+          <div class="checklist-card">
+            <h4>📋 ফ্যামিলি কার্ডের আবশ্যক শর্তাবলী যাচাই:</h4>
+            
+            <label class="check-item">
+              <input type="checkbox" id="chkLadyNid">
+              <span class="check-box-custom"></span>
+              <span class="check-text">
+                <b>১. প্রধান নারীর নিজস্ব এনআইডি (NID) কার্ড আছে</b>
+                <small>কার্ড থাকতে হবে, হারিয়ে গেলে বা না থাকলে টিক তুলে দিন</small>
+              </span>
+            </label>
+
+            <label class="check-item">
+              <input type="checkbox" id="chkLadyAge">
+              <span class="check-box-custom"></span>
+              <span class="check-text">
+                <b>২. প্রধান নারীর বয়স ১৮+ বছর</b>
+                <small>১৮ বছরের কম বয়সী কোনো নারী প্রধান হতে পারবে না</small>
+              </span>
+            </label>
+
+            <label class="check-item">
+              <input type="checkbox" id="chkLadySim">
+              <span class="check-box-custom"></span>
+              <span class="check-text">
+                <b>৩. সিম কার্ড প্রধান নারীর নিজ NID-তে রেজিস্টার্ড</b>
+                <small>স্বামী, ভাই বা অন্য কারো নামে থাকলে গ্রহণযোগ্য নয়</small>
+              </span>
+            </label>
+
+            <label class="check-item">
+              <input type="checkbox" id="chkChildBrc">
+              <span class="check-box-custom"></span>
+              <span class="check-text">
+                <b>৪. পরিবারের সকল শিশুর ডিজিটাল জন্ম নিবন্ধন (BRC) আছে</b>
+                <small>১৭ ডিজিটের অনলাইন জন্ম নিবন্ধন সনদপত্র থাকতে হবে</small>
+              </span>
+            </label>
+
+            <label class="check-item">
+              <input type="checkbox" id="chkMembersDoc">
+              <span class="check-box-custom"></span>
+              <span class="check-text">
+                <b>৫. পরিবারের অন্যান্য সকল সদস্যের NID বা জন্ম সনদ আছে</b>
+                <small>প্রাপ্তবয়স্কদের NID এবং অপ্রাপ্তবয়স্কদের জন্ম সনদ</small>
+              </span>
+            </label>
+          </div>
+
+          <!-- Missing Tags Live Preview -->
+          <div id="modalMissingTagsPreview" class="missing-tags-box" style="display: none;">
+            <b>চিহ্নিত সমস্যা / মিসিং ডকুমেন্টস:</b>
+            <div id="modalMissingTagsList" class="tag-badges-row"></div>
+          </div>
+
+          <!-- Custom Notes Field -->
+          <div class="form-group" style="margin-top: 12px;">
+            <label for="modalHouseNotes">📝 সার্ভেয়ার নোট ও ফলো-আপ মন্তব্য (ঐচ্ছিক)</label>
+            <textarea id="modalHouseNotes" rows="2" placeholder="যেমন: আগামী রবিবার সিম বায়োমেট্রিক করে জানাবে। বাচ্চার জন্ম সনদের জন্য আবেদন করেছে।"></textarea>
+          </div>
+        </div>
+
+        <div class="fc-modal-footer">
+          <button type="button" id="btnSaveHouseRecord" class="btn btn-warning flex-1">
+            💾 সমস্যাযুক্ত বাড়ি হিসেবে সেভ
+          </button>
+          <button type="button" id="btnLaunchPortalEligible" class="btn btn-primary flex-1">
+            ⚡ সব ঠিক ➔ পোর্টালে পাঠান
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Instructions Footer -->
     <footer class="app-footer">
       <p>💡 আপনার ট্যাবলেটে Kiwi Browser-এ <code>fc.bhata.gov.bd</code> ফর্ম পেজ খোলা রাখুন এবং একই পেয়ার কোড ব্যবহার করুন।</p>
     </footer>
   </div>
 
-  <script src="app.js?v=1.9.0"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="app.js?v=2.0.0"></script>
 </body>
 </html>

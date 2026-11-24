@@ -304,7 +304,7 @@ function hasBengaliScript(str) {
 
 const BN_NAME_WORD_MAP = {
   'মোঃ': 'MD.', 'মো:': 'MD.', 'মো.': 'MD.', 'মোহাম্মদ': 'MOHAMMAD', 'মোহাম্মাদ': 'MOHAMMAD', 'মুহাম্মদ': 'MUHAMMAD', 'মুহাম্মাদ': 'MUHAMMAD',
-  'মোছাঃ': 'MOSAMMAT', 'মোছা:': 'MOSAMMAT', 'মোছা.': 'MOSAMMAT', 'মোসাম্মৎ': 'MOSAMMAT', 'মোসাম্মত': 'MOSAMMAT', 'মোসাঃ': 'MOST.', 'মোসা.': 'MOST.', 'মোসা:': 'MOST.',
+  'মোছাঃ': 'MST.', 'মোছা:': 'MST.', 'মোছা.': 'MST.', 'মোসাম্মাৎ': 'MOSAMMAT', 'মোসাম্মত': 'MOSAMMAT', 'মোসাঃ': 'MOSA.', 'মোসা.': 'MOSA.', 'মোসা:': 'MOSA.',
   'শ্রী': 'SRI', 'শ্রীমতী': 'SRIMOTI', 'মৃত': 'LATE', 'হাজী': 'HAJI', 'হাজি': 'HAJI',
   'শেখ': 'SHEIKH', 'সৈয়দ': 'SYED', 'সৈয়দ': 'SYED', 'কাজী': 'KAZI', 'কাজি': 'KAZI', 'মির্জা': 'MIRZA', 'গাজী': 'GAZI', 'গাজি': 'GAZI',
   'খন্দকার': 'KHANDAKER', 'খোন্দকার': 'KHONDKER', 'চৌধুরী': 'CHOWDHURY', 'মজুমদার': 'MAJUMDER', 'তালুকদার': 'TALUKDER',
@@ -450,18 +450,70 @@ function transliterateBnWordToEn(word) {
   return out.replace(/AAA+/g, 'A').replace(/AA+/g, 'A').trim();
 }
 
+function normalizeEnglishHonorificPrefix(enName, bnName) {
+  if (!enName) return enName;
+  let res = String(enName).trim();
+  const bn = String(bnName || '').trim();
+
+  // 1. If Bengali starts with মোছাঃ / মোছা: / মোছা. / মোছা
+  if (/^(?:মোছাঃ|মোছা:|মোছা\.|মোছা\s+)/.test(bn)) {
+    if (/^(?:MOSAMMAT|MOSAMMOT|MOSA\.?|MST\.?)\s+/i.test(res)) {
+      res = res.replace(/^(?:MOSAMMAT|MOSAMMOT|MOSA\.?|MST\.?)\s+/i, 'MST. ');
+    } else if (!/^MST\.\s+/i.test(res)) {
+      res = 'MST. ' + res;
+    }
+  }
+  // 2. Else if Bengali starts with মোঃ / মো: / মো. / মো
+  else if (/^(?:মোঃ|মো:|মো\.|মো\s+)/.test(bn)) {
+    if (/^(?:MD\.?|MOHD\.?|MOHAMMAD|MOHAMMED)\s+/i.test(res)) {
+      res = res.replace(/^(?:MD\.?|MOHD\.?|MOHAMMAD|MOHAMMED)\s+/i, 'MD. ');
+    } else if (!/^MD\.\s+/i.test(res)) {
+      res = 'MD. ' + res;
+    }
+  }
+  // 3. Else if Bengali starts with মোসাঃ / মোসা: / মোসা. / মোসা
+  else if (/^(?:মোসাঃ|মোসা:|মোসা\.|মোসা\s+)/.test(bn)) {
+    if (/^(?:MOSA\.?|MOSAMMAT|MOSAMMOT)\s+/i.test(res)) {
+      res = res.replace(/^(?:MOSA\.?|MOSAMMAT|MOSAMMOT)\s+/i, 'MOSA. ');
+    }
+  }
+  // 4. Standalone English prefixes without Bengali match
+  else if (/^(?:MOSAMMAT|MOSAMMOT)\s+/i.test(res)) {
+    res = res.replace(/^(?:MOSAMMAT|MOSAMMOT)\s+/i, 'MST. ');
+  } else if (/^MD\s+[A-Z]/i.test(res)) {
+    res = res.replace(/^MD\s+/i, 'MD. ');
+  }
+
+  return res.toUpperCase().replace(/\s+/g, ' ').trim();
+}
+
 function transliterateBnToEn(bnText) {
   if (!bnText) return '';
   const cleaned = String(bnText).normalize('NFC').replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
   if (!cleaned) return '';
   if (!hasBengaliScript(cleaned)) return normalizeDigits(cleaned).toUpperCase().replace(/\s+/g, ' ').trim();
-  return cleaned
+
+  let working = cleaned;
+  let prefix = '';
+  if (/^(?:মোছাঃ|মোছা:|মোছা\.|মোছা\s+)/.test(working)) {
+    prefix = 'MST. ';
+    working = working.replace(/^(?:মোছাঃ|মোছা:|মোছা\.|মোছা\s+)/, '');
+  } else if (/^(?:মোঃ|মো:|মো\.|মো\s+)/.test(working)) {
+    prefix = 'MD. ';
+    working = working.replace(/^(?:মোঃ|মো:|মো\.|মো\s+)/, '');
+  } else if (/^(?:মোসাঃ|মোসা:|মোসা\.|মোসা\s+)/.test(working)) {
+    prefix = 'MOSA. ';
+    working = working.replace(/^(?:মোসাঃ|মোসা:|মোসা\.|মোসা\s+)/, '');
+  }
+
+  const converted = working
     .split(/\s+/)
     .map(transliterateBnWordToEn)
     .filter(Boolean)
     .join(' ')
     .replace(/\s+/g, ' ')
     .trim();
+  return (prefix + converted).trim();
 }
 
 const EN_NAME_WORD_MAP = (() => {
@@ -711,7 +763,7 @@ function normalizeOcrKeyAliases(rawObj) {
   if (!cleanOcrFieldText(out.relation_suggestion)) out.relation_suggestion = pickAlias(['relation', 'relationship', 'relation_to_head']);
 
   for (const k of [
-    'doc_type', 'doc_number', 'nid_number', 'birth_reg_no', 'father_nid', 'mother_nid',
+    'doc_type', 'doc_number', 'nid_number', 'birth_reg_no', 'father_nid', 'mother_nid', 'father_nid', 'mother_nid',
     'registration_date', 'detected_language',
     'name_bn', 'name_en', 'dob', 'gender',
     'father_name_bn', 'father_name_en', 'mother_name_bn', 'mother_name_en',
@@ -910,51 +962,82 @@ const OCR_RESPONSE_SCHEMA = {
     marital_status_suggestion: { type: 'string' },
     confidence: { type: 'string', enum: ['high', 'medium', 'low'] }
   },
-  required: ['doc_type', 'doc_number', 'nid_number', 'birth_reg_no', 'name_bn', 'name_en', 'dob', 'gender']
+  required: ['doc_type']
 };
 
 function buildGeminiPrompt(docTypeHint = 'auto') {
-  const bilingualRule = `
-CRITICAL BILINGUAL & DIGIT ISOLATION RULES:
-1. VISUAL DOCUMENT CHECK FIRST: Visually inspect whether the image is a Bangladeshi NID Card OR a Bangladeshi Birth Registration Certificate (জন্ম নিবন্ধন সনদপত্র / BRC), regardless of any UI hint. A Birth Certificate typically says "জন্ম নিবন্ধন সনদ" / "Birth Registration Certificate" and has a 17-digit Birth Registration Number (জন্ম নিবন্ধন নম্বর), plus separate boxes for Father's NID / পিতার জাতীয় পরিচয়পত্র নং and Mother's NID / মাতার জাতীয় পরিচয়পত্র নং.
-2. SCRIPT DETECTION ("detected_language"): Set "detected_language" to "bn_only" if printed text is ONLY in Bengali, "en_only" if printed ONLY in English, or "bilingual" if both appear.
-3. BANGLA-ONLY DOCUMENTS (শুধু বাংলায় জন্ম নিবন্ধন / NID): If ONLY Bengali names are printed, extract exact *_bn AND transliterate EVERY name accurately into standard Bangladeshi ALL-CAPS English in \`name_en\`, \`father_name_en\`, \`mother_name_en\`, \`spouse_name_en\` (e.g. "মোঃ" -> "MD.", "মোছাঃ" -> "MOSAMMAT", "রফিকুল ইসলাম" -> "RAFIQUL ISLAM"). NEVER put Bengali characters in \`*_en\`.
-4. ENGLISH-ONLY DOCUMENTS (শুধু ইংরেজিতে জন্ম নিবন্ধন / NID): If ONLY English names are printed, extract exact ALL-CAPS English in \`*_en\` AND translate/transliterate EVERY name accurately into natural Bangladeshi Bengali spelling in \`name_bn\`, \`father_name_bn\`, \`mother_name_bn\`, \`spouse_name_bn\` (e.g. "MD." -> "মোঃ", "MOSAMMAT" -> "মোছাঃ"). NEVER put Latin/English letters in \`*_bn\`.
-5. NUMBER SEPARATION ON BIRTH CERTIFICATES (খুবই গুরুত্বপূর্ণ): On Birth Certificates, read carefully BEFORE copying any number:
-   - Put the 17-digit "Birth Registration Number / জন্ম নিবন্ধন নম্বর" (usually starts with 4-digit birth year, e.g., 1995..., 2012...) ONLY into \`birth_reg_no\` AND \`doc_number\`. Set \`nid_number\`: "".
-   - NEVER copy "Father's National ID / পিতার এনআইডি" or "Mother's National ID / মাতার এনআইডি" into \`birth_reg_no\`, \`nid_number\`, or \`doc_number\`! Put them ONLY in \`father_nid\` and \`mother_nid\` (or "" if not printed).
-   - NEVER use "Date of Registration / নিবন্ধনের তারিখ" or "Date of Issuance" as \`dob\`! Put registration date in \`registration_date\` and ONLY the person's "জন্ম তারিখ / Date of Birth" in \`dob\`.
-6. Convert ALL Bengali digits (০-৯) to ASCII digits (0-9) and format \`dob\` strictly as DD/MM/YYYY (e.g. "১২ই জানুয়ারি, ২০১২" -> "12/01/2012").
-7. Return ONLY raw valid JSON (never write "null", "N/A", or label prefixes like "নাম:", use "" for absent fields).`;
-  const hint = docTypeHint === 'nid'
-    ? `UI HINT: User mode is Bangladeshi NID Card (unless image visually proves to be a Birth Registration Certificate). Focus on 10, 13, or 17-digit NID.${bilingualRule}`
+  const hintLine = docTypeHint === 'nid'
+    ? 'HINT: User selected Bangladeshi NID Card. Still verify visually first — if it is clearly a Birth Registration Certificate (জন্ম নিবন্ধন সনদপত্র / 17-digit Birth Registration No), set "doc_type": "birth_certificate" and put the 17 digits into "birth_reg_no" and "doc_number".'
     : docTypeHint === 'birth_certificate'
-      ? `UI HINT: User mode is Bangladeshi Digital Birth Registration Certificate (জন্ম নিবন্ধন সনদপত্র). Focus on 17-digit Birth Registration Number, Date of Birth (NOT Registration Date), and parent names.${bilingualRule}`
-      : `Detect automatically whether this is a Bangladeshi NID Card or Birth Registration Certificate.${bilingualRule}`;
-  return `You are an expert OCR AI for Bangladeshi Identity Documents:
-1. Bangladeshi National Identity (NID) Cards (Smart NID and Old Laminated/Paper NID).
-2. Bangladeshi Digital Birth Registration Certificates (ডিজিটাল জন্ম নিবন্ধন সনদপত্র / BRC, A4 printed in Bangla-only, English-only, or Bilingual).
-${hint}
+      ? 'HINT: User selected Bangladeshi Digital/Manual Birth Registration Certificate (জন্ম নিবন্ধন সনদপত্র). Focus on the 17-digit Birth Registration Number (starts with birth year YYYY), Date of Birth (NOT Registration Date), and parent names (put Father/Mother NID into father_nid/mother_nid, NEVER into doc_number/nid_number/birth_reg_no).'
+      : 'Detect automatically whether this is a Bangladeshi NID Card or a Birth Registration Certificate.';
 
-Classify and extract ALL visible fields into a valid JSON object:
-- "doc_type": Strictly "nid" or "birth_certificate"
-- "detected_language": Strictly "bn_only", "en_only", or "bilingual"
-1. "doc_number" & "nid_number" & "birth_reg_no":
-   - For NID ("doc_type": "nid"): Smart NID prints 10 digits under "NID No."/"জাতীয় পরিচয় নং"; Old Laminated NID prints 13 or 17 digits at bottom under "ID NO:". Copy digits into BOTH "doc_number" and "nid_number", and set "birth_reg_no": "".
-   - For Birth Certificate ("doc_type": "birth_certificate"): Extract exact 17-digit Birth Registration Number (জন্ম নিবন্ধন নম্বর). CRITICAL: NEVER confuse Father's NID (\`father_nid\`), Mother's NID (\`mother_nid\`), Register No, or Serial No with the 17-digit Birth Registration Number! Copy 17 digits into BOTH "doc_number" and "birth_reg_no", and set "nid_number": "".
-   - Strip spaces/hyphens and convert ALL Bengali digits (০-৯) to English (0-9).
-2. "father_nid" & "mother_nid": Optional parent NID digits printed on BRC ("" if none).
-3. "registration_date": Date of registration/issuance if printed separately from DOB ("" if none).
-4. "name_bn": Complete Bengali name (transliterated into Bengali if card is English-only).
-5. "name_en": Complete English name in ALL CAPITAL LETTERS (transliterated into English if card is Bangla-only).
-6. "dob": Date of Birth in DD/MM/YYYY format (English digits). Never use Registration Date!
-7. "gender": Strictly "পুরুষ", "নারী", or "হিজড়া" (infer accurately if omitted on old NID).
-8. "father_name_bn" & "father_name_en": Extract ONLY from "পিতা:"/"পিতার নাম:"/"Father's Name". CRITICAL: For married women's classic laminated NIDs showing "স্বামী:" instead of "পিতা:", NEVER put husband's name into father fields! Leave father fields "" and use spouse fields.
-9. "mother_name_bn" & "mother_name_en": Mother's complete Bengali & ALL CAPITAL English names.
-10. "spouse_name_bn" & "spouse_name_en": Husband/Wife name from "স্বামী:" / "স্ত্রী:" if printed; otherwise "".
-11. "relation_suggestion": One of ("স্বামী", "স্ত্রী", "পুত্র", "কন্যা", "পিতা", "মাতা", "ভাই", "বোন", "অন্যান্য"). If "স্বামী:" is printed on old NID, suggest "স্ত্রী".
-12. "marital_status_suggestion": One of ("বিবাহিত", "অবিবাহিত", "বিধবা", "বিপত্নীক", "তালাকপ্রাপ্ত").
-13. "confidence": "low" if blurry/glare/cropped/unreadable digits, "medium" if uncertain, "high" if clear.`;
+  return `
+You are an ultra-precise OCR engine specializing in Bangladeshi identity documents:
+1. Bangladeshi National Identity (NID) Cards (Smart Cards and classic laminated paper NID cards).
+2. Bangladeshi Birth Registration Certificates (জন্ম নিবন্ধন সনদপত্র / BRC — bilingual, Bangla-only, or English-only).
+
+${hintLine}
+
+STRICT VERBATIM ZERO-CORRECTION DIRECTIVE (CRITICAL):
+- Extract the EXACT glyphs, characters, spelling, and punctuation as printed on the document image.
+- NEVER correct spelling or pronunciation:
+  - If printed "মন্ডল" (with dental-n / দন্ত্য-ন), output "মন্ডল" (DO NOT change to "মণ্ডল").
+  - If printed "মোসাঃ", output "মোসাঃ" (DO NOT change to "মোছাঃ" or "মোসাম্মাৎ").
+  - If printed "মোছাঃ", output "মোছাঃ" (DO NOT change to "মোসাঃ").
+  - If printed "আঃ", output "আঃ" (DO NOT expand to "আব্দুস").
+  - If printed "নুর", output "নুর" (DO NOT change to "নূর").
+  - If printed "আলী", output "আলী" (DO NOT change to "আলি").
+  - If printed "হোসেন", output "হোসেন" (DO NOT change to "হোসাইন").
+- NAME ENGLISH TRANSLITERATION RULES:
+  - If English is physically printed on the document (e.g. "Name:" line on NID, or bilingual columns on Digital Birth Certificates), extract the EXACT printed English text. NEVER overwrite printed English!
+  - If English is physically absent from the document (Bangla-only document or father/mother on NID):
+    - If Bengali name starts with "মোছাঃ" (or "মোছা:"), the English prefix MUST BE "MST." in ALL-CAPS (e.g. "মোছাঃ রহিমা খাতুন" -> "MST. ROHIMA KHATUN").
+    - If Bengali name starts with "মোঃ" (or "মো:"), the English prefix MUST BE "MD." (e.g. "মোঃ আঃ ছালাম" -> "MD. A. SALAM").
+    - If Bengali name starts with "মোসাঃ", keep "মোসাঃ" in Bengali and English is "MOSA." or "MST.".
+- ZERO HALLUCINATION / ZERO IMAGINED NUMBERS:
+  - NEVER guess, invent, fabricate, pad, or synthesize missing digits or names!
+  - If any number or field is blurred, incomplete, or absent, extract ONLY what is clearly visible. If completely unreadable, return "".
+  - On Birth Registration Certificates (জন্ম নিবন্ধন সনদপত্র):
+    - The Birth Registration Number is strictly 17 digits starting with the 4-digit birth year (YYYY...).
+    - NEVER confuse Father's NID or Mother's NID with the 17-digit Birth Registration Number! Put Father's/Mother's NID ONLY into father_nid and mother_nid.
+    - NEVER invent digits to complete 17 digits.
+  - On NID Cards:
+    - Smart NID prints 10 digits under "NID No." / "জাতীয় পরিচয় নং".
+    - Classic laminated NID prints 13 or 17 digits at the bottom under "ID NO:". Extract only clearly visible digits.
+- DATES:
+  - Extract "dob" in DD/MM/YYYY format.
+  - On Birth Certificates, extract "জন্ম তারিখ / Date of Birth" into "dob", and extract "নিবন্ধনের তারিখ / Date of Registration" into "registration_date" (NEVER put registration date into "dob").
+- GENDER:
+  - Strictly "পুরুষ" (Male), "নারী" (Female), or "হিজড়া" (Third Gender).
+- MARRIED WOMEN'S CLASSIC NID:
+  - If classic laminated NID prints "স্বামী:" (Husband), put that name into "spouse_name_bn" and "spouse_name_en". NEVER put husband's name into father fields!
+
+Return strictly ONE valid minified JSON object matching this schema:
+{
+  "doc_type": "nid",
+  "detected_language": "bilingual",
+  "doc_number": "1234567890",
+  "nid_number": "1234567890",
+  "birth_reg_no": "",
+  "father_nid": "",
+  "mother_nid": "",
+  "registration_date": "",
+  "name_bn": "মোছাঃ রহিমা খাতুন",
+  "name_en": "MST. ROHIMA KHATUN",
+  "dob": "15/08/1990",
+  "gender": "নারী",
+  "father_name_bn": "সুভাষ মন্ডল",
+  "father_name_en": "SUBHASH MONDOL",
+  "mother_name_bn": "জাহানারা বেগম",
+  "mother_name_en": "JAHANARA BEGUM",
+  "spouse_name_bn": "",
+  "spouse_name_en": "",
+  "relation_suggestion": "স্ত্রী",
+  "marital_status_suggestion": "বিবাহিত",
+  "confidence": "high"
+}
+`;
 }
 
 function extractTextFromGemini(res) {
@@ -1501,11 +1584,15 @@ export default {
         }
 
         function buildWorkerBilingualPrompt(partialData) {
-          return `Complete ALL missing or wrong-script fields in this Bangladeshi Birth Certificate / NID JSON:
-1. If any Bengali field (*_bn) contains Bengali text and its English counterpart (*_en) is blank or contains Bengali, accurately transliterate into standard Bangladeshi ALL-CAPS English (e.g. "মোঃ" -> "MD.", "মোছাঃ" -> "MOSAMMAT", "রফিকুল ইসলাম" -> "RAFIQUL ISLAM").
-2. If any English field (*_en) contains English letters and its Bengali counterpart (*_bn) is blank or contains non-Bengali Latin text, accurately translate/transliterate into natural Bangladeshi Bengali spelling (*_bn) (e.g. "MD." -> "মোঃ", "MOSAMMAT" -> "মোছাঃ", "ISLAM" -> "ইসলাম").
-3. Ensure "dob" is strict ASCII "DD/MM/YYYY", infer "gender" ("পুরুষ", "নারী", or "হিজড়া") from names/context if missing, and provide sensible "marital_status_suggestion" ("বিবাহিত"/"অবিবাহিত"), "relation_suggestion", and "doc_type" ("nid" or "birth_certificate").
-4. Never copy husband/spouse name into father fields, never return "null", "N/A", label prefixes like "নাম:", Latin text inside *_bn, or Bengali text inside *_en.
+          return `Fill strictly MISSING fields in this Bangladeshi Birth Certificate / NID JSON:
+1. BANGLA -> ENGLISH (*_bn to *_en): Only if an English field (*_en) is completely blank or missing, provide accurate ALL-CAPS English transliteration from the Bengali name:
+   - If Bengali name begins with "মোছাঃ" (or "মোছা:"), the English prefix MUST BE "MST." (e.g. "মোছাঃ রহিমা খাতুন" -> "MST. ROHIMA KHATUN").
+   - If Bengali name begins with "মোঃ" (or "মো:"), the English prefix MUST BE "MD." (e.g. "মোঃ আঃ ছালাম" -> "MD. A. SALAM").
+   - If Bengali name begins with "মোসাঃ", keep "মোসাঃ" and English prefix is "MOSA." or "MST.".
+2. PRESERVE ORIGINAL BENGALI TEXT: NEVER change, correct, or normalize existing Bengali spellings (e.g. keep "মন্ডল", "মোসাঃ", "আঃ", "নুর" unchanged).
+3. Do NOT copy spouse/husband into father fields.
+4. Ensure "dob" is strict ASCII "DD/MM/YYYY", infer "gender" ("পুরুষ", "নারী", or "হিজড়া") from names/context if missing, and provide sensible "marital_status_suggestion" ("বিবাহিত"/"অবিবাহিত"), "relation_suggestion", and "doc_type" ("nid" or "birth_certificate").
+5. Never copy husband/spouse name into father fields, never return "null", "N/A", label prefixes like "নাম:", Latin text inside *_bn, or Bengali text inside *_en.
 Return ONLY one valid JSON object with keys: doc_type, name_bn, name_en, father_name_bn, father_name_en, mother_name_bn, mother_name_en, spouse_name_bn, spouse_name_en, dob, gender, marital_status_suggestion, relation_suggestion.
 Input JSON:
 ${JSON.stringify({
@@ -1615,18 +1702,19 @@ ${JSON.stringify({
             ? ['deepseek-flash', 'deepseek-chat']
             : ['deepseek-chat', 'deepseek-flash'];
           const compPrompt = buildWorkerBilingualPrompt(partialData);
+          const dsBase = (env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/+$/, '');
           for (const model of models) {
             const controller = new AbortController();
             const timer = setTimeout(() => controller.abort(), 18000);
             try {
-              const res = await fetch('https://api.deepseek.com/chat/completions', {
+              const res = await fetch(`${dsBase}/chat/completions`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${dKey}` },
                 body: JSON.stringify({
                   model,
                   temperature: 0,
                   messages: [
-                    { role: 'system', content: 'You are an expert Bangladeshi identity document specialist. Output ONLY one valid JSON object completing both Bengali (*_bn) and ALL-CAPS English (*_en) fields cleanly.' },
+                    { role: 'system', content: 'You are an expert Bangladeshi identity document specialist. Fill only missing English fields faithfully without changing or altering any existing Bengali spelling. Output strictly one valid JSON object.' },
                     { role: 'user', content: compPrompt }
                   ],
                   response_format: { type: 'json_object' },
@@ -1650,12 +1738,13 @@ ${JSON.stringify({
         }
 
         async function runWorkerDeepSeek() {
-          const modelsToTry = Array.from(new Set([prefDsModel || 'deepseek-flash', 'deepseek-chat', 'deepseek-flash']));
+          const modelsToTry = ['deepseek-flash'];
           let lastErr = 'DeepSeek OCR থেকে উত্তর পাওয়া যায়নি।';
+          const dsBase = (env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/+$/, '');
           for (const model of modelsToTry) {
             for (const useJsonMode of [true, false]) {
               const controller = new AbortController();
-              const timer = setTimeout(() => controller.abort(), 28000);
+              const timer = setTimeout(() => controller.abort(), 35000);
               try {
                 const payload = {
                   model,
@@ -1663,20 +1752,20 @@ ${JSON.stringify({
                   messages: [
                     {
                       role: 'system',
-                      content: 'You are an expert Bangladeshi NID and Birth Certificate OCR engine. Even when a Birth Certificate is printed ONLY in Bengali, ALWAYS provide BOTH *_bn AND transliterated ALL-CAPS English *_en fields in a single valid JSON object.'
+                      content: 'You are an ultra-precise OCR engine for Bangladeshi identity documents (NID and Birth Certificates). Extract text EXACTLY as printed on the document without modifying, rewriting, or correcting spellings. If a Bengali name begins with "মোছাঃ" (or "মোছা:"), its English prefix is "MST.". If it begins with "মোঃ", its English prefix is "MD.". NEVER invent, guess, or synthesize digits or fields. Output strictly one valid JSON object.'
                     },
                     {
                       role: 'user',
                       content: [
                         { type: 'text', text: promptText },
-                        { type: 'image_url', image_url: { url: `data:${mimeType};base64,${rawBase64}`, detail: 'high' } }
+                        { type: 'image_url', image_url: { url: `data:${mimeType};base64,${rawBase64}` } }
                       ]
                     }
                   ],
                   max_tokens: 2048
                 };
                 if (useJsonMode) payload.response_format = { type: 'json_object' };
-                const dsRes = await fetch('https://api.deepseek.com/chat/completions', {
+                const dsRes = await fetch(`${dsBase}/chat/completions`, {
                   method: 'POST',
                   headers: {
                     'Content-Type': 'application/json',

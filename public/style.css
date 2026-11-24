@@ -331,12 +331,157 @@ input[type="text"]:focus, input[type="password"]:focus, .select-input:focus {
   aspect-ratio: 210 / 297;
 }
 
+.camera-container.flash-shutter::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: #ffffff;
+  z-index: 20;
+  pointer-events: none;
+  animation: shutterFlash 0.3s ease-out forwards;
+}
+
+@keyframes shutterFlash {
+  0% { opacity: 0.85; }
+  100% { opacity: 0; }
+}
+
+/* Floating Camera Quick Controls (Torch, 2x Zoom, Flip) */
+.camera-floating-toolbar {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(15, 23, 42, 0.72);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  padding: 4px 6px;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+
+.cam-tool-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: #f1f5f9;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 14px;
+  font-size: 0.74rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.cam-tool-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+}
+
+.cam-tool-btn.active {
+  background: rgba(56, 189, 248, 0.28);
+  color: #38bdf8;
+  border-color: rgba(56, 189, 248, 0.55);
+}
+
+.cam-tool-btn:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+.cam-tool-btn .tool-icon {
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+/* Live Camera Stability / Sharpness Badge */
+.camera-stability-badge {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 16px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transition: all 0.25s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+.camera-stability-badge.ready {
+  background: rgba(20, 83, 45, 0.88);
+  color: #dcfce7;
+  border: 1px solid rgba(34, 197, 94, 0.5);
+}
+
+.camera-stability-badge.ready .badge-dot {
+  background: #22c55e;
+  box-shadow: 0 0 8px #22c55e;
+}
+
+.camera-stability-badge.shaky {
+  background: rgba(154, 52, 18, 0.88);
+  color: #ffedd5;
+  border: 1px solid rgba(249, 115, 22, 0.5);
+}
+
+.camera-stability-badge.shaky .badge-dot {
+  background: #f97316;
+  box-shadow: 0 0 8px #f97316;
+}
+
+.camera-stability-badge.capturing {
+  background: rgba(30, 58, 138, 0.92);
+  color: #dbeafe;
+  border: 1px solid rgba(59, 130, 246, 0.5);
+}
+
+.camera-stability-badge.capturing .badge-dot {
+  background: #3b82f6;
+  box-shadow: 0 0 8px #3b82f6;
+}
+
+.camera-stability-badge .badge-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  animation: pulseDot 1.4s infinite ease-in-out;
+}
+
+@keyframes pulseDot {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.3); opacity: 0.75; }
+}
+
+.crop-frame.sharp-focus {
+  border-color: rgba(34, 197, 94, 0.95);
+  box-shadow: 0 0 0 9999px rgba(2, 6, 23, 0.64), 0 0 14px rgba(34, 197, 94, 0.35);
+}
+
+.crop-frame.sharp-focus .overlay-bracket {
+  border-color: #22c55e;
+}
+
 .overlay-bracket {
   position: absolute;
   width: 20px;
   height: 20px;
   border-color: #38bdf8;
   border-style: solid;
+  transition: border-color 0.25s ease;
 }
 
 .tl { top: -2px; left: -2px; border-width: 3px 0 0 3px; }
@@ -1364,3 +1509,22 @@ input[type="text"]:focus, input[type="password"]:focus, .select-input:focus {
   margin-top: 6px;
 }
 
+
+
+.drop-zone {
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.drop-zone:hover {
+  border-color: #2563eb;
+  background: #f1f5f9;
+}
+
+.drop-zone.dragover {
+  border-color: #2563eb;
+  background: #eff6ff;
+  border-style: solid;
+  transform: scale(1.01);
+  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.15);
+}

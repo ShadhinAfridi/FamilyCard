@@ -129,12 +129,31 @@
       <!-- Live Camera View -->
       <div id="cameraContainer" class="camera-container mode-id">
         <video id="videoElement" playsinline autoplay muted></video>
+
+        <!-- Floating Camera Quick Controls (Torch, 2x Zoom, Flip) -->
+        <div id="cameraFloatingToolbar" class="camera-floating-toolbar">
+          <button type="button" id="btnToggleTorch" class="cam-tool-btn" title="ফ্ল্যাশ / টর্চ চালু/বন্ধ" aria-label="টর্চ">
+            <span class="tool-icon">🔦</span> <span class="tool-label" id="lblTorchText">টর্চ</span>
+          </button>
+          <button type="button" id="btnToggleZoom" class="cam-tool-btn" title="2x ম্যাক্রো জুম (ছায়া এড়াতে)" aria-label="জুম">
+            <span class="tool-icon">🔍</span> <span class="tool-label" id="lblZoomText">1x</span>
+          </button>
+          <button type="button" id="btnFlipCamera" class="cam-tool-btn" title="ক্যামেরা পরিবর্তন করুন" aria-label="ক্যামেরা পরিবর্তন">
+            <span class="tool-icon">🔄</span> <span class="tool-label">ক্যামেরা</span>
+          </button>
+        </div>
+
+        <!-- Live Camera Stability / Sharpness Badge -->
+        <div id="cameraStabilityBadge" class="camera-stability-badge ready">
+          <span class="badge-dot"></span> <span id="cameraStabilityText">ক্যামেরা প্রস্তুত</span>
+        </div>
+
         <div id="cameraCropFrame" class="crop-frame">
           <div class="overlay-bracket tl"></div>
           <div class="overlay-bracket tr"></div>
           <div class="overlay-bracket bl"></div>
           <div class="overlay-bracket br"></div>
-          <div id="cameraOverlayHint" class="overlay-hint">NID কার্ডটি নীল ফ্রেমের ভেতর রাখুন (বাইরের অংশ ক্রপ হবে)</div>
+          <div id="cameraOverlayHint" class="overlay-hint">NID কার্ডটি ফ্রেমের ভেতর রাখুন (বাইরের অংশ ক্রপ হবে)</div>
         </div>
       </div>
 
@@ -143,12 +162,12 @@
 
       <!-- File Upload Alternative -->
       <div id="uploadContainer" class="upload-container" style="display: none;">
-        <input type="file" id="fileInput" accept="image/*" capture="environment" style="display: none;">
+        <input type="file" id="fileInput" accept="image/*,application/pdf" capture="environment" style="display: none;">
         <div id="dropZone" class="drop-zone">
-          <span class="upload-icon">📷</span>
-          <p>ছবি তুলুন অথবা গ্যালারি থেকে সিলেক্ট করুন</p>
+          <span class="upload-icon">📄</span>
+          <p>ছবি বা PDF নির্বাচন করুন (NID / জন্ম নিবন্ধন)</p>
           <button type="button" class="btn btn-outline" onclick="document.getElementById('fileInput').click()">
-            ফাইল বাছাই করুন
+            ফাইল / PDF বাছাই করুন
           </button>
         </div>
         <div id="filePreviewContainer" style="display: none;">
@@ -157,6 +176,7 @@
             <button type="button" id="btnCropUploadId" class="btn btn-outline" style="font-size:0.76rem; padding:5px 9px;">✂️ ID কার্ড ক্রপ</button>
             <button type="button" id="btnCropUploadA4" class="btn btn-outline" style="font-size:0.76rem; padding:5px 9px;">✂️ A4 ক্রপ</button>
             <button type="button" id="btnResetUpload" class="btn btn-outline" style="font-size:0.76rem; padding:5px 9px;">↩️ পূর্ণ ছবি</button>
+            <button type="button" id="btnChangeUpload" class="btn btn-outline" style="font-size:0.76rem; padding:5px 9px;">🔄 অন্য ফাইল বাছুন</button>
           </div>
         </div>
       </div>
@@ -526,6 +546,7 @@
   </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="app.js?v=2.0.0"></script>
 </body>
 </html>

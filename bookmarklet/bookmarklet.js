@@ -152,7 +152,7 @@
     'SRI': 'শ্রী', 'SHREE': 'শ্রী', 'SRIMOTI': 'শ্রীমতী', 'SHRIMATI': 'শ্রীমতী',
     'SHEIKH': 'শেখ', 'SK': 'শেখ', 'SYED': 'সৈয়দ', 'KHANDAKER': 'খন্দকার', 'CHOWDHURY': 'চৌধুরী',
     'MAJUMDER': 'মজুমদার', 'TALUKDER': 'তালুকদার', 'SARKAR': 'সরকার', 'SARKER': 'সরকার',
-    'MONDAL': 'মণ্ডল', 'MANDAL': 'মণ্ডল', 'BISWAS': 'বিশ্বাস', 'BHUIYAN': 'ভূঁইয়া',
+    'MONDAL': 'মন্ডল', 'MANDAL': 'মন্ডল', 'BISWAS': 'বিশ্বাস', 'BHUIYAN': 'ভূঁইয়া',
     'HOSSAIN': 'হোসেন', 'HOSEN': 'হোসেন', 'HUSSAIN': 'হোসেন', 'ISLAM': 'ইসলাম',
     'AHMED': 'আহমেদ', 'AHMAD': 'আহমেদ', 'RAHMAN': 'রহমান', 'ROHMAN': 'রহমান',
     'KARIM': 'করিম', 'KORIM': 'করিম', 'RAHIM': 'রহিম', 'ROHIM': 'রহিম',
@@ -279,12 +279,64 @@
     return out.replace(/AAA+/g, 'A').replace(/AA+/g, 'A').trim();
   }
 
+  function normalizeEnglishHonorificPrefix(enName, bnName) {
+  if (!enName) return enName;
+  let res = String(enName).trim();
+  const bn = String(bnName || '').trim();
+
+  // 1. If Bengali starts with মোছাঃ / মোছা: / মোছা. / মোছা
+  if (/^(?:মোছাঃ|মোছা:|মোছা\.|মোছা\s+)/.test(bn)) {
+    if (/^(?:MOSAMMAT|MOSAMMOT|MOSA\.?|MST\.?)\s+/i.test(res)) {
+      res = res.replace(/^(?:MOSAMMAT|MOSAMMOT|MOSA\.?|MST\.?)\s+/i, 'MST. ');
+    } else if (!/^MST\.\s+/i.test(res)) {
+      res = 'MST. ' + res;
+    }
+  }
+  // 2. Else if Bengali starts with মোঃ / মো: / মো. / মো
+  else if (/^(?:মোঃ|মো:|মো\.|মো\s+)/.test(bn)) {
+    if (/^(?:MD\.?|MOHD\.?|MOHAMMAD|MOHAMMED)\s+/i.test(res)) {
+      res = res.replace(/^(?:MD\.?|MOHD\.?|MOHAMMAD|MOHAMMED)\s+/i, 'MD. ');
+    } else if (!/^MD\.\s+/i.test(res)) {
+      res = 'MD. ' + res;
+    }
+  }
+  // 3. Else if Bengali starts with মোসাঃ / মোসা: / মোসা. / মোসা
+  else if (/^(?:মোসাঃ|মোসা:|মোসা\.|মোসা\s+)/.test(bn)) {
+    if (/^(?:MOSA\.?|MOSAMMAT|MOSAMMOT)\s+/i.test(res)) {
+      res = res.replace(/^(?:MOSA\.?|MOSAMMAT|MOSAMMOT)\s+/i, 'MOSA. ');
+    }
+  }
+  // 4. Standalone English prefixes without Bengali match
+  else if (/^(?:MOSAMMAT|MOSAMMOT)\s+/i.test(res)) {
+    res = res.replace(/^(?:MOSAMMAT|MOSAMMOT)\s+/i, 'MST. ');
+  } else if (/^MD\s+[A-Z]/i.test(res)) {
+    res = res.replace(/^MD\s+/i, 'MD. ');
+  }
+
+  return res.toUpperCase().replace(/\s+/g, ' ').trim();
+}
+
   function transliterateBnToEn(bnText) {
     if (!bnText) return '';
     const cleaned = String(bnText).normalize('NFC').replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
     if (!cleaned) return '';
     if (!hasBengaliScript(cleaned)) return (typeof normalizeDigits === 'function' ? normalizeDigits(cleaned) : cleaned).toUpperCase().replace(/\s+/g, ' ').trim();
-    return cleaned.split(/\s+/).map(transliterateBnWordToEn).filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+
+    let working = cleaned;
+    let prefix = '';
+    if (/^(?:মোছাঃ|মোছা:|মোছা\.|মোছা\s+)/.test(working)) {
+    prefix = 'MST. ';
+    working = working.replace(/^(?:মোছাঃ|মোছা:|মোছা\.|মোছা\s+)/, '');
+    } else if (/^(?:মোঃ|মো:|মো\.|মো\s+)/.test(working)) {
+    prefix = 'MD. ';
+    working = working.replace(/^(?:মোঃ|মো:|মো\.|মো\s+)/, '');
+    } else if (/^(?:মোসাঃ|মোসা:|মোসা\.|মোসা\s+)/.test(working)) {
+    prefix = 'MOSA. ';
+    working = working.replace(/^(?:মোসাঃ|মোসা:|মোসা\.|মোসা\s+)/, '');
+    }
+
+    const converted = working.split(/\s+/).map(transliterateBnWordToEn).filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+    return (prefix + converted).trim();
   }
 
   function transliterateEnWordToBn(word) {
@@ -1211,7 +1263,7 @@
     const bilingualRule = `
 CRITICAL BIDIRECTIONAL BILINGUAL RULES (BANGLA-ONLY & ENGLISH-ONLY DOCUMENTS):
 - Case A — BANGLA-ONLY document (শুধু বাংলায় সনদ বা পুরাতন কাগজ, ইংরেজি লেখা নেই):
-  You MUST STILL populate EVERY English field ("name_en", "father_name_en", "mother_name_en", "spouse_name_en") by accurately transliterating Bengali into standard Bangladeshi ALL-CAPS English spelling (e.g. "মোঃ" -> "MD.", "মোছাঃ"/"মোসাম্মৎ" -> "MOSAMMAT", "রফিকুল ইসলাম" -> "RAFIQUL ISLAM", "জাহানারা বেগম" -> "JAHANARA BEGUM", "শ্রী" -> "SRI", "দেবী" -> "DEVI").
+  You MUST STILL populate EVERY English field ("name_en", "father_name_en", "mother_name_en", "spouse_name_en") by accurately transliterating Bengali into standard Bangladeshi ALL-CAPS English spelling (e.g. "মোঃ" -> "MD.", "মোছাঃ" -> "MST.", "রফিকুল ইসলাম" -> "RAFIQUL ISLAM", "জাহানারা বেগম" -> "JAHANARA BEGUM", "শ্রী" -> "SRI", "দেবী" -> "DEVI").
 - Case B — ENGLISH-ONLY document (শুধু ইংরেজিতে সনদ, বাংলা লেখা নেই):
   You MUST STILL populate EVERY Bengali field ("name_bn", "father_name_bn", "mother_name_bn", "spouse_name_bn") in standard Bangladeshi Bengali Unicode spelling (e.g. "MD." -> "মোঃ", "MST."/"MOSAMMAT" -> "মোছাঃ", "MOHAMMAD" -> "মোহাম্মদ", "ABDUL" -> "আব্দুল", "RAFIQUL ISLAM" -> "রফিকুল ইসলাম", "BEGUM" -> "বেগম", "KHATUN" -> "খাতুন", "AKTER" -> "আক্তার", "SULTANA" -> "সুলতানা", "RAHMAN" -> "রহমান", "UDDIN" -> "উদ্দিন", "HOSSAIN" -> "হোসেন", "AHMED" -> "আহমেদ", "RANI" -> "রাণী", "DEVI" -> "দেবী", "DAS" -> "দাস").
 - Set "detected_language" strictly to "bilingual", "bn_only", or "en_only".
@@ -3557,7 +3609,7 @@ Return ONLY a single valid JSON object with keys: doc_type, detected_language, d
 
   function buildBilingualCompletionPrompt(partialData) {
     return `Complete and verify ALL missing or wrong-script fields in this Bangladeshi Birth Certificate / NID JSON:
-1. BANGLA -> ENGLISH (*_bn to *_en): If any Bengali field (*_bn) is readable and its English counterpart (*_en) is blank or contains Bengali, accurately transliterate into standard Bangladeshi ALL-CAPS English (e.g. "মোঃ" -> "MD.", "মোছাঃ"/"মোসাম্মৎ" -> "MOSAMMAT", "রফিকুল ইসলাম" -> "RAFIQUL ISLAM", "বেগম" -> "BEGUM", "আক্তার" -> "AKTER", "রানী" -> "RANI", "দেবী" -> "DEVI").
+1. BANGLA -> ENGLISH (*_bn to *_en): If any Bengali field (*_bn) is readable and its English counterpart (*_en) is blank or contains Bengali, accurately transliterate into standard Bangladeshi ALL-CAPS English (e.g. "মোঃ" -> "MD.", "মোছাঃ" -> "MST.", "রফিকুল ইসলাম" -> "RAFIQUL ISLAM", "বেগম" -> "BEGUM", "আক্তার" -> "AKTER", "রানী" -> "RANI", "দেবী" -> "DEVI").
 2. ENGLISH -> BANGLA (*_en to *_bn): If any English field (*_en) is present and its Bengali counterpart (*_bn) is blank or contains Latin letters, provide accurate standard Bangladeshi Bengali Unicode spelling (e.g. "MD." -> "মোঃ", "MST."/"MOSAMMAT" -> "মোছাঃ", "MOHAMMAD" -> "মোহাম্মদ", "ABDUL" -> "আব্দুল", "BEGUM" -> "বেগম", "KHATUN" -> "খাতুন", "RAHMAN" -> "রহমান", "UDDIN" -> "উদ্দিন", "HOSSAIN" -> "হোসেন").
 3. Do NOT copy spouse/husband into father fields.
 4. Ensure "dob" is strict ASCII "DD/MM/YYYY", infer "gender" ("পুরুষ", "নারী", or "হিজড়া") if missing, and provide "marital_status_suggestion", "relation_suggestion", and "doc_type".

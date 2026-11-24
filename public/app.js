@@ -984,6 +984,211 @@ const btnResetUpload = document.getElementById('btnResetUpload');
 let currentFrameMode = 'id';
 let originalUploadDataUrl = null;
 
+const btnToggleTorch = document.getElementById('btnToggleTorch');
+const lblTorchText = document.getElementById('lblTorchText');
+const btnToggleZoom = document.getElementById('btnToggleZoom');
+const lblZoomText = document.getElementById('lblZoomText');
+const btnFlipCamera = document.getElementById('btnFlipCamera');
+const cameraStabilityBadge = document.getElementById('cameraStabilityBadge');
+const cameraStabilityText = document.getElementById('cameraStabilityText');
+
+let isTorchOn = false;
+let currentZoom = 1.0;
+let cameraFacingMode = 'environment';
+let stabilityCheckTimer = null;
+let isCapturingBurst = false;
+let prevSharpness = 0;
+let consecutiveSteadyFrames = 0;
+
+// High-speed offscreen canvas for edge-sharpness & stability detection
+const _stabilityCanvas = document.createElement('canvas');
+_stabilityCanvas.width = 160;
+_stabilityCanvas.height = 120;
+const _stabilityCtx = _stabilityCanvas.getContext('2d', { willReadFrequently: true });
+
+function calculateCameraSharpness(videoElem) {
+  try {
+    const natW = videoElem.videoWidth;
+    const natH = videoElem.videoHeight;
+    if (!natW || !natH) return 0;
+    const sw = Math.round(natW * 0.6);
+    const sh = Math.round(natH * 0.6);
+    const sx = Math.round((natW - sw) / 2);
+    const sy = Math.round((natH - sh) / 2);
+
+    _stabilityCtx.drawImage(videoElem, sx, sy, sw, sh, 0, 0, 160, 120);
+    const imgData = _stabilityCtx.getImageData(0, 0, 160, 120);
+    const d = imgData.data;
+    const gray = new Float32Array(160 * 120);
+    for (let i = 0, j = 0; i < d.length; i += 4, j++) {
+      gray[j] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+    }
+    let sum = 0, sumSq = 0, count = 0;
+    for (let y = 1; y < 119; y++) {
+      const row = y * 160;
+      for (let x = 1; x < 159; x++) {
+        const idx = row + x;
+        const lap = gray[idx - 160] + gray[idx + 160] + gray[idx - 1] + gray[idx + 1] - 4 * gray[idx];
+        sum += lap;
+        sumSq += lap * lap;
+        count++;
+      }
+    }
+    if (count === 0) return 0;
+    const mean = sum / count;
+    return (sumSq / count) - (mean * mean);
+  } catch (_) {
+    return 0;
+  }
+}
+
+function calculateCanvasSharpness(srcCanvas) {
+  try {
+    const w = srcCanvas.width;
+    const h = srcCanvas.height;
+    if (!w || !h) return 0;
+    const sw = Math.round(w * 0.6);
+    const sh = Math.round(h * 0.6);
+    const sx = Math.round((w - sw) / 2);
+    const sy = Math.round((h - sh) / 2);
+
+    _stabilityCtx.drawImage(srcCanvas, sx, sy, sw, sh, 0, 0, 160, 120);
+    const imgData = _stabilityCtx.getImageData(0, 0, 160, 120);
+    const d = imgData.data;
+    const gray = new Float32Array(160 * 120);
+    for (let i = 0, j = 0; i < d.length; i += 4, j++) {
+      gray[j] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+    }
+    let sum = 0, sumSq = 0, count = 0;
+    for (let y = 1; y < 119; y++) {
+      const row = y * 160;
+      for (let x = 1; x < 159; x++) {
+        const idx = row + x;
+        const lap = gray[idx - 160] + gray[idx + 160] + gray[idx - 1] + gray[idx + 1] - 4 * gray[idx];
+        sum += lap;
+        sumSq += lap * lap;
+        count++;
+      }
+    }
+    if (count === 0) return 0;
+    const mean = sum / count;
+    return (sumSq / count) - (mean * mean);
+  } catch (_) {
+    return 0;
+  }
+}
+
+function startStabilityDetector() {
+  stopStabilityDetector();
+  stabilityCheckTimer = setInterval(() => {
+    if (isCapturingBurst || currentMode !== 'camera' || !currentStream || !videoElement.videoWidth) {
+      return;
+    }
+    const sharpness = calculateCameraSharpness(videoElement);
+    const isSharp = sharpness >= 36;
+    const delta = Math.abs(sharpness - prevSharpness);
+    prevSharpness = sharpness;
+
+    if (isSharp && delta < 28) {
+      consecutiveSteadyFrames++;
+    } else {
+      consecutiveSteadyFrames = Math.max(0, consecutiveSteadyFrames - 1);
+    }
+
+    const isSteady = consecutiveSteadyFrames >= 2;
+    if (cameraStabilityBadge) {
+      if (isSteady) {
+        cameraStabilityBadge.className = 'camera-stability-badge ready';
+        if (cameraStabilityText) cameraStabilityText.textContent = '🟢 স্থির ও স্পষ্ট';
+        if (elCameraCropFrame) elCameraCropFrame.classList.add('sharp-focus');
+      } else {
+        cameraStabilityBadge.className = 'camera-stability-badge shaky';
+        if (cameraStabilityText) cameraStabilityText.textContent = '🟠 হাত স্থির রাখুন';
+        if (elCameraCropFrame) elCameraCropFrame.classList.remove('sharp-focus');
+      }
+    }
+  }, 280);
+}
+
+function stopStabilityDetector() {
+  if (stabilityCheckTimer) {
+    clearInterval(stabilityCheckTimer);
+    stabilityCheckTimer = null;
+  }
+  if (elCameraCropFrame) elCameraCropFrame.classList.remove('sharp-focus');
+}
+
+async function toggleTorch() {
+  if (!currentStream) return;
+  const track = currentStream.getVideoTracks()[0];
+  if (!track) return;
+  try {
+    const caps = track.getCapabilities ? track.getCapabilities() : {};
+    if (!caps.torch) {
+      if (lblTorchText) lblTorchText.textContent = 'নেই';
+      if (btnToggleTorch) btnToggleTorch.disabled = true;
+      return;
+    }
+    isTorchOn = !isTorchOn;
+    await track.applyConstraints({
+      advanced: [{ torch: isTorchOn }]
+    });
+    if (btnToggleTorch) btnToggleTorch.classList.toggle('active', isTorchOn);
+    if (lblTorchText) lblTorchText.textContent = isTorchOn ? 'চালু' : 'টর্চ';
+  } catch (err) {
+    console.warn('Torch toggle failed:', err);
+  }
+}
+
+async function toggleZoom() {
+  const nextZoom = currentZoom === 1.0 ? 2.0 : 1.0;
+  let hardwareZoomApplied = false;
+
+  if (currentStream) {
+    const track = currentStream.getVideoTracks()[0];
+    if (track && track.getCapabilities) {
+      const caps = track.getCapabilities();
+      if (caps.zoom && caps.zoom.max >= 2.0) {
+        try {
+          await track.applyConstraints({
+            advanced: [{ zoom: nextZoom }]
+          });
+          hardwareZoomApplied = true;
+        } catch (err) {
+          console.warn('Hardware zoom failed:', err);
+        }
+      }
+    }
+  }
+
+  currentZoom = nextZoom;
+  if (btnToggleZoom) btnToggleZoom.classList.toggle('active', currentZoom > 1.0);
+  if (lblZoomText) lblZoomText.textContent = `${currentZoom}x`;
+
+  if (!hardwareZoomApplied && videoElement) {
+    videoElement.style.transform = currentZoom > 1.0 ? `scale(${currentZoom})` : 'none';
+    videoElement.style.transition = 'transform 0.2s ease-out';
+  } else if (videoElement) {
+    videoElement.style.transform = 'none';
+  }
+}
+
+async function flipCamera() {
+  cameraFacingMode = (cameraFacingMode === 'environment') ? 'user' : 'environment';
+  isTorchOn = false;
+  currentZoom = 1.0;
+  if (btnToggleTorch) btnToggleTorch.classList.remove('active');
+  if (lblTorchText) lblTorchText.textContent = 'টর্চ';
+  if (btnToggleZoom) btnToggleZoom.classList.remove('active');
+  if (lblZoomText) lblZoomText.textContent = '1x';
+  if (videoElement) videoElement.style.transform = 'none';
+  await startCamera();
+}
+
+if (btnToggleTorch) btnToggleTorch.addEventListener('click', toggleTorch);
+if (btnToggleZoom) btnToggleZoom.addEventListener('click', toggleZoom);
+if (btnFlipCamera) btnFlipCamera.addEventListener('click', flipCamera);
+
 function applyDocumentFrameMode(docChoice, explicitFrameMode = null) {
   const normalizedChoice = docChoice || 'auto';
   if (elDocType && elDocType.value !== normalizedChoice) {
@@ -1025,16 +1230,17 @@ if (elDocType) {
   applyDocumentFrameMode(elDocType.value || 'auto');
 }
 
-// Camera Stream Setup with progressive high-res constraints
+// Camera Stream Setup with progressive high-res constraints and facing mode
 async function startCamera() {
   try {
+    stopStabilityDetector();
     if (currentStream) {
       currentStream.getTracks().forEach(t => t.stop());
     }
     const candidates = [
-      { video: { facingMode: { ideal: 'environment' }, width: { ideal: 2560 }, height: { ideal: 1920 } }, audio: false },
-      { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false },
-      { video: { facingMode: 'environment' }, audio: false },
+      { video: { facingMode: { ideal: cameraFacingMode }, width: { ideal: 2560 }, height: { ideal: 1920 } }, audio: false },
+      { video: { facingMode: { ideal: cameraFacingMode }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false },
+      { video: { facingMode: cameraFacingMode }, audio: false },
       { video: true, audio: false }
     ];
     let stream = null;
@@ -1047,6 +1253,17 @@ async function startCamera() {
     if (!stream) throw new Error('No camera stream available');
     currentStream = stream;
     videoElement.srcObject = currentStream;
+
+    // Check device capabilities for torch
+    const track = stream.getVideoTracks()[0];
+    if (track && track.getCapabilities) {
+      const caps = track.getCapabilities();
+      if (btnToggleTorch) {
+        btnToggleTorch.disabled = !caps.torch;
+        if (!caps.torch && lblTorchText) lblTorchText.textContent = 'টর্চ';
+      }
+    }
+    startStabilityDetector();
   } catch (err) {
     console.warn('Camera error:', err);
     // Switch to gallery upload if camera is not accessible
@@ -1055,10 +1272,13 @@ async function startCamera() {
 }
 
 function stopCamera() {
+  stopStabilityDetector();
   if (currentStream) {
     currentStream.getTracks().forEach(t => t.stop());
     currentStream = null;
   }
+  isTorchOn = false;
+  if (btnToggleTorch) btnToggleTorch.classList.remove('active');
 }
 
 function switchMode(mode) {
@@ -1081,7 +1301,75 @@ function switchMode(mode) {
 tabCamera.addEventListener('click', () => switchMode('camera'));
 tabGallery.addEventListener('click', () => switchMode('gallery'));
 
-// Crop strictly to visible inner guide frame (compensating object-fit: cover scaling)
+// Adaptive mid-tone contrast stretch and anti-glare specular suppression
+function enhanceDocumentCanvas(canvas, ctx) {
+  try {
+    const w = canvas.width;
+    const h = canvas.height;
+    if (w <= 0 || h <= 0) return;
+    const imgData = ctx.getImageData(0, 0, w, h);
+    const d = imgData.data;
+    const len = d.length;
+
+    let minLum = 255;
+    let maxLum = 0;
+    for (let i = 0; i < len; i += 16) {
+      const lum = (d[i] * 77 + d[i + 1] * 150 + d[i + 2] * 29) >> 8;
+      if (lum < minLum) minLum = lum;
+      if (lum > maxLum) maxLum = lum;
+    }
+
+    const range = maxLum - minLum;
+    const stretch = range > 45 && range < 225;
+
+    for (let i = 0; i < len; i += 4) {
+      let r = d[i];
+      let g = d[i + 1];
+      let b = d[i + 2];
+
+      // Anti-glare: soften blown-out specular reflections on laminated cards
+      if (r > 248 && g > 248 && b > 248) {
+        r = 242;
+        g = 242;
+        b = 242;
+      } else if (stretch) {
+        r = Math.min(255, Math.max(0, ((r - minLum) * 255) / range));
+        g = Math.min(255, Math.max(0, ((g - minLum) * 255) / range));
+        b = Math.min(255, Math.max(0, ((b - minLum) * 255) / range));
+      }
+
+      d[i] = r;
+      d[i + 1] = g;
+      d[i + 2] = b;
+    }
+    ctx.putImageData(imgData, 0, 0);
+  } catch (err) {
+    console.warn('enhanceDocumentCanvas error:', err);
+  }
+}
+
+// Smart upscale for low-res inputs (< 1600px width) before sending to OCR
+function smartUpscaleIfNeeded(imgOrCanvas, minWidth = 1600) {
+  const natW = imgOrCanvas.videoWidth || imgOrCanvas.naturalWidth || imgOrCanvas.width;
+  const natH = imgOrCanvas.videoHeight || imgOrCanvas.naturalHeight || imgOrCanvas.height;
+  if (!natW || !natH || natW >= minWidth) return imgOrCanvas;
+
+  const scale = minWidth / natW;
+  const upW = Math.round(natW * scale);
+  const upH = Math.round(natH * scale);
+  const upCanvas = document.createElement('canvas');
+  upCanvas.width = upW;
+  upCanvas.height = upH;
+  const upCtx = upCanvas.getContext('2d');
+  upCtx.imageSmoothingEnabled = true;
+  upCtx.imageSmoothingQuality = 'high';
+  if ('filter' in upCtx) upCtx.filter = 'contrast(1.08) brightness(1.02)';
+  upCtx.drawImage(imgOrCanvas, 0, 0, upW, upH);
+  enhanceDocumentCanvas(upCanvas, upCtx);
+  return upCanvas;
+}
+
+// Crop strictly to visible inner guide frame (compensating object-fit: cover scaling and digital zoom)
 function captureCroppedCameraFrame(videoElem, frameEl, frameMode = 'id', quality = 0.92) {
   const natW = videoElem.videoWidth;
   const natH = videoElem.videoHeight;
@@ -1105,6 +1393,16 @@ function captureCroppedCameraFrame(videoElem, frameEl, frameMode = 'id', quality
     sh = Math.max(1, Math.min(natH - sy, sh));
   }
 
+  // Handle digital 2x macro zoom crop if CSS scale is active
+  if (currentZoom > 1.0 && videoElem.style.transform && videoElem.style.transform.includes('scale')) {
+    const cropW = Math.round(sw / currentZoom);
+    const cropH = Math.round(sh / currentZoom);
+    sx = Math.max(0, Math.round(sx + (sw - cropW) / 2));
+    sy = Math.max(0, Math.round(sy + (sh - cropH) / 2));
+    sw = Math.min(natW - sx, cropW);
+    sh = Math.min(natH - sy, cropH);
+  }
+
   const maxDim = frameMode === 'a4' ? 2200 : 1800;
   const downScale = Math.min(1, maxDim / Math.max(sw, sh));
   const outW = Math.max(1, Math.round(sw * downScale));
@@ -1113,15 +1411,57 @@ function captureCroppedCameraFrame(videoElem, frameEl, frameMode = 'id', quality
   photoCanvas.width = outW;
   photoCanvas.height = outH;
   const ctx = photoCanvas.getContext('2d');
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
   if ('filter' in ctx) ctx.filter = 'contrast(1.08) brightness(1.03)';
   ctx.drawImage(videoElem, sx, sy, sw, sh, 0, 0, outW, outH);
+  enhanceDocumentCanvas(photoCanvas, ctx);
   return photoCanvas.toDataURL('image/jpeg', quality);
+}
+
+// Rapid Best-of-3 Burst Capture: takes 3 frames across ~160ms, evaluates sharpness, and picks best
+async function captureBestOfThree(videoElem, frameEl, frameMode = 'id', quality = 0.92) {
+  if (cameraContainer) {
+    cameraContainer.classList.remove('flash-shutter');
+    void cameraContainer.offsetWidth; // force reflow
+    cameraContainer.classList.add('flash-shutter');
+    setTimeout(() => cameraContainer.classList.remove('flash-shutter'), 320);
+  }
+
+  if (cameraStabilityBadge) {
+    cameraStabilityBadge.className = 'camera-stability-badge capturing';
+    if (cameraStabilityText) cameraStabilityText.textContent = '📸 শ্রেষ্ঠ ফ্রেম বাছাই হচ্ছে...';
+  }
+
+  const samples = [];
+  for (let i = 0; i < 3; i++) {
+    const dataUrl = captureCroppedCameraFrame(videoElem, frameEl, frameMode, quality);
+    if (dataUrl) {
+      const score = calculateCanvasSharpness(photoCanvas);
+      samples.push({ dataUrl, score });
+    }
+    if (i < 2) {
+      await new Promise(r => setTimeout(r, 65));
+    }
+  }
+
+  setTimeout(() => {
+    if (cameraStabilityBadge) {
+      cameraStabilityBadge.className = 'camera-stability-badge ready';
+      if (cameraStabilityText) cameraStabilityText.textContent = '🟢 স্থির ও স্পষ্ট';
+    }
+  }, 400);
+
+  if (samples.length === 0) return null;
+  samples.sort((a, b) => b.score - a.score);
+  return samples[0].dataUrl;
 }
 
 // Resize, enhance contrast & downscale image via Canvas for accurate Bengali OCR
 function downscaleImage(imgOrVideo, maxDim = 1800, quality = 0.92, targetAspect = null) {
-  const natW = imgOrVideo.videoWidth || imgOrVideo.naturalWidth || imgOrVideo.width;
-  const natH = imgOrVideo.videoHeight || imgOrVideo.naturalHeight || imgOrVideo.height;
+  const processedSource = smartUpscaleIfNeeded(imgOrVideo, 1600);
+  const natW = processedSource.videoWidth || processedSource.naturalWidth || processedSource.width;
+  const natH = processedSource.videoHeight || processedSource.naturalHeight || processedSource.height;
 
   let sx = 0, sy = 0, sw = natW, sh = natH;
   if (targetAspect && natW > 0 && natH > 0) {
@@ -1142,10 +1482,13 @@ function downscaleImage(imgOrVideo, maxDim = 1800, quality = 0.92, targetAspect 
   photoCanvas.width = targetWidth;
   photoCanvas.height = targetHeight;
   const ctx = photoCanvas.getContext('2d');
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
   if ('filter' in ctx) {
     ctx.filter = 'contrast(1.08) brightness(1.03)';
   }
-  ctx.drawImage(imgOrVideo, sx, sy, sw, sh, 0, 0, targetWidth, targetHeight);
+  ctx.drawImage(processedSource, sx, sy, sw, sh, 0, 0, targetWidth, targetHeight);
+  enhanceDocumentCanvas(photoCanvas, ctx);
 
   return photoCanvas.toDataURL('image/jpeg', quality);
 }
@@ -1165,10 +1508,38 @@ if (btnCropUploadId) btnCropUploadId.addEventListener('click', () => applyUpload
 if (btnCropUploadA4) btnCropUploadA4.addEventListener('click', () => applyUploadAspectCrop(210 / 297, 2200, 'birth_certificate'));
 if (btnResetUpload) btnResetUpload.addEventListener('click', () => applyUploadAspectCrop(null, currentFrameMode === 'a4' ? 2200 : 1800));
 
-// File picker / Gallery handling
-fileInput.addEventListener('change', (e) => {
-  const file = e.target.files[0];
+// Shared robust handler for file selection & drag-and-drop (Images & PDF)
+async function processIncomingFile(file) {
   if (!file) return;
+
+  const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+  if (isPdf && typeof window.pdfjsLib !== 'undefined') {
+    try {
+      showLoading(true, 'PDF থেকে হাই-রেজ্যুলেশন পেজ লোড হচ্ছে...');
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      const arrayBuffer = await file.arrayBuffer();
+      const loadingTask = window.pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) });
+      const pdf = await loadingTask.promise;
+      const page = await pdf.getPage(1);
+      // High-resolution rendering (scale 2.5 gives ~2100px width for standard A4, optimal for OCR)
+      const viewport = page.getViewport({ scale: 2.5 });
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const ctx = canvas.getContext('2d');
+      await page.render({ canvasContext: ctx, viewport }).promise;
+      selectedFileBase64 = canvas.toDataURL('image/jpeg', 0.95);
+      originalUploadDataUrl = selectedFileBase64;
+      filePreview.src = selectedFileBase64;
+      filePreviewContainer.style.display = 'block';
+      dropZone.style.display = 'none';
+      showLoading(false);
+      return;
+    } catch (pdfErr) {
+      console.warn('PDF.js render fallback:', pdfErr);
+      showLoading(false);
+    }
+  }
 
   const reader = new FileReader();
   reader.onload = (event) => {
@@ -1184,7 +1555,57 @@ fileInput.addEventListener('change', (e) => {
     img.src = originalUploadDataUrl;
   };
   reader.readAsDataURL(file);
+}
+
+// File picker event
+fileInput.addEventListener('change', (e) => {
+  if (e.target.files && e.target.files[0]) {
+    processIncomingFile(e.target.files[0]);
+  }
 });
+
+// Drag and drop events on dropZone
+if (dropZone) {
+  dropZone.addEventListener('click', (e) => {
+    if (e.target.tagName !== 'BUTTON') {
+      fileInput.click();
+    }
+  });
+
+  dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dropZone.classList.add('dragover');
+  });
+
+  dropZone.addEventListener('dragleave', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dropZone.classList.remove('dragover');
+  });
+
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dropZone.classList.remove('dragover');
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]) {
+      processIncomingFile(e.dataTransfer.files[0]);
+    }
+  });
+}
+
+// Change File Button handler
+const btnChangeUpload = document.getElementById('btnChangeUpload');
+if (btnChangeUpload) {
+  btnChangeUpload.addEventListener('click', () => {
+    fileInput.value = '';
+    selectedFileBase64 = null;
+    originalUploadDataUrl = null;
+    filePreviewContainer.style.display = 'none';
+    dropZone.style.display = 'flex';
+    fileInput.click();
+  });
+}
 
 // Capture or Send Action
 btnCapture.addEventListener('click', async () => {
@@ -1195,7 +1616,15 @@ btnCapture.addEventListener('click', async () => {
       alert('ক্যামেরা চালু নেই। অনুগ্রহ করে পারমিশন দিন বা ফাইল মোড বেছে নিন।');
       return;
     }
-    base64Data = captureCroppedCameraFrame(videoElement, elCameraCropFrame, currentFrameMode, 0.92);
+    try {
+      isCapturingBurst = true;
+      base64Data = await captureBestOfThree(videoElement, elCameraCropFrame, currentFrameMode, 0.92);
+    } finally {
+      isCapturingBurst = false;
+    }
+    if (!base64Data) {
+      base64Data = captureCroppedCameraFrame(videoElement, elCameraCropFrame, currentFrameMode, 0.92);
+    }
   } else {
     if (!selectedFileBase64) {
       alert('অনুগ্রহ করে এনআইডি বা জন্ম নিবন্ধনের একটি ছবি নির্বাচন করুন।');

@@ -112,7 +112,7 @@
     'SRI': 'শ্রী', 'SHREE': 'শ্রী', 'SRIMOTI': 'শ্রীমতী', 'SHRIMATI': 'শ্রীমতী',
     'SHEIKH': 'শেখ', 'SK': 'শেখ', 'SYED': 'সৈয়দ', 'KHANDAKER': 'খন্দকার', 'CHOWDHURY': 'চৌধুরী',
     'MAJUMDER': 'মজুমদার', 'TALUKDER': 'তালুকদার', 'SARKAR': 'সরকার', 'SARKER': 'সরকার',
-    'MONDAL': 'মণ্ডল', 'MANDAL': 'মণ্ডল', 'BISWAS': 'বিশ্বাস', 'BHUIYAN': 'ভূঁইয়া',
+    'MONDAL': 'মন্ডল', 'MANDAL': 'মন্ডল', 'BISWAS': 'বিশ্বাস', 'BHUIYAN': 'ভূঁইয়া',
     'HOSSAIN': 'হোসেন', 'HOSEN': 'হোসেন', 'HUSSAIN': 'হোসেন', 'ISLAM': 'ইসলাম',
     'AHMED': 'আহমেদ', 'AHMAD': 'আহমেদ', 'RAHMAN': 'রহমান', 'ROHMAN': 'রহমান',
     'KARIM': 'করিম', 'KORIM': 'করিম', 'RAHIM': 'রহিম', 'ROHIM': 'রহিম',
@@ -235,12 +235,64 @@
     return out.replace(/AAA+/g, 'A').replace(/AA+/g, 'A').trim();
   }
 
+  function normalizeEnglishHonorificPrefix(enName, bnName) {
+  if (!enName) return enName;
+  let res = String(enName).trim();
+  const bn = String(bnName || '').trim();
+
+  // 1. If Bengali starts with মোছাঃ / মোছা: / মোছা. / মোছা
+  if (/^(?:মোছাঃ|মোছা:|মোছা\.|মোছা\s+)/.test(bn)) {
+    if (/^(?:MOSAMMAT|MOSAMMOT|MOSA\.?|MST\.?)\s+/i.test(res)) {
+      res = res.replace(/^(?:MOSAMMAT|MOSAMMOT|MOSA\.?|MST\.?)\s+/i, 'MST. ');
+    } else if (!/^MST\.\s+/i.test(res)) {
+      res = 'MST. ' + res;
+    }
+  }
+  // 2. Else if Bengali starts with মোঃ / মো: / মো. / মো
+  else if (/^(?:মোঃ|মো:|মো\.|মো\s+)/.test(bn)) {
+    if (/^(?:MD\.?|MOHD\.?|MOHAMMAD|MOHAMMED)\s+/i.test(res)) {
+      res = res.replace(/^(?:MD\.?|MOHD\.?|MOHAMMAD|MOHAMMED)\s+/i, 'MD. ');
+    } else if (!/^MD\.\s+/i.test(res)) {
+      res = 'MD. ' + res;
+    }
+  }
+  // 3. Else if Bengali starts with মোসাঃ / মোসা: / মোসা. / মোসা
+  else if (/^(?:মোসাঃ|মোসা:|মোসা\.|মোসা\s+)/.test(bn)) {
+    if (/^(?:MOSA\.?|MOSAMMAT|MOSAMMOT)\s+/i.test(res)) {
+      res = res.replace(/^(?:MOSA\.?|MOSAMMAT|MOSAMMOT)\s+/i, 'MOSA. ');
+    }
+  }
+  // 4. Standalone English prefixes without Bengali match
+  else if (/^(?:MOSAMMAT|MOSAMMOT)\s+/i.test(res)) {
+    res = res.replace(/^(?:MOSAMMAT|MOSAMMOT)\s+/i, 'MST. ');
+  } else if (/^MD\s+[A-Z]/i.test(res)) {
+    res = res.replace(/^MD\s+/i, 'MD. ');
+  }
+
+  return res.toUpperCase().replace(/\s+/g, ' ').trim();
+}
+
   function transliterateBnToEn(bnText) {
     if (!bnText) return '';
     const cleaned = String(bnText).normalize('NFC').replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
     if (!cleaned) return '';
     if (!hasBengaliScript(cleaned)) return (typeof normalizeDigits === 'function' ? normalizeDigits(cleaned) : cleaned).toUpperCase().replace(/\s+/g, ' ').trim();
-    return cleaned.split(/\s+/).map(transliterateBnWordToEn).filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+
+    let working = cleaned;
+    let prefix = '';
+    if (/^(?:মোছাঃ|মোছা:|মোছা\.|মোছা\s+)/.test(working)) {
+    prefix = 'MST. ';
+    working = working.replace(/^(?:মোছাঃ|মোছা:|মোছা\.|মোছা\s+)/, '');
+    } else if (/^(?:মোঃ|মো:|মো\.|মো\s+)/.test(working)) {
+    prefix = 'MD. ';
+    working = working.replace(/^(?:মোঃ|মো:|মো\.|মো\s+)/, '');
+    } else if (/^(?:মোসাঃ|মোসা:|মোসা\.|মোসা\s+)/.test(working)) {
+    prefix = 'MOSA. ';
+    working = working.replace(/^(?:মোসাঃ|মোসা:|মোসা\.|মোসা\s+)/, '');
+    }
+
+    const converted = working.split(/\s+/).map(transliterateBnWordToEn).filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+    return (prefix + converted).trim();
   }
 
   function transliterateEnWordToBn(word) {
@@ -527,9 +579,14 @@
     if (out.gender) out.gender = normalizeGenderValue(out.gender);
     if (out.mobile_number) out.mobile_number = normalizeMobileNumber(out.mobile_number);
 
-    ['name_en', 'father_name_en', 'mother_name_en', 'spouse_name_en'].forEach((k) => {
-      if (out[k] && typeof out[k] === 'string') out[k] = out[k].replace(/\s+/g, ' ').trim().toUpperCase();
-    });
+    for (const [bnK, enK] of [
+      ['name_bn', 'name_en'],
+      ['father_name_bn', 'father_name_en'],
+      ['mother_name_bn', 'mother_name_en'],
+      ['spouse_name_bn', 'spouse_name_en']
+    ]) {
+      if (out[enK]) out[enK] = normalizeEnglishHonorificPrefix(out[enK], out[bnK]);
+    }
     ['name_bn', 'father_name_bn', 'mother_name_bn', 'spouse_name_bn'].forEach((k) => {
       if (out[k] && typeof out[k] === 'string') out[k] = normalizeBn(out[k]);
     });

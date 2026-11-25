@@ -911,11 +911,14 @@ function extractTextFromGeminiResponse(res) {
 }
 
 function parseOcrJsonText(textOutput) {
-  if (textOutput && typeof textOutput === 'object') {
+  if (Array.isArray(textOutput)) {
+    textOutput = textOutput.map(p => (typeof p === 'string' ? p : (p?.text || p?.content || ''))).join('\n');
+  } else if (textOutput && typeof textOutput === 'object') {
     return normalizeOcrKeyAliases(textOutput);
   }
   const raw = String(textOutput || '')
     .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/^<think>[\s\S]*?(?=\{)/i, '')
     .trim();
   const fenceMatch = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
   let cleaned = fenceMatch ? fenceMatch[1].trim() : raw;
@@ -1457,45 +1460,76 @@ ${JSON.stringify({
 }
 
 async function completeBanglaOnlyOcrWithDeepSeek(deepseekKey, partialData, preferredModel = 'deepseek-chat') {
-  if (!deepseekKey || !partialData || !needsIntelligentCompletion(partialData)) return partialData;
+  if (!deepseekKey || !partialData || partialData._dsCompletionDone || !needsIntelligentCompletion(partialData)) return partialData;
+  Object.defineProperty(partialData, '_dsCompletionDone', { value: true, enumerable: false, configurable: true });
+  const extractDsMsg = (resObj) => {
+    const msg = resObj?.choices?.[0]?.message || {};
+    let c = typeof msg.content === 'string' ? msg.content : (Array.isArray(msg.content) ? msg.content.map(p => (typeof p === 'string' ? p : (p?.text || p?.content || ''))).join('\n') : '');
+    c = String(c || '').replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+    if (c) return c;
+    const r = typeof msg.reasoning_content === 'string' ? msg.reasoning_content : (typeof msg.reasoning === 'string' ? msg.reasoning : '');
+    if (r) {
+      const endIdx = r.lastIndexOf('}');
+      for (let sFrom = endIdx, d = 0; endIdx !== -1 && d < 12 && sFrom >= 0; d++) {
+        const st = r.lastIndexOf('{', sFrom);
+        if (st === -1) break;
+        try {
+          const cand = JSON.parse(r.slice(st, endIdx + 1));
+          if (cand && typeof cand === 'object' && !Array.isArray(cand) && (cand.name_en || cand.name_bn || cand.father_name_en || cand.mother_name_en || cand.doc_type)) return JSON.stringify(cand);
+        } catch (_) {}
+        sFrom = st - 1;
+      }
+    }
+    return '';
+  };
   const models = preferredModel === 'deepseek-flash'
     ? ['deepseek-flash', 'deepseek-chat']
     : ['deepseek-chat', 'deepseek-flash'];
   const compPrompt = buildBilingualCompletionPrompt(partialData);
   const dsBase = (process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/+$/, '');
+  const attemptModes = [
+    { disableThinking: true, useJsonMode: true, maxTokens: 2048 },
+    { disableThinking: false, useJsonMode: false, maxTokens: 4096 }
+  ];
 
   for (const model of models) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 18000);
-    try {
-      const response = await fetch(`${dsBase}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${deepseekKey}`
-        },
-        body: JSON.stringify({
+    for (const cfg of attemptModes) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 22000);
+      try {
+        const payload = {
           model,
           messages: [
             { role: 'system', content: 'You are an expert Bangladeshi identity document specialist. Fill only missing English fields faithfully without changing or altering any existing Bengali spelling. Output strictly one valid JSON object.' },
             { role: 'user', content: compPrompt }
           ],
-          response_format: { type: 'json_object' },
           temperature: 0,
-          max_tokens: 1024
-        }),
-        signal: controller.signal
-      });
-      clearTimeout(timer);
-      if (!response.ok) continue;
-      const resData = await response.json().catch(() => ({}));
-      const content = resData?.choices?.[0]?.message?.content;
-      if (!content) continue;
-      const completed = parseOcrJsonText(content);
-      const addCost = resData?.usage ? computeScanUsageAndCost(model, resData) : null;
-      return applyBilingualCompletionResult(partialData, completed, addCost, model);
-    } catch (_) {
-      clearTimeout(timer);
+          max_tokens: cfg.maxTokens
+        };
+        if (cfg.disableThinking) payload.thinking = { type: 'disabled' };
+        if (cfg.useJsonMode) payload.response_format = { type: 'json_object' };
+        const response = await fetch(`${dsBase}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${deepseekKey}`
+          },
+          body: JSON.stringify(payload),
+          signal: controller.signal
+        });
+        clearTimeout(timer);
+        if (!response.ok) continue;
+        const resData = await response.json().catch(() => ({}));
+        const content = extractDsMsg(resData);
+        if (!content) continue;
+        const completed = parseOcrJsonText(content);
+        const addCost = resData?.usage ? computeScanUsageAndCost(model, resData) : null;
+        const out = applyBilingualCompletionResult(partialData, completed, addCost, model);
+        Object.defineProperty(out, '_dsCompletionDone', { value: true, enumerable: false, configurable: true });
+        return out;
+      } catch (_) {
+        clearTimeout(timer);
+      }
     }
   }
   return partialData;
@@ -1555,10 +1589,16 @@ async function callDeepSeekVisionOCR(deepseekKey, cleanBase64, mimeType, promptT
   let lastError = 'Empty response from DeepSeek OCR.';
   const dsBase = (process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/+$/, '');
 
+  const attemptConfigs = [
+    { disableThinking: true, useJsonMode: true, maxTokens: 4096, timeoutMs: 35000 },
+    { disableThinking: true, useJsonMode: false, maxTokens: 4096, timeoutMs: 35000 },
+    { disableThinking: false, useJsonMode: false, maxTokens: 8192, timeoutMs: 45000 }
+  ];
+
   for (const targetModel of modelCandidates) {
-    for (const useJsonMode of [true, false]) {
+    for (const cfg of attemptConfigs) {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 35000);
+      const timer = setTimeout(() => controller.abort(), cfg.timeoutMs);
       try {
         const payload = {
           model: targetModel,
@@ -1576,9 +1616,10 @@ async function callDeepSeekVisionOCR(deepseekKey, cleanBase64, mimeType, promptT
             }
           ],
           temperature: 0,
-          max_tokens: 2048
+          max_tokens: cfg.maxTokens
         };
-        if (useJsonMode) payload.response_format = { type: 'json_object' };
+        if (cfg.disableThinking) payload.thinking = { type: 'disabled' };
+        if (cfg.useJsonMode) payload.response_format = { type: 'json_object' };
 
         const response = await fetch(`${dsBase}/chat/completions`, {
           method: 'POST',
@@ -1601,17 +1642,48 @@ async function callDeepSeekVisionOCR(deepseekKey, cleanBase64, mimeType, promptT
           }
           if (response.status === 402) throw new Error('DeepSeek insufficient balance.');
           lastError = `${targetModel}: DeepSeek API Error (${response.status}): ${msg}`;
-          if (useJsonMode && /response_format/i.test(msg)) continue;
-          break;
+          if (/image_url|multimodal|vision|deserialize|unknown variant|model\s*(?:does\s*)?not\s*exist|unsupported\s*model/i.test(msg) && !/thinking|reasoning|response_format/i.test(msg)) {
+            break;
+          }
+          continue;
         }
 
-        const content = resData?.choices?.[0]?.message?.content;
+        const extractDsVisionText = (resObj) => {
+          const msg = resObj?.choices?.[0]?.message || {};
+          let c = typeof msg.content === 'string' ? msg.content : (Array.isArray(msg.content) ? msg.content.map(p => (typeof p === 'string' ? p : (p?.text || p?.content || ''))).join('\n') : '');
+          c = String(c || '').replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+          if (c) return c;
+          const r = typeof msg.reasoning_content === 'string' ? msg.reasoning_content : (typeof msg.reasoning === 'string' ? msg.reasoning : '');
+          if (r) {
+            const hasKey = (o) => o && typeof o === 'object' && !Array.isArray(o) && ['doc_type', 'doc_number', 'nid_number', 'birth_reg_no', 'name_bn', 'name_en', 'dob', 'father_name_bn', 'mother_name_bn'].some(k => String(o[k] || '').trim() !== '');
+            const fences = [...r.matchAll(/```(?:json)?\s*([\s\S]*?)\s*```/gi)];
+            for (let i = fences.length - 1; i >= 0; i--) {
+              try { const cand = JSON.parse(fences[i][1].trim()); if (hasKey(cand)) return JSON.stringify(cand); } catch (_) {}
+            }
+            const endIdx = r.lastIndexOf('}');
+            for (let sFrom = endIdx, d = 0; endIdx !== -1 && d < 12 && sFrom >= 0; d++) {
+              const st = r.lastIndexOf('{', sFrom);
+              if (st === -1) break;
+              try { const cand = JSON.parse(r.slice(st, endIdx + 1)); if (hasKey(cand)) return JSON.stringify(cand); } catch (_) {}
+              sFrom = st - 1;
+            }
+          }
+          return '';
+        };
+        const content = extractDsVisionText(resData);
         if (!content) {
           lastError = `${targetModel}: Empty response from DeepSeek OCR.`;
-          break;
+          continue;
         }
 
         let parsed = parseOcrJsonText(content);
+        const hasAnyField = parsed && [
+          'name_bn', 'name_en', 'doc_number', 'nid_number', 'birth_reg_no', 'dob', 'father_name_bn', 'mother_name_bn'
+        ].some(k => String(parsed[k] || '').trim() !== '');
+        if (!parsed || (!hasAnyField && !/\{[\s\S]*\}/.test(content))) {
+          lastError = `${targetModel}: DeepSeek returned no valid document fields.`;
+          continue;
+        }
         parsed.ocr_model_used = `${targetModel} (api.deepseek.com)`;
         parsed.ocr_usage = computeScanUsageAndCost(targetModel, resData);
         if (needsEnglishCompletion(parsed)) {
@@ -1622,7 +1694,7 @@ async function callDeepSeekVisionOCR(deepseekKey, cleanBase64, mimeType, promptT
         clearTimeout(timer);
         if (/Invalid DeepSeek API Key|insufficient balance/.test(err.message || '')) throw err;
         lastError = err.name === 'AbortError' ? `${targetModel}: DeepSeek OCR timed out.` : `${targetModel}: ${err.message}`;
-        break;
+        continue;
       }
     }
   }
@@ -1887,7 +1959,8 @@ async function extractNidWithAI(base64Image, customApiKey, options = {}) {
     try {
       rawParsed = await callDeepSeekVisionOCR(dKey, cleanBase64, mimeType, promptText, prefDsModel);
     } catch (dsErr) {
-      if (dsErr.isVisionUnsupported && gKey) {
+      const isAuthOrBal = /Invalid DeepSeek API Key|insufficient balance/i.test(dsErr.message || '');
+      if (gKey && !isAuthOrBal) {
         const gRes = await runGeminiCascade(gKey, cleanBase64, mimeType, promptText, 'preferred', validPrefGemModel, { docType });
         rawParsed = await completeBanglaOnlyOcrWithDeepSeek(dKey, gRes, prefDsModel);
         rawParsed.ocr_model_used = `${gRes.ocr_model_used || 'gemini'} + DeepSeek`;

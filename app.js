@@ -2297,6 +2297,34 @@ Return strictly ONE JSON object with keys: doc_type, doc_number, nid_number, bir
     throw new Error(lastErr);
   };
 
+  const extractDsText = (jsonRes) => {
+    const msg = jsonRes?.choices?.[0]?.message || {};
+    let content = typeof msg.content === 'string'
+      ? msg.content
+      : (Array.isArray(msg.content) ? msg.content.map(p => (typeof p === 'string' ? p : (p?.text || p?.content || ''))).join('\n') : '');
+    content = String(content || '').replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+    if (content) return content;
+    const reasoning = typeof msg.reasoning_content === 'string' ? msg.reasoning_content : (typeof msg.reasoning === 'string' ? msg.reasoning : '');
+    if (reasoning) {
+      const endIdx = reasoning.lastIndexOf('}');
+      if (endIdx !== -1) {
+        let searchFrom = endIdx;
+        for (let depth = 0; depth < 12 && searchFrom >= 0; depth++) {
+          const startIdx = reasoning.lastIndexOf('{', searchFrom);
+          if (startIdx === -1) break;
+          try {
+            const cand = JSON.parse(reasoning.slice(startIdx, endIdx + 1));
+            if (cand && typeof cand === 'object' && !Array.isArray(cand) && (cand.name_bn || cand.name_en || cand.nid_number || cand.birth_reg_no || cand.doc_number)) {
+              return JSON.stringify(cand);
+            }
+          } catch (_) {}
+          searchFrom = startIdx - 1;
+        }
+      }
+    }
+    return '';
+  };
+
   const callDs = async () => {
     if (/pdf/i.test(String(mimeType || ''))) {
       const err = new Error('DeepSeek Vision সরাসরি PDF ফাইল সাপোর্ট করে না (JPEG/PNG প্রয়োজন)।');
@@ -2305,7 +2333,12 @@ Return strictly ONE JSON object with keys: doc_type, doc_number, nid_number, bir
     }
     const targetModel = 'deepseek-flash';
     let lastErr = 'DeepSeek থেকে কোনো উত্তর পাওয়া যায়নি।';
-    for (const useJsonMode of [true, false]) {
+    const attemptConfigs = [
+      { disableThinking: true, useJsonMode: true, maxTokens: 4096 },
+      { disableThinking: true, useJsonMode: false, maxTokens: 4096 },
+      { disableThinking: false, useJsonMode: false, maxTokens: 8192 }
+    ];
+    for (const cfg of attemptConfigs) {
       const payload = {
         model: targetModel,
         temperature: 0,
@@ -2313,9 +2346,10 @@ Return strictly ONE JSON object with keys: doc_type, doc_number, nid_number, bir
           { role: 'system', content: 'You are an ultra-precise OCR engine for Bangladeshi identity documents. Extract exact text without spelling changes. মোছাঃ->MST., মোঃ->MD.. Output strictly one valid JSON object.' },
           { role: 'user', content: [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url: `data:${mimeType};base64,${cleanBase64}` } }] }
         ],
-        max_tokens: 2048
+        max_tokens: cfg.maxTokens
       };
-      if (useJsonMode) payload.response_format = { type: 'json_object' };
+      if (cfg.disableThinking) payload.thinking = { type: 'disabled' };
+      if (cfg.useJsonMode) payload.response_format = { type: 'json_object' };
       const res = await fetch('https://api.deepseek.com/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${dKey}` },
@@ -2327,17 +2361,24 @@ Return strictly ONE JSON object with keys: doc_type, doc_number, nid_number, bir
         if (res.status === 401) throw new Error('DeepSeek API Key সঠিক নয়।');
         if (res.status === 402) throw new Error('DeepSeek অ্যাকাউন্টে ব্যালেন্স শেষ।');
         lastErr = `${targetModel}: ${msg}`;
-        if (useJsonMode && /response_format/i.test(msg)) continue;
-        break;
+        if (/image_url|multimodal|vision|deserialize|unknown variant|model\s*(?:does\s*)?not\s*exist|unsupported\s*model/i.test(msg) && !/thinking|reasoning|response_format/i.test(msg)) {
+          break;
+        }
+        continue;
       }
-      const txt = j?.choices?.[0]?.message?.content || '';
-      if (!txt) { lastErr = `${targetModel}: খালি উত্তর`; break; }
-      const obj = extractJsonObj(txt);
-      obj.ocr_model_used = `${targetModel} (${deepseekModel === 'deepseek-chat' ? 'vision' : deepseekModel}, browser-direct)`;
-      return obj;
+      const txt = extractDsText(j);
+      if (!txt) { lastErr = `${targetModel}: DeepSeek থেকে কোনো উত্তর পাওয়া যায়নি।`; continue; }
+      try {
+        const obj = extractJsonObj(txt);
+        obj.ocr_model_used = `${targetModel} (${deepseekModel === 'deepseek-chat' ? 'vision' : deepseekModel}, browser-direct)`;
+        return obj;
+      } catch (parseErr) {
+        lastErr = `${targetModel}: ${parseErr.message}`;
+        continue;
+      }
     }
     const finalErr = new Error(lastErr);
-    if (/image_url|multimodal|vision|deserialize|unknown variant|model\s*(?:does\s*)?not\s*exist|invalid_request_error|unsupported\s*model/i.test(lastErr)) {
+    if (/image_url|multimodal|vision|deserialize|unknown variant|model\s*(?:does\s*)?not\s*exist|unsupported\s*model/i.test(lastErr)) {
       finalErr.isVisionUnsupported = true;
     }
     throw finalErr;
@@ -2349,9 +2390,10 @@ Return strictly ONE JSON object with keys: doc_type, doc_number, nid_number, bir
     try {
       parsed = await callDs();
     } catch (e) {
-      if (e.isVisionUnsupported && gKey) {
+      const isAuthOrBal = /Key সঠিক নয়|ব্যালেন্স শেষ/i.test(e.message || '');
+      if (gKey && !isAuthOrBal) {
         parsed = await callGem();
-        parsed.ocr_model_used = `${parsed.ocr_model_used || 'gemini'} (DeepSeek Vision অসমর্থিত হওয়ায় Gemini Fallback)`;
+        parsed.ocr_model_used = `${parsed.ocr_model_used || 'gemini'} (DeepSeek ব্যাকআপ Gemini Fallback)`;
       } else if (e.isVisionUnsupported) {
         throw new Error(`DeepSeek API সরাসরি ইমেজ OCR (image_url) সাপোর্ট করে না — অনুগ্রহ করে Gemini API Key যুক্ত করুন। (${e.message})`);
       } else if (!gKey || aiProvider === 'deepseek') {

@@ -1472,3 +1472,81 @@ test('cloudflare/worker.js keeps Pages ASSETS directory paths canonical without 
     assert.equal(seenUrls.at(-1), expectedAssetPath);
   }
 });
+
+test('deepseek-flash OCR disables thinking mode, retries on empty content, and salvages JSON from reasoning_content', async () => {
+  for (const relPath of [
+    'bookmarklet/bookmarklet.js',
+    'app.js',
+    'extension/background.js',
+    'server/server.js',
+    'cloudflare/worker.js',
+  ]) {
+    const src = readRepoFile(relPath);
+    assert.match(src, /thinking\s*=\s*\{\s*type:\s*['"]disabled['"]\s*\}/, `${relPath} should disable DeepSeek thinking mode for fast deterministic OCR`);
+    assert.match(src, /maxTokens:\s*8192/, `${relPath} should provide 8192-token fallback for DeepSeek thinking responses`);
+  }
+
+  const workerSrc = readRepoFile('cloudflare/worker.js');
+  const modBody = workerSrc.replace(/export\s+default\s+\{/, 'var __workerExport = {');
+  const dsPayloads = [];
+  let callIdx = 0;
+
+  const ctx = createSandbox({
+    fetch: async (url, opts) => {
+      const u = String(url);
+      if (u.includes('chat/completions')) {
+        const parsedBody = JSON.parse(opts.body);
+        dsPayloads.push(parsedBody);
+        callIdx += 1;
+        if (callIdx === 1) {
+          // Simulate empty content (e.g. truncated length) with no usable JSON yet -> must retry instead of breaking
+          return new Response(JSON.stringify({
+            choices: [{ finish_reason: 'length', message: { content: '', reasoning_content: 'Analyzing birth certificate...' } }],
+            usage: { prompt_tokens: 1200, completion_tokens: 2048 }
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        if (callIdx === 2) {
+          // Simulate JSON landing inside reasoning_content while content is empty -> must salvage JSON cleanly
+          return new Response(JSON.stringify({
+            choices: [{
+              finish_reason: 'stop',
+              message: {
+                content: '',
+                reasoning_content: 'Final extracted fields: {"doc_type":"birth_certificate","birth_reg_no":"19782691234567890","name_bn":"মোছাঃ মনোয়ারা","name_en":"MST. MONOWARA","dob":"10/10/1978","gender":"নারী","father_name_bn":"মমিন মন্ডল","father_name_en":"MOMIN MONDAL","mother_name_bn":"শরিফা খাতুন","mother_name_en":"SHORIFA KHATUN","marital_status_suggestion":"বিবাহিত"}'
+              }
+            }],
+            usage: { prompt_tokens: 1200, completion_tokens: 320 }
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+      }
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    },
+    Request,
+    Response,
+    Headers,
+  });
+  vm.runInContext(modBody, ctx);
+
+  const ocrReq = new Request('https://familycard-10n.pages.dev/api/ocr-nid', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      imageBase64: 'data:image/jpeg;base64,/9j/4AAQSkZJRg==',
+      aiProvider: 'deepseek',
+      deepseekModel: 'deepseek-flash',
+      deepseekApiKey: 'sk-test-deepseek-key',
+      docType: 'birth_certificate'
+    })
+  });
+  const res = await ctx.__workerExport.fetch(ocrReq, {}, { waitUntil() {} });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.success, true);
+  assert.equal(dsPayloads.length, 2, 'should retry after empty first DeepSeek response instead of breaking');
+  assert.deepEqual(dsPayloads[0].thinking, { type: 'disabled' });
+  assert.equal(dsPayloads[0].max_tokens, 4096);
+  assert.equal(body.data.doc_type, 'birth_certificate');
+  assert.equal(body.data.birth_reg_no, '19782691234567890');
+  assert.equal(body.data.name_en, 'MST. MONOWARA');
+  assert.equal(body.data.father_name_bn, 'মমিন মন্ডল');
+});

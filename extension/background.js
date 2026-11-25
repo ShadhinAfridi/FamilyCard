@@ -213,58 +213,55 @@ const OCR_RESPONSE_SCHEMA = {
 
 function buildGeminiPrompt(docTypeHint = 'auto') {
   const hintLine = docTypeHint === 'nid'
-    ? 'HINT: User selected Bangladeshi NID Card. Still verify the image visually first — if the document is clearly a Birth Registration Certificate (জন্ম নিবন্ধন সনদ / 17-digit Birth Registration Number), set "doc_type": "birth_certificate" and extract its 17-digit number into "birth_reg_no" and "doc_number".'
+    ? 'HINT: User selected Bangladeshi NID Card. Still verify visually first — if it is clearly a Birth Registration Certificate (জন্ম নিবন্ধন সনদপত্র / 17-digit Birth Registration No), set "doc_type": "birth_certificate" and put the 17 digits into "birth_reg_no" and "doc_number".'
     : docTypeHint === 'birth_certificate'
-      ? 'HINT: User selected Bangladeshi Digital/Manual Birth Registration Certificate (জন্ম নিবন্ধন সনদপত্র). Focus on the 17-digit Birth Registration Number, Date of Birth (NOT Registration/Issuance Date), and parent names (put Father/Mother NID into father_nid/mother_nid, NEVER into doc_number/nid_number).'
-      : 'Detect automatically whether this image is a Bangladeshi NID Card or a Birth Registration Certificate.';
+      ? 'HINT: User selected Bangladeshi Digital/Manual Birth Registration Certificate (জন্ম নিবন্ধন সনদপত্র). Focus on the 17-digit Birth Registration Number (starts with birth year YYYY), Date of Birth (NOT Registration Date), and parent names (put Father/Mother NID into father_nid/mother_nid, NEVER into doc_number/nid_number/birth_reg_no).'
+      : 'Detect automatically whether this is a Bangladeshi NID Card or a Birth Registration Certificate.';
 
   return `
-You are an expert OCR and document understanding system specializing in Bangladeshi identity documents:
+You are an ultra-precise OCR engine specializing in Bangladeshi identity documents:
 1. Bangladeshi National Identity (NID) Cards (Smart Cards and classic laminated paper NID cards).
-2. Bangladeshi Birth Registration Certificates (জন্ম নিবন্ধন সনদপত্র / BRC — bilingual, Bangla-only / শুধু বাংলায়, OR English-only / শুধু ইংরেজিতে).
+2. Bangladeshi Birth Registration Certificates (জন্ম নিবন্ধন সনদপত্র / BRC — bilingual, Bangla-only, or English-only).
 
 ${hintLine}
 
-CRITICAL BIDIRECTIONAL BILINGUAL RULES (BANGLA-ONLY & ENGLISH-ONLY DOCUMENTS):
-- Case A — BANGLA-ONLY document (শুধু বাংলায় সনদ বা পুরাতন কাগজ, ইংরেজি লেখা নেই):
-  You MUST STILL fill EVERY English field ("name_en", "father_name_en", "mother_name_en", "spouse_name_en") by accurately transliterating Bengali into standard Bangladeshi ALL-CAPS English spelling (e.g. "মোঃ" -> "MD.", "মোছাঃ"/"মোসাম্মৎ" -> "MOSAMMAT", "রফিকুল ইসলাম" -> "RAFIQUL ISLAM", "জাহানারা বেগম" -> "JAHANARA BEGUM", "শ্রী" -> "SRI", "দেবী" -> "DEVI").
-- Case B — ENGLISH-ONLY document (শুধু ইংরেজিতে সনদ, বাংলা লেখা নেই):
-  You MUST STILL fill EVERY Bengali field ("name_bn", "father_name_bn", "mother_name_bn", "spouse_name_bn") using standard Bangladeshi Bengali Unicode spelling (e.g. "MD."/"MD" -> "মোঃ", "MST."/"MOSAMMAT" -> "মোছাঃ", "MOHAMMAD" -> "মোহাম্মদ", "ABDUL" -> "আব্দুল", "RAFIQUL ISLAM" -> "রফিকুল ইসলাম", "BEGUM" -> "বেগম", "KHATUN" -> "খাতুন", "AKTER" -> "আক্তার", "SULTANA" -> "সুলতানা", "RAHMAN" -> "রহমান", "UDDIN" -> "উদ্দিন", "HOSSAIN" -> "হোসেন", "AHMED" -> "আহমেদ", "RANI" -> "রাণী", "DEVI" -> "দেবী", "DAS" -> "দাস").
-- Set "detected_language" strictly to "bilingual", "bn_only", or "en_only".
-- NEVER put Bengali Unicode inside "*_en" fields, and NEVER put English/Latin letters inside "*_bn" fields!
-- NEVER write "null", "None", "N/A", "নেই", or "প্রযোজ্য নয়" — use "" for absent fields.
-
-Analyze the provided image carefully and extract ALL visible fields into a single valid JSON object.
-
-DOCUMENT CLASSIFICATION:
-- "doc_type": Strictly "nid" or "birth_certificate".
-  - If NID Card ("জাতীয় পরিচয় পত্র" / "National ID Card" / "NID No" / "ID NO"), set "doc_type": "nid".
-  - If Birth Registration Certificate ("জন্ম নিবন্ধন সনদ" / "জন্ম ও মৃত্যু নিবন্ধন" / "Birth and Death Registration" / "Birth Registration Number"), set "doc_type": "birth_certificate".
-
-EXTRACTION RULES (VERIFY EVERY SINGLE DIGIT):
-1. "doc_number" & "nid_number" & "birth_reg_no":
-   - For NID ("doc_type": "nid"):
-     - Smart NID prints 10 digits under "NID No." / "জাতীয় পরিচয় নং" (e.g. "123 456 7890" -> "1234567890").
-     - Classic Laminated NID prints 13 or 17 digits at the bottom under "ID NO:" (very small font — read every digit carefully!). If 13 digits, extract those exact 13 digits (or 17 digits with 4-digit birth year prefix). Do NOT pick Pin/Voter/Card serial numbers.
-     - Copy exact digits into BOTH "doc_number" and "nid_number", and set "birth_reg_no": "".
-   - For Birth Certificate ("doc_type": "birth_certificate"):
-     - Extract the exact 17-digit Birth Registration Number (জন্ম নিবন্ধন নম্বর / Birth Registration Number / Personal Identification Number). Usually its first 4 digits match the 4-digit Birth Year (YYYY) from Date of Birth!
-     - CRITICAL: Many Birth Certificates ALSO print Father's 10/17-digit NID/BRC and Mother's 10/17-digit NID/BRC below! NEVER copy Father's or Mother's NID/BRC into "doc_number", "nid_number", or "birth_reg_no"! Put parent NIDs ONLY into "father_nid" and "mother_nid". Also ignore Registration Book/Page/Certificate serial numbers.
-     - Copy the exact 17 digits into BOTH "doc_number" and "birth_reg_no", and set "nid_number": "".
-   - Strip all spaces, hyphens, and punctuation. Convert ALL Bengali digits (০-৯) to English digits (0-9). Count every digit twice so none are dropped or duplicated!
-2. "name_bn" & "name_en": Exact registered person's name ("নাম:" / "নিবন্ধিত ব্যক্তির নাম:" / "Name:"). Fill BOTH scripts accurately (transliterate if document is single-script).
-3. "dob" vs "registration_date":
-   - Extract ONLY the person's Date of Birth ("জন্ম তারিখ" / "Date of Birth") in strict DD/MM/YYYY English digits (e.g. "১২ই জানুয়ারি, ২০০৫" -> "12/01/2005").
-   - Put "নিবন্ধনের তারিখ / Date of Registration" or "সনদ প্রদানের তারিখ / Date of Issuance" into "registration_date" (NEVER into "dob").
-4. "gender": Strictly "পুরুষ" (Male), "নারী" (Female), or "হিজড়া" (Third Gender / Hijra). Infer accurately if omitted.
-5. "father_name_bn" & "father_name_en": Extract ONLY from "পিতা:" / "পিতার নাম:" / "Father's Name". Provide BOTH accurate Bengali and ALL-CAPS English!
-   - CRITICAL FOR MARRIED WOMEN'S OLD LAMINATED NID: Classic laminated NIDs for married women often print "স্বামী:" (Husband) instead of "পিতা:" (Father).
-   - NEVER put "স্বামী:" (Husband) into "father_name_bn" or "father_name_en"! Leave father fields "" when "পিতা:" is absent, and put husband's name in "spouse_name_bn" / "spouse_name_en".
-6. "mother_name_bn" & "mother_name_en": Extract from "মাতা:" / "মাতার নাম:" / "Mother's Name". Provide BOTH accurate Bengali and ALL-CAPS English!
-7. "spouse_name_bn" & "spouse_name_en": Extract from "স্বামী:" / "স্ত্রী:" / "Spouse:" if printed; otherwise "".
-8. "relation_suggestion": Strictly from ("স্বামী", "স্ত্রী", "পুত্র", "কন্যা", "পিতা", "মাতা", "ভাই", "বোন", "অন্যান্য"). If classic NID shows "স্বামী:", suggest "স্ত্রী".
-9. "marital_status_suggestion": Strictly from ("বিবাহিত", "অবিবাহিত", "বিধবা", "বিপত্নীক", "তালাকপ্রাপ্ত"). If "স্বামী:"/"স্ত্রী:" shown, suggest "বিবাহিত"; if child/under 18, suggest "অবিবাহিত".
-10. "confidence": Set "low" if glare, blur, partial cropping, or uncertain digits exist; "medium" if minor uncertainty; "high" only when every character and digit is crystal clear.
+STRICT VERBATIM ZERO-CORRECTION DIRECTIVE (CRITICAL):
+- Extract the EXACT glyphs, characters, spelling, and punctuation as printed on the document image.
+- NEVER correct spelling or pronunciation:
+  - If printed "মন্ডল" (with dental-n / দন্ত্য-ন), output "মন্ডল" (DO NOT change to "মণ্ডল").
+  - If printed "মোসাঃ", output "মোসাঃ" (DO NOT change to "মোছাঃ" or "মোসাম্মাৎ").
+  - If printed "মোছাঃ", output "মোছাঃ" (DO NOT change to "মোসাঃ").
+  - If printed "আঃ", output "আঃ" (DO NOT expand to "আব্দুস").
+  - If printed "নুর", output "নুর" (DO NOT change to "নূর").
+  - If printed "আলী", output "আলী" (DO NOT change to "আলি").
+  - If printed "হোসেন", output "হোসেন" (DO NOT change to "হোসাইন").
+- NAME ENGLISH TRANSLITERATION RULES:
+  - If English is physically printed on the document (e.g. "Name:" line on NID, or bilingual columns on Digital Birth Certificates), extract the EXACT printed English text. NEVER overwrite printed English!
+  - If English is physically absent from the document (Bangla-only document or father/mother on NID):
+    - If Bengali name starts with "মোছাঃ" (or "মোছা:"), the English prefix MUST BE "MST." in ALL-CAPS (e.g. "মোছাঃ রহিমা খাতুন" -> "MST. ROHIMA KHATUN").
+    - If Bengali name starts with "মোঃ" (or "মো:"), the English prefix MUST BE "MD." (e.g. "মোঃ আঃ ছালাম" -> "MD. A. SALAM").
+    - If Bengali name starts with "মোসাঃ", keep "মোসাঃ" in Bengali and English is "MOSA." or "MST.".
+  - Set "detected_language" strictly to "bilingual", "bn_only", or "en_only".
+  - NEVER put Bengali Unicode inside "*_en" fields, and NEVER put English/Latin letters inside "*_bn" fields.
+  - NEVER write "null", "None", "N/A", "নেই", or "প্রযোজ্য নয়" — use "" for absent fields.
+- ZERO HALLUCINATION / ZERO IMAGINED NUMBERS:
+  - NEVER guess, invent, fabricate, pad, or synthesize missing digits or names!
+  - If any number or field is blurred, incomplete, or absent, extract ONLY what is clearly visible. If completely unreadable, return "".
+  - On Birth Registration Certificates (জন্ম নিবন্ধন সনদপত্র):
+    - The Birth Registration Number is strictly 17 digits starting with the 4-digit birth year (YYYY...).
+    - NEVER confuse Father's NID or Mother's NID with the 17-digit Birth Registration Number! Put Father's/Mother's NID ONLY into "father_nid" and "mother_nid".
+    - NEVER invent digits to complete 17 digits.
+  - On NID Cards:
+    - Smart NID prints 10 digits under "NID No." / "জাতীয় পরিচয় নং".
+    - Classic laminated NID prints 13 or 17 digits at the bottom under "ID NO:". Extract only clearly visible digits.
+- DATES:
+  - Extract "dob" in strict DD/MM/YYYY ASCII format.
+  - On Birth Certificates, extract "জন্ম তারিখ / Date of Birth" into "dob", and extract "নিবন্ধনের তারিখ / Date of Registration" into "registration_date" (NEVER put registration date into "dob").
+- GENDER:
+  - Strictly "পুরুষ" (Male), "নারী" (Female), or "হিজড়া" (Third Gender). Infer accurately if omitted.
+- MARRIED WOMEN'S CLASSIC NID:
+  - If classic laminated NID prints "স্বামী:" (Husband), put that name into "spouse_name_bn" and "spouse_name_en". NEVER put husband's name into father fields!
+- "confidence": Set "low" if glare, blur, partial cropping, or uncertain digits exist; "medium" if minor uncertainty; "high" only when every character and digit is crystal clear.
 
 Return ONLY a single valid JSON object with keys: doc_type, detected_language, doc_number, nid_number, birth_reg_no, father_nid, mother_nid, registration_date, name_bn, name_en, dob, gender, father_name_bn, father_name_en, mother_name_bn, mother_name_en, spouse_name_bn, spouse_name_en, relation_suggestion, marital_status_suggestion, confidence.
 `;
@@ -280,21 +277,37 @@ function normalizeDigits(str) {
   });
 }
 
+function isValidCalendarDate(d, m, y) {
+  const day = Number(d);
+  const month = Number(m);
+  const year = Number(y);
+  if (!Number.isInteger(day) || !Number.isInteger(month) || !Number.isInteger(year)) return false;
+  if (year < 1850 || year > 2100 || month < 1 || month > 12 || day < 1) return false;
+  const maxDays = [31, (year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+  return day <= maxDays;
+}
+
 // Standardize Date of Birth (supports English & Bengali months/digits/ordinals) to DD/MM/YYYY
 function standardizeDate(dobStr) {
   if (!dobStr) return '';
   let str = normalizeDigits(dobStr)
     .normalize('NFC')
     .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/^(?:তারিখ|জন্ম\s*তারিখ|date\s*of\s*birth|date|dob)\s*[:\-–]?\s*/i, '')
     .replace(/(\d{1,2})\s*(?:ইং|ই|শে|লা|রা|ঠা|st|nd|rd|th)(?=[\s,./\-\u0980-\u09FF])/gi, '$1 ')
     .replace(/[,]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 
   // ISO: YYYY-MM-DD or YYYY/MM/DD
-  const isoMatch = str.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/);
+  const isoMatch = str.match(/(?:^|\s)(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})(?:\b|$)/);
   if (isoMatch) {
-    return `${isoMatch[3].padStart(2, '0')}/${isoMatch[2].padStart(2, '0')}/${isoMatch[1]}`;
+    const y = parseInt(isoMatch[1], 10);
+    const m = parseInt(isoMatch[2], 10);
+    const d = parseInt(isoMatch[3], 10);
+    return isValidCalendarDate(d, m, y)
+      ? `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`
+      : '';
   }
 
   // English month names: 15 Aug 1985 / 15-August-1985
@@ -302,11 +315,15 @@ function standardizeDate(dobStr) {
     jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
     jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12'
   };
-  const enMatch = str.match(/^(\d{1,2})[\s\-,.]+([a-zA-Z]{3,})[\s\-,.]+(\d{4})/i);
+  const enMatch = str.match(/(?:^|\s)(\d{1,2})[\s\-,.]+([a-zA-Z]{3,})[\s\-,.]+(\d{4})(?:\b|$)/i);
   if (enMatch) {
-    const d = enMatch[1].padStart(2, '0');
-    const m = enMonths[enMatch[2].toLowerCase().substring(0, 3)] || '';
-    if (m) return `${d}/${m}/${enMatch[3]}`;
+    const d = parseInt(enMatch[1], 10);
+    const mStr = enMonths[enMatch[2].toLowerCase().substring(0, 3)] || '';
+    const y = parseInt(enMatch[3], 10);
+    if (mStr && isValidCalendarDate(d, parseInt(mStr, 10), y)) {
+      return `${String(d).padStart(2, '0')}/${mStr}/${y}`;
+    }
+    if (mStr) return '';
   }
 
   // Bengali month names: ১৪ মে ১৯৮৫ / ১২ই জানুয়ারি, ২০১২ / ০২-মার্চ-১৯৯০
@@ -315,22 +332,34 @@ function standardizeDate(dobStr) {
     ['মে', '05'], ['জুন', '06'], ['জুল', '07'], ['আগ', '08'],
     ['সেপ', '09'], ['অক্ট', '10'], ['অক', '10'], ['নভ', '11'], ['ডিস', '12']
   ];
-  const bnMatch = str.match(/^(\d{1,2})[\s\-,/.]+([\u0980-\u09FF]+)[\s\-,/.]+(\d{4})/);
+  const bnMatch = str.match(/(?:^|\s)(\d{1,2})[\s\-,/.]+([\u0980-\u09FF]+)[\s\-,/.]+(\d{4})(?:\b|$)/);
   if (bnMatch) {
-    const d = bnMatch[1].padStart(2, '0');
+    const d = parseInt(bnMatch[1], 10);
     const tok = bnMatch[2];
     const hit = bnMonthPrefixes.find(([prefix]) => tok.startsWith(prefix));
-    if (hit) return `${d}/${hit[1]}/${bnMatch[3]}`;
+    const y = parseInt(bnMatch[3], 10);
+    if (hit && isValidCalendarDate(d, parseInt(hit[1], 10), y)) {
+      return `${String(d).padStart(2, '0')}/${hit[1]}/${y}`;
+    }
+    if (hit) return '';
   }
 
-  // Standard DD/MM/YYYY
+  // Standard DD/MM/YYYY with swapped MM/DD/YYYY auto-correction
   str = str.replace(/[-\.]/g, '/');
-  const dmyMatch = str.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  const dmyMatch = str.match(/(?:^|[^\d])(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[^\d]|$)/);
   if (dmyMatch) {
-    return `${dmyMatch[1].padStart(2, '0')}/${dmyMatch[2].padStart(2, '0')}/${dmyMatch[3]}`;
+    let d = parseInt(dmyMatch[1], 10);
+    let m = parseInt(dmyMatch[2], 10);
+    const y = parseInt(dmyMatch[3], 10);
+    if (d <= 12 && m > 12 && m <= 31) {
+      const tmp = d; d = m; m = tmp;
+    }
+    return isValidCalendarDate(d, m, y)
+      ? `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`
+      : '';
   }
 
-  return str;
+  return '';
 }
 
 function extractTextFromGeminiResponse(res) {
@@ -363,7 +392,7 @@ function hasBengaliScript(str) {
 
 const BN_NAME_WORD_MAP = {
   'মোঃ': 'MD.', 'মো:': 'MD.', 'মো.': 'MD.', 'মোহাম্মদ': 'MOHAMMAD', 'মোহাম্মাদ': 'MOHAMMAD', 'মুহাম্মদ': 'MUHAMMAD',
-  'মোছাঃ': 'MOSAMMAT', 'মোছা:': 'MOSAMMAT', 'মোছা.': 'MOSAMMAT', 'মোসাম্মৎ': 'MOSAMMAT', 'মোসাম্মত': 'MOSAMMAT',
+  'মোছাঃ': 'MST.', 'মোছা:': 'MST.', 'মোছা.': 'MST.', 'মোসাম্মাৎ': 'MOSAMMAT', 'মোসাম্মৎ': 'MOSAMMAT', 'মোসাম্মত': 'MOSAMMAT', 'মোসাঃ': 'MOSA.', 'মোসা:': 'MOSA.',
   'শ্রী': 'SRI', 'শ্রীমতী': 'SRIMOTI', 'শেখ': 'SHEIKH', 'সৈয়দ': 'SYED', 'সৈয়দ': 'SYED',
   'খন্দকার': 'KHANDAKER', 'চৌধুরী': 'CHOWDHURY', 'মজুমদার': 'MAJUMDER', 'তালুকদার': 'TALUKDER',
   'সরকার': 'SARKAR', 'মন্ডল': 'MONDAL', 'মণ্ডল': 'MONDAL', 'বিশ্বাস': 'BISWAS', 'ভূঁইয়া': 'BHUIYAN', 'ভুঁইয়া': 'BHUIYAN',
@@ -414,7 +443,7 @@ const EN_NAME_WORD_MAP = {
   'SRI': 'শ্রী', 'SHREE': 'শ্রী', 'SRIMOTI': 'শ্রীমতী', 'SHRIMATI': 'শ্রীমতী',
   'SHEIKH': 'শেখ', 'SK': 'শেখ', 'SYED': 'সৈয়দ', 'KHANDAKER': 'খন্দকার', 'CHOWDHURY': 'চৌধুরী',
   'MAJUMDER': 'মজুমদার', 'TALUKDER': 'তালুকদার', 'SARKAR': 'সরকার', 'SARKER': 'সরকার',
-  'MONDAL': 'মণ্ডল', 'MANDAL': 'মণ্ডল', 'BISWAS': 'বিশ্বাস', 'BHUIYAN': 'ভূঁইয়া',
+  'MONDAL': 'মন্ডল', 'MANDAL': 'মন্ডল', 'BISWAS': 'বিশ্বাস', 'BHUIYAN': 'ভূঁইয়া',
   'HOSSAIN': 'হোসেন', 'HOSEN': 'হোসেন', 'HUSSAIN': 'হোসেন', 'ISLAM': 'ইসলাম',
   'AHMED': 'আহমেদ', 'AHMAD': 'আহমেদ', 'RAHMAN': 'রহমান', 'ROHMAN': 'রহমান',
   'KARIM': 'করিম', 'KORIM': 'করিম', 'RAHIM': 'রহিম', 'ROHIM': 'রহিম',
@@ -509,11 +538,28 @@ function transliterateBnWordToEn(word) {
     if (ch === '্') {
       const nextC = bare[i + 1] || '';
       if (nextC === 'য') { out += 'Y'; i += 2; lastWasVowel = false; continue; }
-      if (nextC === 'র') { out += 'R'; i += 2; lastWasVowel = false; continue; }
-      if (nextC === 'ব') {
-        if (lastConsStartIdx > 0 && cons[bare[i - 1]]) out += 'W';
+      if (nextC === 'র') {
+        out += 'R';
         i += 2;
-        lastWasVowel = false;
+        const afterCluster = bare[i] || '';
+        if (!kars[afterCluster] && afterCluster !== '্' && afterCluster !== 'ং' && afterCluster !== 'ঃ' && i < bare.length && cons[afterCluster]) {
+          out += 'A';
+          lastWasVowel = true;
+        } else {
+          lastWasVowel = false;
+        }
+        continue;
+      }
+      if (nextC === 'ব') {
+        if (lastConsStartIdx === 0 || (lastConsStartIdx > 0 && cons[bare[i - 1]])) out += 'W';
+        i += 2;
+        const afterCluster = bare[i] || '';
+        if (lastConsStartIdx === 0 && !kars[afterCluster] && afterCluster !== '্' && afterCluster !== 'ং' && afterCluster !== 'ঃ' && i < bare.length && cons[afterCluster]) {
+          out += 'A';
+          lastWasVowel = true;
+        } else {
+          lastWasVowel = false;
+        }
         continue;
       }
       i++;
@@ -562,12 +608,53 @@ function transliterateBnWordToEn(word) {
   return out.replace(/AAA+/g, 'A').replace(/AA+/g, 'A').trim();
 }
 
+function normalizeEnglishHonorificPrefix(enName, bnName) {
+  if (!enName) return enName;
+  let res = String(enName).trim();
+  const bn = String(bnName || '').trim();
+  const mstPrefixRe = /^(?:(?:MOSAMMAT|MOSAMMOT|MOST|MST|MOSA)\s+|(?:MOST|MST|MOSA)\.(?:\s*|(?=[A-Z])))/i;
+  const mdPrefixRe = /^(?:(?:MD|MOHD|MOHAMMAD|MOHAMMED)\s+|(?:MD|MOHD)\.(?:\s*|(?=[A-Z])))/i;
+  const mosaPrefixRe = /^(?:(?:MOSA|MOSAMMAT|MOSAMMOT)\s+|MOSA\.(?:\s*|(?=[A-Z])))/i;
+
+  if (/^(?:মোছাঃ|মোছা:|মোছা\.|মোছা\s+)/.test(bn)) {
+    if (mstPrefixRe.test(res)) res = res.replace(mstPrefixRe, 'MST. ');
+    else res = 'MST. ' + res;
+  } else if (/^(?:মোঃ|মো:|মো\.|মো\s+)/.test(bn)) {
+    if (mdPrefixRe.test(res)) res = res.replace(mdPrefixRe, 'MD. ');
+    else res = 'MD. ' + res;
+  } else if (/^(?:মোসাঃ|মোসা:|মোসা\.|মোসা\s+)/.test(bn)) {
+    if (mosaPrefixRe.test(res)) res = res.replace(mosaPrefixRe, 'MOSA. ');
+    else if (!/^MST\.(?:\s*|(?=[A-Z]))/i.test(res)) res = 'MOSA. ' + res;
+  } else if (/^(?:(?:MOSAMMAT|MOSAMMOT|MOST)\s+|(?:MOST|MST)\.(?:\s*|(?=[A-Z])))/i.test(res)) {
+    res = res.replace(/^(?:(?:MOSAMMAT|MOSAMMOT|MOST)\s+|(?:MOST|MST)\.(?:\s*|(?=[A-Z])))/i, 'MST. ');
+  } else if (/^(?:MD\s+|MD\.(?:\s*|(?=[A-Z])))/i.test(res)) {
+    res = res.replace(/^(?:MD\s+|MD\.(?:\s*|(?=[A-Z])))/i, 'MD. ');
+  }
+
+  return res.toUpperCase().replace(/\s+/g, ' ').trim();
+}
+
 function transliterateBnToEn(bnText) {
   if (!bnText) return '';
   const cleaned = String(bnText).normalize('NFC').replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
   if (!cleaned) return '';
   if (!hasBengaliScript(cleaned)) return normalizeDigits(cleaned).toUpperCase().replace(/\s+/g, ' ').trim();
-  return cleaned.split(/\s+/).map(transliterateBnWordToEn).filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+
+  let working = cleaned;
+  let prefix = '';
+  if (/^(?:মোছাঃ|মোছা:|মোছা\.|মোছা\s+)/.test(working)) {
+    prefix = 'MST. ';
+    working = working.replace(/^(?:মোছাঃ|মোছা:|মোছা\.|মোছা\s+)/, '');
+  } else if (/^(?:মোঃ|মো:|মো\.|মো\s+)/.test(working)) {
+    prefix = 'MD. ';
+    working = working.replace(/^(?:মোঃ|মো:|মো\.|মো\s+)/, '');
+  } else if (/^(?:মোসাঃ|মোসা:|মোসা\.|মোসা\s+)/.test(working)) {
+    prefix = 'MOSA. ';
+    working = working.replace(/^(?:মোসাঃ|মোসা:|মোসা\.|মোসা\s+)/, '');
+  }
+
+  const converted = working.split(/\s+/).map(transliterateBnWordToEn).filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+  return (prefix + converted).trim();
 }
 
 function transliterateEnWordToBn(word) {
@@ -953,6 +1040,32 @@ function pickBestDocDigits(candidates, preferredLengths, opts = {}) {
       }
       return matches[0];
     }
+    if (len === 17) {
+      for (const cand of candidates) {
+        if (!cand) continue;
+        const norm = normalizeDigits(String(cand));
+        if (birthYear) {
+          const m = norm.match(new RegExp(`(?:^|[^0-9])(${birthYear}\\d{13})(?:[^0-9]|$)`));
+          if (m && (!excludeSet || !excludeSet.has(m[1]))) return m[1];
+        }
+        const mGen = norm.match(/(?:^|[^0-9])((?:19|20)\d{15})(?:[^0-9]|$)/);
+        if (mGen && (!excludeSet || !excludeSet.has(mGen[1]))) return mGen[1];
+      }
+    } else if (len === 10) {
+      for (const cand of candidates) {
+        if (!cand) continue;
+        const norm = normalizeDigits(String(cand));
+        const m10 = norm.match(/(?:^|[^0-9])(\d{10})(?:[^0-9]|$)/);
+        if (m10 && (!excludeSet || !excludeSet.has(m10[1]))) return m10[1];
+      }
+    } else if (len === 13) {
+      for (const cand of candidates) {
+        if (!cand) continue;
+        const norm = normalizeDigits(String(cand));
+        const m13 = norm.match(/(?:^|[^0-9])(\d{13})(?:[^0-9]|$)/);
+        if (m13 && (!excludeSet || !excludeSet.has(m13[1]))) return m13[1];
+      }
+    }
   }
   const longCand = active.find((d) => d.length >= 10);
   return longCand || active[0] || '';
@@ -1024,27 +1137,30 @@ function validateAndNormalizeOcrData(parsedData, opts = {}) {
   const dobDigits = extractDigitCandidate(parsedData.dob);
   const fatherNid = extractDigitCandidate(parsedData.father_nid);
   const motherNid = extractDigitCandidate(parsedData.mother_nid);
+  parsedData.father_nid = fatherNid;
+  parsedData.mother_nid = motherNid;
   const parentExclude = new Set([fatherNid, motherNid, dobDigits].filter(Boolean));
 
   const rawAiNid = extractDigitCandidate(parsedData.nid_number);
   const rawAiBrc = extractDigitCandidate(parsedData.birth_reg_no);
   const cleanNidNotParent = rawAiNid && !parentExclude.has(rawAiNid) ? rawAiNid : '';
+  const hasStrongBrcMetadata = Boolean(fatherNid || motherNid || parsedData.registration_date);
   const hasBrcEvidence =
     parsedData.doc_type === 'birth_certificate' ||
-    Boolean(fatherNid || motherNid || parsedData.registration_date) ||
+    hasStrongBrcMetadata ||
     (!cleanNidNotParent && rawAiBrc.length === 17);
 
   if (docType === 'birth_certificate') {
     parsedData.doc_type = 'birth_certificate';
   } else if (docType === 'nid') {
-    if (parsedData.doc_type === 'birth_certificate' && rawAiBrc.length === 17 && !cleanNidNotParent) {
+    if (parsedData.doc_type === 'birth_certificate' && rawAiBrc.length === 17 && (!cleanNidNotParent || hasStrongBrcMetadata)) {
       parsedData.doc_type = 'birth_certificate';
       warnings.push('ডকুমেন্ট ধরন NID থাকলেও ছবিটি জন্ম নিবন্ধন (১৭ ডিজিট BRC) হিসেবে শনাক্ত হয়েছে।');
     } else {
       parsedData.doc_type = 'nid';
     }
   } else {
-    if (parsedData.doc_type === 'birth_certificate' || (hasBrcEvidence && !cleanNidNotParent)) {
+    if (parsedData.doc_type === 'birth_certificate' || (hasBrcEvidence && (!cleanNidNotParent || (rawAiBrc.length === 17 && hasStrongBrcMetadata)))) {
       parsedData.doc_type = 'birth_certificate';
     } else {
       parsedData.doc_type = parsedData.doc_type || 'nid';
@@ -1173,10 +1289,16 @@ function validateAndNormalizeOcrData(parsedData, opts = {}) {
     warnings.push('ছবিটি কিছুটা ঝাপসা/অস্পষ্ট মনে হচ্ছে — সাবমিটের আগে সব তথ্য মিলিয়ে নিন।');
   }
 
-  if (parsedData.name_en) parsedData.name_en = String(parsedData.name_en).toUpperCase().trim();
-  if (parsedData.father_name_en) parsedData.father_name_en = String(parsedData.father_name_en).toUpperCase().trim();
-  if (parsedData.mother_name_en) parsedData.mother_name_en = String(parsedData.mother_name_en).toUpperCase().trim();
-  if (parsedData.spouse_name_en) parsedData.spouse_name_en = String(parsedData.spouse_name_en).toUpperCase().trim();
+  for (const [bnKey, enKey] of [
+    ['name_bn', 'name_en'],
+    ['father_name_bn', 'father_name_en'],
+    ['mother_name_bn', 'mother_name_en'],
+    ['spouse_name_bn', 'spouse_name_en']
+  ]) {
+    if (parsedData[enKey]) {
+      parsedData[enKey] = normalizeEnglishHonorificPrefix(parsedData[enKey], parsedData[bnKey]);
+    }
+  }
 
   const missingFields = [];
   if (!String(parsedData.name_bn || '').trim() || !hasBengaliScript(parsedData.name_bn)) missingFields.push('name_bn');
@@ -1339,9 +1461,10 @@ function getOrderedGeminiModels(profile = 'accurate', preferredGeminiModel = DEF
 
 function buildGeminiAttemptsForModels(models, apiKey, rawBase64, detectedMime, promptText, opts = {}) {
   const { docType = 'auto', isEscalation = false } = opts;
+  const isPdf = /pdf/i.test(String(detectedMime || ''));
   const attempts = [];
   for (const model of models) {
-    if (INTERACTIONS_API_MODELS.has(model)) {
+    if (INTERACTIONS_API_MODELS.has(model) && !isPdf) {
       const useUltraHigh = (model === 'gemini-3.8-flash' || model === 'gemini-4-argon') && (docType === 'birth_certificate' || docType === 'auto' || isEscalation);
       const imageResolution = useUltraHigh ? 'ultra_high' : 'high';
       const body = {
@@ -1505,12 +1628,14 @@ function applyBilingualCompletionResult(partialData, completed, addCost = null, 
 }
 
 function buildBilingualCompletionPrompt(partialData) {
-  return `Complete and verify ALL missing or wrong-script fields in this Bangladeshi NID / Birth Certificate OCR JSON.
-Rules:
-1. BANGLA -> ENGLISH (*_bn to *_en): If *_bn has Bengali text and *_en is blank or contains Bengali, accurately transliterate into standard Bangladeshi ALL-CAPS English spelling (e.g. "মোঃ" -> "MD.", "মোছাঃ"/"মোসাম্মৎ" -> "MOSAMMAT", "রফিকুল ইসলাম" -> "RAFIQUL ISLAM", "বেগম" -> "BEGUM", "আক্তার" -> "AKTER", "রানী" -> "RANI", "দেবী" -> "DEVI").
-2. ENGLISH -> BANGLA (*_en to *_bn): If *_en has English text and *_bn is blank or contains Latin letters, provide accurate standard Bangladeshi Bengali Unicode spelling (e.g. "MD." -> "মোঃ", "MST."/"MOSAMMAT" -> "মোছাঃ", "MOHAMMAD" -> "মোহাম্মদ", "ABDUL" -> "আব্দুল", "RAFIQUL ISLAM" -> "রফিকুল ইসলাম", "BEGUM" -> "বেগম", "KHATUN" -> "খাতুন", "RAHMAN" -> "রহমান", "UDDIN" -> "উদ্দিন", "HOSSAIN" -> "হোসেন").
-3. Do NOT copy spouse/husband into father fields.
-4. Ensure "dob" is strict ASCII "DD/MM/YYYY", infer "gender" ("পুরুষ", "নারী", or "হিজড়া") if missing, and provide "marital_status_suggestion" and "relation_suggestion".
+  return `Fill strictly MISSING fields in this Bangladeshi Birth Certificate / NID JSON:
+1. BANGLA -> ENGLISH (*_bn to *_en): Only if *_bn has Bengali text and *_en is blank or contains Bengali, accurately transliterate into standard Bangladeshi ALL-CAPS English spelling:
+   - If Bengali name begins with "মোছাঃ" (or "মোছা:"), the English prefix MUST BE "MST." (e.g. "মোছাঃ রহিমা খাতুন" -> "MST. ROHIMA KHATUN").
+   - If Bengali name begins with "মোঃ" (or "মো:"), the English prefix MUST BE "MD." (e.g. "মোঃ আঃ ছালাম" -> "MD. A. SALAM").
+   - If Bengali name begins with "মোসাঃ", keep "মোসাঃ" and English prefix is "MOSA." or "MST.".
+2. PRESERVE ORIGINAL BENGALI TEXT: NEVER change, correct, or normalize existing Bengali spellings (e.g. keep "মন্ডল", "মোসাঃ", "আঃ", "নুর" unchanged).
+3. ENGLISH -> BANGLA (*_en to *_bn): Only if *_en has English text and *_bn is blank or contains Latin letters, provide accurate standard Bangladeshi Bengali Unicode spelling.
+4. Do NOT copy spouse/husband into father fields. Ensure "dob" is strict ASCII "DD/MM/YYYY", infer "gender" ("পুরুষ", "নারী", or "হিজড়া") if missing, and provide "marital_status_suggestion", "relation_suggestion", and "doc_type".
 5. NEVER return "null", "N/A", label prefixes like "পিতার নাম:", Bengali letters in *_en, or English letters in *_bn.
 Return ONLY one valid JSON object with keys: name_bn, name_en, father_name_bn, father_name_en, mother_name_bn, mother_name_en, spouse_name_bn, spouse_name_en, dob, gender, marital_status_suggestion, relation_suggestion, doc_type.
 Input JSON:
@@ -1552,7 +1677,7 @@ async function completeBanglaOnlyOcrWithDeepSeek(deepseekKey, partialData, prefe
         body: JSON.stringify({
           model,
           messages: [
-            { role: 'system', content: 'You are an expert Bangladeshi identity document specialist. Output ONLY one valid JSON object completing both Bengali (*_bn) and ALL-CAPS English (*_en) fields cleanly.' },
+            { role: 'system', content: 'You are an expert Bangladeshi identity document specialist. Fill only missing fields faithfully without changing or altering any existing Bengali spelling. Output strictly one valid JSON object.' },
             { role: 'user', content: compPrompt }
           ],
           response_format: { type: 'json_object' },
@@ -1616,8 +1741,17 @@ async function completeBilingualWithGemini(geminiKey, partialData, preferredMode
 }
 
 async function callDeepSeekVisionOCR(deepseekKey, rawBase64, detectedMime, promptText, deepseekModel = 'deepseek-flash') {
-  const prefModel = normalizeModelId(deepseekModel) === 'deepseek-flash' ? 'deepseek-flash' : 'deepseek-chat';
-  const modelCandidates = Array.from(new Set([prefModel, 'deepseek-chat', 'deepseek-flash']));
+  if (/pdf/i.test(String(detectedMime || ''))) {
+    const err = new Error('DeepSeek Vision সরাসরি PDF ফাইল সাপোর্ট করে না (JPEG/PNG প্রয়োজন)।');
+    err.isVisionUnsupported = true;
+    throw err;
+  }
+  const normalizedPref = normalizeModelId(deepseekModel);
+  const rawReq = String(deepseekModel || '').trim();
+  const modelCandidates = ['deepseek-flash'];
+  if (rawReq && normalizedPref !== 'deepseek-flash' && !/^deepseek-chat$/i.test(rawReq) && !modelCandidates.includes(rawReq)) {
+    modelCandidates.push(rawReq);
+  }
   let lastErr = 'DeepSeek API থেকে কোনো ফলাফল পাওয়া যায়নি।';
 
   for (const targetModel of modelCandidates) {
@@ -1630,7 +1764,7 @@ async function callDeepSeekVisionOCR(deepseekKey, rawBase64, detectedMime, promp
           messages: [
             {
               role: 'system',
-              content: 'You are an expert Bangladeshi NID and Birth Certificate OCR engine. Even if a Birth Certificate is printed ONLY in Bengali, ALWAYS populate BOTH *_bn AND ALL-CAPS transliterated English *_en fields in one single valid JSON object.'
+              content: 'You are an ultra-precise OCR engine for Bangladeshi identity documents (NID and Birth Certificates). Extract text EXACTLY as printed on the document without modifying, rewriting, or correcting spellings. If a Bengali name begins with "মোছাঃ" (or "মোছা:"), its English prefix is "MST.". If it begins with "মোঃ", its English prefix is "MD.". NEVER invent, guess, or synthesize digits or fields. Output strictly one valid JSON object.'
             },
             {
               role: 'user',
@@ -1813,7 +1947,7 @@ async function runMultiProviderOCR({
         const isFlagship = prefGemModel === 'gemini-3.8-flash' || prefGemModel === 'gemini-4-argon';
         const firstProfile = isFlagship ? 'preferred' : 'lite_only';
         const primaryRes = await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, firstProfile, prefGemModel, { docType });
-        if (!needsAccurateEscalation(primaryRes, docType) || prefGemModel === 'gemini-3.8-flash') return await finalizeWithDeepSeekIfNeeded(primaryRes);
+        if (!needsAccurateEscalation(primaryRes, docType) || isFlagship) return await finalizeWithDeepSeekIfNeeded(primaryRes);
         try {
           emit(70, 'তথ্য আরও নিখুঁত করতে Gemini 3.8 Flash দিয়ে যাচাই চলছে...');
           const escRes = await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'flash38_only', prefGemModel, { docType, isEscalation: true });

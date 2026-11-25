@@ -33,6 +33,34 @@
       <button type="button" id="btnOpenQuickCheck" class="nav-tab-btn highlight-btn">📍 দ্রুত বাড়ি যাচাই</button>
     </nav>
 
+    <!-- Single-Survey Duration Timer Bar (Synced to Firestore) -->
+    <section id="surveyTimerBar" class="survey-timer-bar" aria-live="polite">
+      <div class="timer-main-row">
+        <div class="timer-left">
+          <div class="timer-status-line">
+            <span id="surveyTimerStatusDot" class="timer-dot"></span>
+            <strong id="surveyTimerStatusText">⏱️ নতুন জরিপের জন্য প্রস্তুত</strong>
+          </div>
+          <div id="surveyTimerMeta" class="timer-meta">নতুন বাড়ি যাচাই বা NID স্ক্যান শুরু করলেই সময় গণনা শুরু হবে</div>
+        </div>
+        <div class="timer-right">
+          <div id="surveyTimerClock" class="timer-clock">০০:০০</div>
+          <div class="timer-actions">
+            <button type="button" id="btnSurveyStart" class="timer-btn start" title="নতুন সার্ভে টাইমার শুরু করুন">▶️ শুরু</button>
+            <button type="button" id="btnSurveyEnd" class="timer-btn end" title="জরিপ শেষ করে ডাটাবেসে সময় সেভ করুন" disabled>⏹️ শেষ</button>
+            <button type="button" id="btnSurveyHistory" class="timer-btn history" title="সংরক্ষিত সার্ভের সময় দেখুন">📊</button>
+          </div>
+        </div>
+      </div>
+      <div id="surveyTimerHistoryPanel" class="timer-history-panel" style="display: none;">
+        <div class="timer-history-hdr">
+          <span id="surveyTimerStatsRow">⏱️ ডাটাবেস সময় পরিসংখ্যান লোড হচ্ছে...</span>
+          <button type="button" id="btnRefreshTimerHistory" class="timer-btn refresh">🔄 রিফ্রেশ</button>
+        </div>
+        <div id="surveyTimerHistoryList" class="timer-history-list"></div>
+      </div>
+    </section>
+
     <!-- Main Scanner View Container -->
     <div id="viewScanner" class="view-panel active">
 
@@ -162,7 +190,7 @@
 
       <!-- File Upload Alternative -->
       <div id="uploadContainer" class="upload-container" style="display: none;">
-        <input type="file" id="fileInput" accept="image/*,application/pdf" capture="environment" style="display: none;">
+        <input type="file" id="fileInput" accept="image/*,application/pdf" style="display: none;">
         <div id="dropZone" class="drop-zone">
           <span class="upload-icon">📄</span>
           <p>ছবি বা PDF নির্বাচন করুন (NID / জন্ম নিবন্ধন)</p>
@@ -426,6 +454,7 @@
 
         <div class="fc-modal-body">
           <input type="hidden" id="modalHouseDocId" value="">
+          <div id="modalSurveyTimerBadge" class="modal-timer-badge">⏱️ সার্ভে সময়কাল: ০০:০০</div>
 
           <!-- House / Primary Lady Basic Info -->
           <div class="form-group">

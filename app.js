@@ -8,6 +8,11 @@ function normalizeDigits(str) {
   });
 }
 
+function toBnDigits(num) {
+  const bn = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'];
+  return String(num ?? '').replace(/[0-9]/g, (d) => bn[Number(d)] ?? d);
+}
+
 // Client Application for Mobile NID Scanner
 let socket = null;
 let currentStream = null;
@@ -47,8 +52,411 @@ const elBtnChatCancelReply = document.getElementById('btnChatCancelReply');
 
 const FIRESTORE_ROOMS_BASE = 'https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/room_channels';
 const FIRESTORE_ERROR_LOGS_BASE = 'https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/fc_error_logs';
+const FIRESTORE_SURVEY_TIMERS_LOG_BASE = 'https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/SURVEY_TIMERS/logs';
+const FIRESTORE_SURVEY_TIMERS_COLLECTION_BASE = 'https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/survey_timers';
 const EDGE_ROOM_API = 'https://familycard-10n.pages.dev/api/room-messages';
 const EDGE_ERROR_LOGS_API = 'https://familycard-10n.pages.dev/api/error-logs';
+const EDGE_SURVEY_TIMER_API = 'https://familycard-10n.pages.dev/api/survey-timer';
+
+const SURVEY_TIMER_STORAGE_KEY = 'fc_mobile_active_survey_timer_v1';
+const SURVEY_TIMER_PENDING_KEY = 'fc_mobile_pending_survey_timers_v1';
+const SURVEY_TIMER_HISTORY_KEY = 'fc_mobile_survey_timer_history_v1';
+
+let activeWebSurveyTimer = null;
+let webSurveyTickInterval = null;
+
+function formatWebSurveyClock(totalSec = 0) {
+  const sec = Math.max(0, Math.round(Number(totalSec) || 0));
+  const hrs = Math.floor(sec / 3600);
+  const mins = Math.floor((sec % 3600) / 60);
+  const rem = sec % 60;
+  const pad = (n) => toBnDigits(String(n).padStart(2, '0'));
+  if (hrs > 0) return `${pad(hrs)}:${pad(mins)}:${pad(rem)}`;
+  return `${pad(mins)}:${pad(rem)}`;
+}
+
+function formatWebSurveyDurationLabel(totalSec = 0) {
+  const sec = Math.max(0, Math.round(Number(totalSec) || 0));
+  const hrs = Math.floor(sec / 3600);
+  const mins = Math.floor((sec % 3600) / 60);
+  const rem = sec % 60;
+  if (hrs > 0) return `${toBnDigits(hrs)} ঘঃ ${toBnDigits(mins)} মিঃ ${toBnDigits(rem)} সেঃ`;
+  if (mins > 0) return `${toBnDigits(mins)} মিঃ ${toBnDigits(rem)} সেঃ`;
+  return `${toBnDigits(sec)} সেঃ`;
+}
+
+function loadActiveWebSurveyTimer() {
+  try {
+    const raw = localStorage.getItem(SURVEY_TIMER_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && parsed.sessionId ? parsed : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function saveActiveWebSurveyTimer(state) {
+  activeWebSurveyTimer = state;
+  try {
+    if (state) localStorage.setItem(SURVEY_TIMER_STORAGE_KEY, JSON.stringify(state));
+    else localStorage.removeItem(SURVEY_TIMER_STORAGE_KEY);
+  } catch (_) {}
+}
+
+function getWebSurveyElapsedSec(state = activeWebSurveyTimer, nowMs = Date.now()) {
+  if (!state || !state.startedAtMs) return 0;
+  if (state.status === 'ended') {
+    if (typeof state.durationSec === 'number') return Math.max(0, state.durationSec);
+    if (state.endedAtMs) return Math.max(0, Math.round((state.endedAtMs - state.startedAtMs) / 1000));
+  }
+  return Math.max(0, Math.round((nowMs - state.startedAtMs) / 1000));
+}
+
+function recordLocalSurveyTimerHistory(entry) {
+  if (!entry || !entry.sessionId) return;
+  try {
+    const arr = JSON.parse(localStorage.getItem(SURVEY_TIMER_HISTORY_KEY) || '[]');
+    const filtered = Array.isArray(arr) ? arr.filter((x) => x && x.sessionId !== entry.sessionId) : [];
+    filtered.unshift(entry);
+    localStorage.setItem(SURVEY_TIMER_HISTORY_KEY, JSON.stringify(filtered.slice(0, 60)));
+  } catch (_) {}
+}
+
+function renderWebSurveyTimerUI() {
+  const bar = document.getElementById('surveyTimerBar');
+  const statusEl = document.getElementById('surveyTimerStatusText');
+  const metaEl = document.getElementById('surveyTimerMeta');
+  const clockEl = document.getElementById('surveyTimerClock');
+  const btnEnd = document.getElementById('btnSurveyEnd');
+  const btnStart = document.getElementById('btnSurveyStart');
+  const modalBadge = document.getElementById('modalSurveyTimerBadge');
+
+  const st = activeWebSurveyTimer;
+  const elapsedSec = getWebSurveyElapsedSec(st);
+  const clockText = formatWebSurveyClock(elapsedSec);
+  const labelText = formatWebSurveyDurationLabel(elapsedSec);
+
+  if (clockEl) clockEl.textContent = clockText;
+  if (modalBadge) {
+    modalBadge.textContent = st && st.status === 'running'
+      ? `⏱️ চলমান জরিপ সময়কাল: ${clockText} (${labelText})`
+      : (st && st.status === 'ended' ? `✅ পূর্ববর্তী জরিপ সময়: ${labelText}` : '⏱️ সার্ভে সময়কাল: ০০:০০');
+  }
+
+  if (!bar) return;
+  bar.classList.remove('running', 'ended');
+  if (st && st.status === 'running') {
+    bar.classList.add('running');
+    if (statusEl) statusEl.textContent = '⏱️ জরিপ চলছে (লাইভ)';
+    const who = st.applicantName || st.docId || st.docNumber || '';
+    if (metaEl) metaEl.textContent = who ? `${who} — সময় গণনা চলছে` : 'জরিপ শেষে "⏹️ শেষ" বা বাড়ি সেভ করুন';
+    if (btnEnd) btnEnd.disabled = false;
+    if (btnStart) btnStart.textContent = '🔄 রিস্টার্ট';
+  } else if (st && st.status === 'ended') {
+    bar.classList.add('ended');
+    if (statusEl) statusEl.textContent = st.syncedToDb ? '✅ জরিপ সম্পন্ন (ডাটাবেসে সেভ)' : '✅ জরিপ সম্পন্ন';
+    const who = st.applicantName || st.docId || st.docNumber || '';
+    if (metaEl) metaEl.textContent = `${who ? `${who} • ` : ''}সময়: ${labelText}`;
+    if (btnEnd) btnEnd.disabled = true;
+    if (btnStart) btnStart.textContent = '▶️ নতুন সার্ভে';
+  } else {
+    if (statusEl) statusEl.textContent = '⏱️ নতুন জরিপের জন্য প্রস্তুত';
+    if (metaEl) metaEl.textContent = 'নতুন বাড়ি যাচাই বা NID স্ক্যান শুরু করলেই সময় গণনা শুরু হবে';
+    if (btnEnd) btnEnd.disabled = true;
+    if (btnStart) btnStart.textContent = '▶️ শুরু';
+  }
+}
+
+function startWebSurveyTicker() {
+  if (webSurveyTickInterval) clearInterval(webSurveyTickInterval);
+  webSurveyTickInterval = setInterval(() => {
+    if (activeWebSurveyTimer && activeWebSurveyTimer.status === 'running') {
+      renderWebSurveyTimerUI();
+    }
+  }, 1000);
+}
+
+function startNewWebSurveyTimer(meta = {}) {
+  const now = Date.now();
+  const state = {
+    sessionId: meta.sessionId || `srv_${now}_${Math.random().toString(36).slice(2, 7)}`,
+    status: 'running',
+    startedAtMs: Number(meta.startedAtMs) > 0 ? Number(meta.startedAtMs) : now,
+    endedAtMs: null,
+    durationSec: 0,
+    durationMs: 0,
+    durationLabel: '০ সেঃ',
+    familyId: String(meta.familyId || '').trim(),
+    docId: String(meta.docId || '').trim(),
+    docNumber: String(meta.docNumber || '').trim(),
+    applicantName: String(meta.applicantName || '').trim(),
+    docType: String(meta.docType || '').trim(),
+    startReason: String(meta.startReason || 'new_survey'),
+    endReason: '',
+    syncedToDb: false
+  };
+  saveActiveWebSurveyTimer(state);
+  startWebSurveyTicker();
+  renderWebSurveyTimerUI();
+  return state;
+}
+
+function ensureWebSurveyTimerStarted(meta = {}) {
+  if (!activeWebSurveyTimer || activeWebSurveyTimer.status === 'ended') {
+    return startNewWebSurveyTimer(meta);
+  }
+  let changed = false;
+  for (const k of ['familyId', 'docId', 'docNumber', 'applicantName', 'docType']) {
+    if (meta[k] && !activeWebSurveyTimer[k]) {
+      activeWebSurveyTimer[k] = String(meta[k]).trim();
+      changed = true;
+    }
+  }
+  if (changed) {
+    saveActiveWebSurveyTimer(activeWebSurveyTimer);
+    renderWebSurveyTimerUI();
+  }
+  return activeWebSurveyTimer;
+}
+
+async function syncWebSurveyTimerToDb(entry, opts = {}) {
+  if (!entry || !entry.sessionId) return false;
+  const payload = {
+    sessionId: entry.sessionId,
+    familyId: entry.familyId || '',
+    docId: entry.docId || entry.docNumber || entry.familyId || '',
+    applicantName: entry.applicantName || '',
+    docType: entry.docType || '',
+    source: 'mobile_web',
+    roomCode: normalizeRoomCode(elRoomCode?.value),
+    deviceName: getDeviceName(),
+    surveyStatus: entry.surveyStatus || 'COMPLETED',
+    status: 'ended',
+    readinessPct: entry.readinessPct || 0,
+    startReason: entry.startReason || 'new_survey',
+    endReason: entry.endReason || 'survey_ended',
+    startedAtMs: entry.startedAtMs,
+    endedAtMs: entry.endedAtMs,
+    durationMs: entry.durationMs,
+    durationSec: entry.durationSec,
+    durationLabel: entry.durationLabel
+  };
+
+  try {
+    const q = JSON.parse(localStorage.getItem(SURVEY_TIMER_PENDING_KEY) || '[]');
+    const next = q.filter((x) => x && x.sessionId !== payload.sessionId);
+    next.push(payload);
+    localStorage.setItem(SURVEY_TIMER_PENDING_KEY, JSON.stringify(next.slice(-30)));
+  } catch (_) {}
+
+  let synced = false;
+  const fields = {
+    session_id: { stringValue: payload.sessionId },
+    family_id: { stringValue: payload.familyId },
+    doc_id: { stringValue: payload.docId },
+    applicant_name: { stringValue: payload.applicantName },
+    doc_type: { stringValue: payload.docType },
+    source: { stringValue: payload.source },
+    room_code: { stringValue: payload.roomCode },
+    device_name: { stringValue: payload.deviceName },
+    survey_status: { stringValue: payload.surveyStatus },
+    timer_status: { stringValue: 'ended' },
+    readiness_pct: { integerValue: String(payload.readinessPct) },
+    start_reason: { stringValue: payload.startReason },
+    end_reason: { stringValue: payload.endReason },
+    started_at_ms: { integerValue: String(payload.startedAtMs) },
+    ended_at_ms: { integerValue: String(payload.endedAtMs) },
+    started_at: { timestampValue: new Date(payload.startedAtMs).toISOString() },
+    ended_at: { timestampValue: new Date(payload.endedAtMs).toISOString() },
+    duration_ms: { integerValue: String(payload.durationMs) },
+    duration_sec: { integerValue: String(payload.durationSec) },
+    duration_label: { stringValue: payload.durationLabel }
+  };
+  const mask = Object.keys(fields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
+
+  try {
+    const reqBody = JSON.stringify({ fields });
+    const [fsLogRes] = await Promise.all([
+      fetch(`${FIRESTORE_SURVEY_TIMERS_LOG_BASE}/${encodeURIComponent(payload.sessionId)}?${mask}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: reqBody,
+        keepalive: true
+      }).catch(() => null),
+      fetch(`${FIRESTORE_SURVEY_TIMERS_COLLECTION_BASE}/${encodeURIComponent(payload.sessionId)}?${mask}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: reqBody,
+        keepalive: true
+      }).catch(() => null)
+    ]);
+    if (fsLogRes && fsLogRes.ok) synced = true;
+
+    const targetDocIds = !opts.skipDocPatch
+      ? Array.from(new Set([payload.familyId, payload.docId].filter((id) => id && id !== 'SURVEY_TIMERS')))
+      : [];
+    if (targetDocIds.length > 0) {
+      const docFields = {
+        survey_session_id: { stringValue: payload.sessionId },
+        survey_started_at: { timestampValue: new Date(payload.startedAtMs).toISOString() },
+        survey_ended_at: { timestampValue: new Date(payload.endedAtMs).toISOString() },
+        survey_duration_sec: { integerValue: String(payload.durationSec) },
+        survey_duration_label: { stringValue: payload.durationLabel },
+        survey_timer_status: { stringValue: 'ended' }
+      };
+      const docMask = Object.keys(docFields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
+      for (const targetId of targetDocIds) {
+        fetch(`https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(targetId)}?${docMask}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fields: docFields }),
+          keepalive: true
+        }).catch(() => {});
+        fetch(`https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(targetId)}/logs/${encodeURIComponent(`timer_${payload.sessionId}`)}?${mask}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: reqBody,
+          keepalive: true
+        }).catch(() => {});
+      }
+    }
+
+    const host = window.location.hostname;
+    const isLocalRelay = host === 'localhost' || host === '127.0.0.1' || /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host);
+    const apiEndpoint = isLocalRelay ? '/api/survey-timer' : EDGE_SURVEY_TIMER_API;
+    const apiRes = await fetch(apiEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      keepalive: true
+    }).catch(() => null);
+    if (apiRes && apiRes.ok) synced = true;
+  } catch (_) {}
+
+  if (synced) {
+    try {
+      const q = JSON.parse(localStorage.getItem(SURVEY_TIMER_PENDING_KEY) || '[]');
+      localStorage.setItem(SURVEY_TIMER_PENDING_KEY, JSON.stringify(q.filter((x) => x && x.sessionId !== payload.sessionId)));
+    } catch (_) {}
+  }
+  return synced;
+}
+
+async function flushPendingWebSurveyTimers() {
+  try {
+    const q = JSON.parse(localStorage.getItem(SURVEY_TIMER_PENDING_KEY) || '[]');
+    if (!Array.isArray(q) || q.length === 0) return;
+    for (const item of q.slice(0, 10)) {
+      await syncWebSurveyTimerToDb(item, { skipDocPatch: true });
+    }
+  } catch (_) {}
+}
+
+async function endWebSurveyTimer(endReason = 'survey_ended', opts = {}) {
+  if (!activeWebSurveyTimer) return null;
+  if (activeWebSurveyTimer.status === 'ended' && !opts.forceUpdate) return activeWebSurveyTimer;
+
+  const now = Number(opts.endedAtMs) > 0 ? Number(opts.endedAtMs) : Date.now();
+  const endedAtMs = Math.max(activeWebSurveyTimer.startedAtMs, now);
+  const durationMs = Math.max(0, endedAtMs - activeWebSurveyTimer.startedAtMs);
+  const durationSec = Math.round(durationMs / 1000);
+  const durationLabel = formatWebSurveyDurationLabel(durationSec);
+
+  const finalState = {
+    ...activeWebSurveyTimer,
+    status: 'ended',
+    endedAtMs,
+    durationMs,
+    durationSec,
+    durationLabel,
+    familyId: String(opts.familyId || activeWebSurveyTimer.familyId || '').trim(),
+    docId: String(opts.docId || activeWebSurveyTimer.docId || activeWebSurveyTimer.docNumber || '').trim(),
+    applicantName: String(opts.applicantName || activeWebSurveyTimer.applicantName || '').trim(),
+    surveyStatus: String(opts.surveyStatus || activeWebSurveyTimer.surveyStatus || 'COMPLETED').trim(),
+    endReason: String(endReason || 'survey_ended'),
+    syncedToDb: false
+  };
+  saveActiveWebSurveyTimer(finalState);
+  recordLocalSurveyTimerHistory(finalState);
+  renderWebSurveyTimerUI();
+
+  if (!opts.skipRemoteSync) {
+    const synced = await syncWebSurveyTimerToDb(finalState, { skipDocPatch: Boolean(opts.skipDocPatch) });
+    if (activeWebSurveyTimer && activeWebSurveyTimer.sessionId === finalState.sessionId) {
+      activeWebSurveyTimer.syncedToDb = synced;
+      saveActiveWebSurveyTimer(activeWebSurveyTimer);
+      renderWebSurveyTimerUI();
+    }
+  }
+  return finalState;
+}
+
+function renderWebSurveyTimerHistoryList(timers = []) {
+  const statsEl = document.getElementById('surveyTimerStatsRow');
+  const listEl = document.getElementById('surveyTimerHistoryList');
+  if (!listEl || !statsEl) return;
+  const list = Array.isArray(timers) ? timers : [];
+  if (list.length === 0) {
+    statsEl.textContent = '⏱️ এখনো কোনো সার্ভের সময় সংরক্ষিত হয়নি';
+    listEl.innerHTML = '<div style="text-align:center; color:#64748b; font-size:0.75rem; padding:10px;">প্রথম সার্ভে সম্পন্ন হলে এখানে তালিকা দেখাবে</div>';
+    return;
+  }
+  const totalSec = list.reduce((acc, t) => acc + (Number(t.durationSec) || 0), 0);
+  const avgSec = Math.round(totalSec / list.length);
+  statsEl.textContent = `📊 মোট ${toBnDigits(list.length)}টি জরিপ • গড় সময়: ${formatWebSurveyDurationLabel(avgSec)}`;
+  listEl.innerHTML = list.slice(0, 20).map((t) => {
+    const name = t.applicantName || t.docId || t.familyId || 'জরিপ';
+    const timeStr = t.endedAtMs ? new Date(t.endedAtMs).toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' }) : '';
+    const dur = t.durationLabel || formatWebSurveyDurationLabel(t.durationSec || 0);
+    return `
+      <div class="timer-history-item">
+        <div style="min-width:0;">
+          <div style="font-weight:700; color:#0f172a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">👤 ${escapeHtml(name)}${t.docId ? ` <small style="color:#64748b;">(${escapeHtml(t.docId)})</small>` : ''}</div>
+          <div style="font-size:0.68rem; color:#64748b;">${escapeHtml(t.source || '')} • ${escapeHtml(timeStr)}</div>
+        </div>
+        <span style="font-weight:800; color:#0369a1; white-space:nowrap;">⏱️ ${escapeHtml(dur)}</span>
+      </div>
+    `;
+  }).join('');
+}
+
+async function fetchWebSurveyTimerHistory() {
+  let localHist = [];
+  try {
+    const raw = JSON.parse(localStorage.getItem(SURVEY_TIMER_HISTORY_KEY) || '[]');
+    if (Array.isArray(raw)) localHist = raw;
+  } catch (_) {}
+  try {
+    const r = await fetch(`${FIRESTORE_SURVEY_TIMERS_LOG_BASE}?pageSize=30&t=${Date.now()}`, { cache: 'no-store' }).catch(() => null);
+    let remote = [];
+    if (r && r.ok) {
+      const data = await r.json().catch(() => ({}));
+      const docs = Array.isArray(data.documents) ? data.documents : [];
+      remote = docs.map((d) => {
+        const f = d.fields || {};
+        return {
+          sessionId: f.session_id?.stringValue || d.name?.split('/').pop() || '',
+          familyId: f.family_id?.stringValue || '',
+          docId: f.doc_id?.stringValue || '',
+          applicantName: f.applicant_name?.stringValue || '',
+          source: f.source?.stringValue || '',
+          endedAtMs: Number(f.ended_at_ms?.integerValue || f.ended_at_ms?.doubleValue || 0),
+          durationSec: Number(f.duration_sec?.integerValue || 0),
+          durationLabel: f.duration_label?.stringValue || ''
+        };
+      });
+    }
+    const merged = new Map();
+    for (const item of [...localHist, ...remote]) {
+      if (item && item.sessionId) merged.set(item.sessionId, item);
+    }
+    const sorted = Array.from(merged.values()).sort((a, b) => (b.endedAtMs || 0) - (a.endedAtMs || 0));
+    renderWebSurveyTimerHistoryList(sorted);
+  } catch (_) {
+    renderWebSurveyTimerHistoryList(localHist);
+  }
+}
 
 async function logTelemetryError(level = 'error', stage = 'general', message = '', detail = '') {
   try {
@@ -345,6 +753,22 @@ function handleIncomingRoomMessage(rawMsg) {
   if (!rawMsg || !rawMsg.id) return;
   const ts = Number(rawMsg.ts || 0);
   if (ts <= lastClearedAtMs) return;
+  if (rawMsg.type === 'survey_timer_ended' && rawMsg.payload && rawMsg.senderId !== MY_CLIENT_ID) {
+    const p = rawMsg.payload;
+    if (activeWebSurveyTimer && activeWebSurveyTimer.status === 'running') {
+      const sameSession = p.sessionId && p.sessionId === activeWebSurveyTimer.sessionId;
+      const sameDoc = p.docId && (p.docId === activeWebSurveyTimer.docId || p.docId === activeWebSurveyTimer.docNumber);
+      if (sameSession || sameDoc || !activeWebSurveyTimer.docId) {
+        endWebSurveyTimer(p.endReason || 'portal_submitted', {
+          endedAtMs: p.endedAtMs || ts || Date.now(),
+          familyId: p.familyId || '',
+          docId: p.docId || '',
+          applicantName: p.applicantName || '',
+          skipRemoteSync: true
+        });
+      }
+    }
+  }
   const existed = roomMsgMap.has(rawMsg.id);
   roomMsgMap.set(rawMsg.id, rawMsg);
   if (!existed) {
@@ -1279,6 +1703,11 @@ function stopCamera() {
   }
   isTorchOn = false;
   if (btnToggleTorch) btnToggleTorch.classList.remove('active');
+  if (lblTorchText) lblTorchText.textContent = 'টর্চ';
+  currentZoom = 1.0;
+  if (btnToggleZoom) btnToggleZoom.classList.remove('active');
+  if (lblZoomText) lblZoomText.textContent = '1x';
+  if (videoElement) videoElement.style.transform = 'none';
 }
 
 function switchMode(mode) {
@@ -1393,15 +1822,8 @@ function captureCroppedCameraFrame(videoElem, frameEl, frameMode = 'id', quality
     sh = Math.max(1, Math.min(natH - sy, sh));
   }
 
-  // Handle digital 2x macro zoom crop if CSS scale is active
-  if (currentZoom > 1.0 && videoElem.style.transform && videoElem.style.transform.includes('scale')) {
-    const cropW = Math.round(sw / currentZoom);
-    const cropH = Math.round(sh / currentZoom);
-    sx = Math.max(0, Math.round(sx + (sw - cropW) / 2));
-    sy = Math.max(0, Math.round(sy + (sh - cropH) / 2));
-    sw = Math.min(natW - sx, cropW);
-    sh = Math.min(natH - sy, cropH);
-  }
+  // Note: videoElem.getBoundingClientRect() already includes active CSS transform scale(),
+  // and hardware zoom modifies the video track directly, so no extra sw/sh division is needed.
 
   const maxDim = frameMode === 'a4' ? 2200 : 1800;
   const downScale = Math.min(1, maxDim / Math.max(sw, sh));
@@ -1513,7 +1935,11 @@ async function processIncomingFile(file) {
   if (!file) return;
 
   const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
-  if (isPdf && typeof window.pdfjsLib !== 'undefined') {
+  if (isPdf) {
+    if (typeof window.pdfjsLib === 'undefined') {
+      alert('PDF প্রসেসিং লাইব্রেরি লোড হয়নি। অনুগ্রহ করে পেজটি রিলোড করুন অথবা ছবির ফরম্যাট (JPG/PNG) ব্যবহার করুন।');
+      return;
+    }
     try {
       showLoading(true, 'PDF থেকে হাই-রেজ্যুলেশন পেজ লোড হচ্ছে...');
       window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
@@ -1521,14 +1947,17 @@ async function processIncomingFile(file) {
       const loadingTask = window.pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) });
       const pdf = await loadingTask.promise;
       const page = await pdf.getPage(1);
-      // High-resolution rendering (scale 2.5 gives ~2100px width for standard A4, optimal for OCR)
-      const viewport = page.getViewport({ scale: 2.5 });
+      // High-resolution rendering with max-dimension cap for mobile memory safety
+      const baseViewport = page.getViewport({ scale: 1 });
+      const targetScale = Math.min(2.5, 2400 / Math.max(baseViewport.width, baseViewport.height, 1));
+      const viewport = page.getViewport({ scale: Math.max(1.2, targetScale) });
       const canvas = document.createElement('canvas');
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
+      canvas.width = Math.max(1, Math.round(viewport.width));
+      canvas.height = Math.max(1, Math.round(viewport.height));
       const ctx = canvas.getContext('2d');
       await page.render({ canvasContext: ctx, viewport }).promise;
-      selectedFileBase64 = canvas.toDataURL('image/jpeg', 0.95);
+      enhanceDocumentCanvas(canvas, ctx);
+      selectedFileBase64 = canvas.toDataURL('image/jpeg', 0.94);
       originalUploadDataUrl = selectedFileBase64;
       filePreview.src = selectedFileBase64;
       filePreviewContainer.style.display = 'block';
@@ -1536,15 +1965,19 @@ async function processIncomingFile(file) {
       showLoading(false);
       return;
     } catch (pdfErr) {
-      console.warn('PDF.js render fallback:', pdfErr);
+      console.warn('PDF.js render failed:', pdfErr);
       showLoading(false);
+      alert('PDF ফাইলটি রেন্ডার করা যায়নি: ' + (pdfErr?.message || 'Unsupported PDF'));
+      return;
     }
   }
 
   const reader = new FileReader();
+  reader.onerror = () => alert('ফাইল পড়া যায়নি।');
   reader.onload = (event) => {
     originalUploadDataUrl = event.target.result;
     const img = new Image();
+    img.onerror = () => alert('ছবিটি পড়া যাচ্ছে না — অনুগ্রহ করে সঠিক JPG বা PNG দিন।');
     img.onload = () => {
       const maxDim = currentFrameMode === 'a4' ? 2200 : 1800;
       selectedFileBase64 = downscaleImage(img, maxDim, 0.92);
@@ -1634,6 +2067,7 @@ btnCapture.addEventListener('click', async () => {
   }
 
   showLoading(true, 'AI ডকুমেন্ট বিশ্লেষণ করা হচ্ছে (Gemini / DeepSeek)...');
+  const activeTimerForScan = ensureWebSurveyTimerStarted({ startReason: 'ocr_scan' });
 
   const room = (elRoomCode.value || 'FC-101').trim().toUpperCase();
   const apiKey = elApiKey.value.trim();
@@ -1664,10 +2098,12 @@ btnCapture.addEventListener('click', async () => {
       docType: docType,
       maritalStatus: maritalStatus,
       religion: religion,
-      mobileNumber: mobileNumber
+      mobileNumber: mobileNumber,
+      survey_started_at_ms: activeTimerForScan?.startedAtMs || undefined,
+      survey_session_id: activeTimerForScan?.sessionId || undefined
     });
   } else {
-    // Direct HTTP POST (local Express / Cloudflare Pages Edge OCR fallback)
+    // Direct HTTP POST (local Express -> Cloudflare Edge -> Direct Client AI fallback)
     try {
       const payload = JSON.stringify({
         image: base64Data,
@@ -1688,25 +2124,51 @@ btnCapture.addEventListener('click', async () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: payload
-      });
-      if (resp.status === 404 || resp.status === 405 || !/application\/json/i.test(resp.headers.get('content-type') || '')) {
+      }).catch(() => null);
+      if (!resp || resp.status === 404 || resp.status === 405 || !/application\/json/i.test(resp.headers.get('content-type') || '')) {
         updateWebScanProgress(48, 'Cloudflare Edge OCR-এ পাঠানো হচ্ছে...', 'ধাপ: Edge রুট প্রসেসিং');
         resp = await fetch('https://familycard-10n.pages.dev/api/ocr-nid', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: payload
+        }).catch(() => null);
+      }
+      let data = null;
+      if (resp && /application\/json/i.test(resp.headers.get('content-type') || '')) {
+        data = await resp.json().catch(() => null);
+      } else if (apiKey || deepseekApiKey) {
+        updateWebScanProgress(64, 'ডাইরেক্ট ব্রাউজার AI OCR চলছে...', 'ধাপ: Gemini / DeepSeek সরাসরি বিশ্লেষণ');
+        data = await runDirectWebBrowserOcrFallback({
+          imageBase64: base64Data,
+          apiKey,
+          deepseekApiKey,
+          aiProvider,
+          defaultKeySlot,
+          geminiModel,
+          deepseekModel,
+          docType,
+          maritalStatus,
+          religion,
+          mobileNumber
         });
       }
+      if (!data) {
+        throw new Error(`OCR API সাড়া দেয়নি (HTTP ${resp ? resp.status : 'Network Error'}) — অনুগ্রহ করে Gemini বা DeepSeek API Key সেটিংসে দিন।`);
+      }
       updateWebScanProgress(86, 'ফলাফল যাচাই ও ইংরেজি সমন্বয় হচ্ছে...', 'ধাপ: JSON পার্সিং ও নাম যাচাই');
-      const data = await resp.json();
       if (data.success) {
         updateWebScanProgress(100, 'বিশ্লেষণ সম্পন্ন!', 'ধাপ: সম্পূর্ণ');
         showLoading(false);
-        displayResults(data.data);
+        const enrichedData = {
+          ...data.data,
+          ...(activeTimerForScan?.startedAtMs ? { survey_started_at_ms: activeTimerForScan.startedAtMs } : {}),
+          ...(activeTimerForScan?.sessionId ? { survey_session_id: activeTimerForScan.sessionId } : {})
+        };
+        displayResults(enrichedData);
         sendRoomMessage({
           type: 'nid_data',
-          text: `🪪 স্ক্যান: ${data.data.name_bn || data.data.name_en || ''} (${data.data.doc_number || data.data.nid_number || data.data.birth_reg_no || ''})`,
-          payload: data.data
+          text: `🪪 স্ক্যান: ${enrichedData.name_bn || enrichedData.name_en || ''} (${enrichedData.doc_number || enrichedData.nid_number || enrichedData.birth_reg_no || ''})`,
+          payload: enrichedData
         });
       } else {
         showLoading(false);
@@ -1720,6 +2182,169 @@ btnCapture.addEventListener('click', async () => {
     }
   }
 });
+
+function normalizeDirectWebPrefix(enName, bnName) {
+  if (!enName) return enName;
+  let res = String(enName).trim();
+  const bn = String(bnName || '').trim();
+  const mstRe = /^(?:(?:MOSAMMAT|MOSAMMOT|MOST|MST|MOSA)\s+|(?:MOST|MST|MOSA)\.(?:\s*|(?=[A-Z])))/i;
+  const mdRe = /^(?:(?:MD|MOHD|MOHAMMAD|MOHAMMED)\s+|(?:MD|MOHD)\.(?:\s*|(?=[A-Z])))/i;
+  if (/^(?:মোছাঃ|মোছা:|মোছা\.|মোছা\s+)/.test(bn)) {
+    res = mstRe.test(res) ? res.replace(mstRe, 'MST. ') : 'MST. ' + res;
+  } else if (/^(?:মোঃ|মো:|মো\.|মো\s+)/.test(bn)) {
+    res = mdRe.test(res) ? res.replace(mdRe, 'MD. ') : 'MD. ' + res;
+  } else if (/^(?:মোসাঃ|মোসা:|মোসা\.|মোসা\s+)/.test(bn)) {
+    if (/^(?:(?:MOSA|MOSAMMAT|MOSAMMOT)\s+|MOSA\.(?:\s*|(?=[A-Z])))/i.test(res)) {
+      res = res.replace(/^(?:(?:MOSA|MOSAMMAT|MOSAMMOT)\s+|MOSA\.(?:\s*|(?=[A-Z])))/i, 'MOSA. ');
+    }
+  } else if (/^(?:(?:MOSAMMAT|MOSAMMOT|MOST)\s+|(?:MOST|MST)\.(?:\s*|(?=[A-Z])))/i.test(res)) {
+    res = res.replace(/^(?:(?:MOSAMMAT|MOSAMMOT|MOST)\s+|(?:MOST|MST)\.(?:\s*|(?=[A-Z])))/i, 'MST. ');
+  } else if (/^(?:MD\s+|MD\.(?:\s*|(?=[A-Z])))/i.test(res)) {
+    res = res.replace(/^(?:MD\s+|MD\.(?:\s*|(?=[A-Z])))/i, 'MD. ');
+  }
+  return res.toUpperCase().replace(/\s+/g, ' ').trim();
+}
+
+function standardizeWebDate(raw) {
+  if (!raw) return '';
+  const str = normalizeDigits(raw).normalize('NFC').replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/[-\.]/g, '/').trim();
+  const isOk = (d, m, y) => {
+    if (y < 1850 || y > 2100 || m < 1 || m > 12 || d < 1) return false;
+    const maxD = [31, (y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0)) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1];
+    return d <= maxD;
+  };
+  const iso = str.match(/(?:^|\s)(\d{4})\/(\d{1,2})\/(\d{1,2})(?:\b|$)/);
+  if (iso) {
+    const y = +iso[1], m = +iso[2], d = +iso[3];
+    return isOk(d, m, y) ? `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}` : '';
+  }
+  const dmy = str.match(/(?:^|[^\d])(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[^\d]|$)/);
+  if (dmy) {
+    let d = +dmy[1], m = +dmy[2];
+    const y = +dmy[3];
+    if (d <= 12 && m > 12 && m <= 31) [d, m] = [m, d];
+    return isOk(d, m, y) ? `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}` : '';
+  }
+  return '';
+}
+
+async function runDirectWebBrowserOcrFallback({
+  imageBase64,
+  apiKey = '',
+  deepseekApiKey = '',
+  aiProvider = 'economy',
+  defaultKeySlot = 'auto',
+  geminiModel = DEFAULT_GEMINI_MODEL,
+  deepseekModel = 'deepseek-flash',
+  docType = 'auto',
+  maritalStatus = 'বিবাহিত',
+  religion = 'ইসলাম',
+  mobileNumber = ''
+}) {
+  let gKey = String(apiKey || '').trim();
+  let dKey = String(deepseekApiKey || '').trim();
+  if (!dKey && /^sk-/i.test(gKey)) { dKey = gKey; gKey = ''; }
+  let mimeType = 'image/jpeg';
+  let cleanBase64 = String(imageBase64 || '');
+  const m = cleanBase64.match(/^data:([^;]+);base64,(.+)$/s);
+  if (m) { mimeType = m[1] || mimeType; cleanBase64 = m[2]; }
+
+  const prompt = `You are an ultra-precise OCR engine for Bangladeshi NID and Birth Registration Certificates.
+STRICT VERBATIM ZERO-CORRECTION:
+- NEVER alter printed Bengali spelling ("মন্ডল" stays "মন্ডল", "মোসাঃ" stays "মোসাঃ", "আঃ" stays "আঃ").
+- NEVER invent, guess, or pad digits (10/13/17-digit NID or 17-digit BRC starting with YYYY). Put parent NIDs into father_nid/mother_nid only.
+- If Bengali name starts with "মোছাঃ"/"মোছা:", English prefix MUST be "MST.". If "মোঃ", English prefix MUST be "MD.".
+- Date of Birth "dob" MUST be strict DD/MM/YYYY (ignore registration_date).
+Return strictly ONE JSON object with keys: doc_type, doc_number, nid_number, birth_reg_no, father_nid, mother_nid, registration_date, name_bn, name_en, dob, gender, father_name_bn, father_name_en, mother_name_bn, mother_name_en, spouse_name_bn, spouse_name_en, relation_suggestion, marital_status_suggestion, confidence.`;
+
+  const callGem = async () => {
+    const models = Array.from(new Set([geminiModel || DEFAULT_GEMINI_MODEL, 'gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite']));
+    let lastErr = 'Gemini request failed';
+    for (const mdl of models) {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${mdl}:generateContent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': gKey },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mimeType, data: cleanBase64 } }] }],
+          generationConfig: { temperature: 0, response_mime_type: 'application/json' }
+        })
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) { lastErr = j?.error?.message || `HTTP ${res.status}`; continue; }
+      const txt = (j?.candidates?.[0]?.content?.parts || []).map(p => p?.text || '').join('').trim();
+      if (!txt) continue;
+      const obj = JSON.parse(txt.replace(/^```(?:json)?|```$/gi, '').trim());
+      obj.ocr_model_used = `${mdl} (browser-direct)`;
+      return obj;
+    }
+    throw new Error(lastErr);
+  };
+
+  const callDs = async () => {
+    const res = await fetch('https://api.deepseek.com/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${dKey}` },
+      body: JSON.stringify({
+        model: 'deepseek-flash',
+        temperature: 0,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: 'You are an ultra-precise OCR engine for Bangladeshi identity documents. Extract exact text without spelling changes. মোছাঃ->MST., মোঃ->MD.. Output strictly one valid JSON object.' },
+          { role: 'user', content: [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url: `data:${mimeType};base64,${cleanBase64}` } }] }
+        ],
+        max_tokens: 2048
+      })
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j?.error?.message || `DeepSeek HTTP ${res.status}`);
+    const txt = j?.choices?.[0]?.message?.content || '';
+    const obj = JSON.parse(txt.replace(/^```(?:json)?|```$/gi, '').trim());
+    obj.ocr_model_used = `deepseek-flash (${deepseekModel === 'deepseek-chat' ? 'vision' : deepseekModel}, browser-direct)`;
+    return obj;
+  };
+
+  let parsed = null;
+  const preferDs = aiProvider === 'deepseek' || (defaultKeySlot === 'deepseek' && Boolean(dKey));
+  if (preferDs && dKey) {
+    try { parsed = await callDs(); } catch (e) { if (!gKey || aiProvider === 'deepseek') throw e; }
+  }
+  if (!parsed && gKey) {
+    try { parsed = await callGem(); } catch (e) { if (!dKey) throw e; }
+  }
+  if (!parsed && dKey) parsed = await callDs();
+
+  if (parsed) {
+    if (parsed.dob) parsed.dob = standardizeWebDate(parsed.dob);
+    const fNid = normalizeDigits(parsed.father_nid || '').replace(/[^0-9]/g, '');
+    const mNid = normalizeDigits(parsed.mother_nid || '').replace(/[^0-9]/g, '');
+    parsed.father_nid = fNid;
+    parsed.mother_nid = mNid;
+    const rawNid = normalizeDigits(parsed.nid_number || '').replace(/[^0-9]/g, '');
+    const rawBrc = normalizeDigits(parsed.birth_reg_no || '').replace(/[^0-9]/g, '');
+    const rawDoc = normalizeDigits(parsed.doc_number || '').replace(/[^0-9]/g, '');
+    const cleanNid = (rawNid && rawNid !== fNid && rawNid !== mNid) ? rawNid : '';
+    const hasBrcMeta = Boolean(fNid || mNid || parsed.registration_date);
+    if (docType === 'birth_certificate' || (parsed.doc_type === 'birth_certificate' && rawBrc.length === 17 && (hasBrcMeta || !cleanNid))) {
+      parsed.doc_type = 'birth_certificate';
+      parsed.birth_reg_no = rawBrc || rawDoc;
+      parsed.doc_number = parsed.birth_reg_no;
+      parsed.nid_number = '';
+    } else {
+      parsed.doc_type = 'nid';
+      parsed.nid_number = cleanNid || rawDoc || rawBrc;
+      parsed.doc_number = parsed.nid_number;
+      parsed.birth_reg_no = '';
+    }
+    for (const [bk, ek] of [['name_bn', 'name_en'], ['father_name_bn', 'father_name_en'], ['mother_name_bn', 'mother_name_en'], ['spouse_name_bn', 'spouse_name_en']]) {
+      if (parsed[ek]) parsed[ek] = normalizeDirectWebPrefix(parsed[ek], parsed[bk]);
+    }
+    parsed.marital_status = maritalStatus || parsed.marital_status_suggestion || 'বিবাহিত';
+    parsed.religion = religion || 'ইসলাম';
+    parsed.mobile_number = normalizeDigits(mobileNumber || '').replace(/[^0-9]/g, '');
+    return { success: true, data: parsed };
+  }
+  return null;
+}
 
 let _fcWebProgressTimer = null;
 let _fcWebProgressStart = 0;
@@ -1771,6 +2396,15 @@ function showLoading(show, message) {
 function displayResults(data) {
   if (!data) return;
   lastExtractedNid = data;
+  if (typeof ensureWebSurveyTimerStarted === 'function') {
+    ensureWebSurveyTimerStarted({
+      startReason: 'ocr_result',
+      docNumber: data.doc_number || data.nid_number || data.birth_reg_no || '',
+      docId: data.family_id || data.doc_number || data.nid_number || data.birth_reg_no || '',
+      applicantName: data.name_bn || data.name_en || '',
+      docType: data.doc_type || 'nid'
+    });
+  }
   resultCard.style.display = 'block';
 
   const resDocType = document.getElementById('resDocType');
@@ -2091,6 +2725,17 @@ function initLeafletMap() {
   leafletTileLayer = L.tileLayer(osmUrl, { maxZoom: 19 }).addTo(leafletMap);
   leafletMarkersLayer = L.layerGroup().addTo(leafletMap);
 
+  leafletMap.on('popupopen', (ev) => {
+    const popupEl = ev?.popup?.getElement?.();
+    if (!popupEl) return;
+    popupEl.querySelectorAll('.fc-popup-edit-btn[data-doc-id]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const docId = btn.getAttribute('data-doc-id');
+        if (docId) window.__editHouseRecord(docId);
+      });
+    });
+  });
+
   leafletMap.on('click', (e) => {
     // Update live GPS when map clicked
     currentLiveGps = {
@@ -2198,7 +2843,12 @@ function buildHousePopupHtml(h) {
     tagsHtml = '<span class="tag-badge tag-info">✅ ফ্যামিলি কার্ড সম্পূর্ণ</span>';
   }
 
-  const navUrl = `https://www.google.com/maps/dir/?api=1&destination=${h.lat},${h.lng}`;
+  const hasCoords = Number.isFinite(Number(h.lat)) && Number.isFinite(Number(h.lng));
+  const latNum = hasCoords ? Number(h.lat) : null;
+  const lngNum = hasCoords ? Number(h.lng) : null;
+  const navUrl = hasCoords ? `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(latNum)},${encodeURIComponent(lngNum)}` : '';
+  const hasDuration = Number(h.survey_duration_sec) > 0;
+  const durationLabel = h.survey_duration_label || (hasDuration ? `${toBnDigits(h.survey_duration_sec)} সেঃ` : '');
 
   return `
     <div class="fc-popup-content">
@@ -2209,13 +2859,14 @@ function buildHousePopupHtml(h) {
       <div style="font-size:0.75rem; color:#475569; margin-bottom:4px;">
         ${h.docId ? `আইডি: <code>${escapeHtml(h.docId)}</code> • ` : ''}
         ${h.contactPhone ? `মোবাইল: <a href="tel:${escapeHtml(h.contactPhone)}">${escapeHtml(h.contactPhone)}</a>` : 'মোবাইল: নেই'}
+        ${hasDuration ? ` • ⏱️ সময়: <b>${escapeHtml(durationLabel)}</b>` : ''}
       </div>
       ${h.village ? `<div style="font-size:0.74rem; color:#64748b; margin-bottom:4px;">🏠 ${escapeHtml(h.village)}</div>` : ''}
       ${tagsHtml ? `<div class="fc-popup-tags">${tagsHtml}</div>` : ''}
       ${h.notes ? `<div class="fc-popup-notes">📝 ${escapeHtml(h.notes)}</div>` : ''}
       <div style="display:flex; gap:5px; margin-top:8px;">
-        <a href="${navUrl}" target="_blank" rel="noopener" class="fc-popup-btn" style="flex:1;">🧭 দিকনির্দেশনা</a>
-        <button type="button" class="fc-popup-btn" style="background:#0f766e; flex:1; border:none; cursor:pointer;" onclick="window.__editHouseRecord('${escapeHtml(h.docId)}')">✏️ এডিট</button>
+        ${navUrl ? `<a href="${navUrl}" target="_blank" rel="noopener" class="fc-popup-btn" style="flex:1;">🧭 দিকনির্দেশনা</a>` : ''}
+        <button type="button" class="fc-popup-btn fc-popup-edit-btn" data-doc-id="${escapeHtml(h.docId)}" style="background:#0f766e; flex:1; border:none; cursor:pointer;">✏️ এডিট</button>
       </div>
     </div>
   `;
@@ -2223,10 +2874,10 @@ function buildHousePopupHtml(h) {
 
 // Render markers on Leaflet map & house list feed
 function renderMapHouses() {
+  const allHouses = Array.from(surveyHousesMap.values());
+  if (mapHouseCountBadge) mapHouseCountBadge.textContent = toBnDigits(allHouses.length);
   if (!leafletMap || !leafletMarkersLayer) return;
   leafletMarkersLayer.clearLayers();
-
-  const allHouses = Array.from(surveyHousesMap.values());
   let countDone = 0;
   let countFixable = 0;
   let countBlocked = 0;
@@ -2336,7 +2987,12 @@ function renderHouseListFeed(houses) {
       }).join(' ');
     }
 
-    const navUrl = (h.lat && h.lng) ? `https://www.google.com/maps/dir/?api=1&destination=${h.lat},${h.lng}` : '';
+    const hasCoords = Number.isFinite(Number(h.lat)) && Number.isFinite(Number(h.lng));
+    const latNum = hasCoords ? Number(h.lat) : '';
+    const lngNum = hasCoords ? Number(h.lng) : '';
+    const navUrl = hasCoords ? `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(latNum)},${encodeURIComponent(lngNum)}` : '';
+    const hasDuration = Number(h.survey_duration_sec) > 0;
+    const durationLabel = h.survey_duration_label || (hasDuration ? `${toBnDigits(h.survey_duration_sec)} সেঃ` : '');
 
     card.innerHTML = `
       <div class="house-item-top">
@@ -2348,17 +3004,35 @@ function renderHouseListFeed(houses) {
         ${h.contactPhone ? `<span>📱 ${escapeHtml(h.contactPhone)}</span>` : ''}
         ${h.village ? `<span>🏠 ${escapeHtml(h.village)}</span>` : ''}
         ${h.plusCode ? `<span>📍 Plus Code: <code>${escapeHtml(h.plusCode)}</code></span>` : ''}
+        ${hasDuration ? `<span>⏱️ সময়: <b>${escapeHtml(durationLabel)}</b></span>` : ''}
       </div>
       ${tagsHtml ? `<div class="house-tags-line">${tagsHtml}</div>` : ''}
       ${h.notes ? `<div class="house-notes-text">📝 ${escapeHtml(h.notes)}</div>` : ''}
       <div class="house-actions-row">
         ${navUrl ? `<a href="${navUrl}" target="_blank" rel="noopener" class="btn-gnav">🧭 গুগল ম্যাপ দিকনির্দেশনা</a>` : ''}
-        <button type="button" class="btn btn-outline btn-sm" onclick="window.__centerMapOnHouse(${h.lat}, ${h.lng})">🗺️ ম্যাপে দেখুন</button>
-        <button type="button" class="btn btn-secondary btn-sm" onclick="window.__editHouseRecord('${escapeHtml(h.docId)}')">✏️ এডিট</button>
+        ${hasCoords ? `<button type="button" class="btn btn-outline btn-sm fc-house-center-btn" data-lat="${latNum}" data-lng="${lngNum}">🗺️ ম্যাপে দেখুন</button>` : ''}
+        <button type="button" class="btn btn-secondary btn-sm fc-house-edit-btn" data-doc-id="${escapeHtml(h.docId)}">✏️ এডিট</button>
       </div>
     `;
 
     houseListFeed.appendChild(card);
+  });
+}
+
+if (typeof houseListFeed !== 'undefined' && houseListFeed) {
+  houseListFeed.addEventListener('click', (e) => {
+    const centerBtn = e.target.closest('.fc-house-center-btn');
+    if (centerBtn) {
+      const lat = Number(centerBtn.getAttribute('data-lat'));
+      const lng = Number(centerBtn.getAttribute('data-lng'));
+      window.__centerMapOnHouse(lat, lng);
+      return;
+    }
+    const editBtn = e.target.closest('.fc-house-edit-btn');
+    if (editBtn) {
+      const docId = editBtn.getAttribute('data-doc-id');
+      if (docId) window.__editHouseRecord(docId);
+    }
   });
 }
 
@@ -2455,6 +3129,11 @@ function updateModalChecklistPreview() {
 // Open Pre-Survey Quick Check Modal
 async function openQuickHouseModal(existingHouse = null) {
   if (!quickHouseModal) return;
+
+  if (!existingHouse) {
+    ensureWebSurveyTimerStarted({ startReason: 'quick_house_new' });
+  }
+  renderWebSurveyTimerUI();
 
   // Reset fields
   modalHouseDocId.value = existingHouse?.docId || '';
@@ -2553,7 +3232,18 @@ async function saveHouseSurveyRecord(forceEligible = false) {
 
   const existingId = modalHouseDocId.value;
   const docId = existingId || rawNid || `house_${Date.now()}`;
-  const nowIso = new Date().toISOString();
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+
+  const timerSnapshot = ensureWebSurveyTimerStarted({
+    startReason: 'house_save',
+    docId,
+    applicantName: ladyName
+  });
+  const timerStartMs = timerSnapshot?.startedAtMs || nowMs;
+  const timerDurationSec = Math.max(0, Math.round((nowMs - timerStartMs) / 1000));
+  const timerDurationLabel = formatWebSurveyDurationLabel(timerDurationSec);
+  const timerStatusValue = forceEligible ? (timerSnapshot?.status || 'running') : 'ended';
 
   const lat = currentLiveGps?.lat || 23.757;
   const lng = currentLiveGps?.lng || 89.644;
@@ -2571,6 +3261,12 @@ async function saveHouseSurveyRecord(forceEligible = false) {
     notes,
     issues,
     survey_status: surveyStatus,
+    survey_session_id: timerSnapshot?.sessionId || '',
+    survey_started_at: new Date(timerStartMs).toISOString(),
+    survey_ended_at: forceEligible ? '' : nowIso,
+    survey_duration_sec: timerDurationSec,
+    survey_duration_label: timerDurationLabel,
+    survey_timer_status: timerStatusValue,
     lat,
     lng,
     accuracy,
@@ -2594,6 +3290,12 @@ async function saveHouseSurveyRecord(forceEligible = false) {
     village: { stringValue: village },
     notes: { stringValue: notes },
     survey_status: { stringValue: surveyStatus },
+    survey_session_id: { stringValue: timerSnapshot?.sessionId || '' },
+    survey_started_at: { timestampValue: new Date(timerStartMs).toISOString() },
+    survey_ended_at: { timestampValue: nowIso },
+    survey_duration_sec: { integerValue: String(timerDurationSec) },
+    survey_duration_label: { stringValue: timerDurationLabel },
+    survey_timer_status: { stringValue: timerStatusValue },
     surveyor_id: { stringValue: MY_CLIENT_ID },
     surveyor_name: { stringValue: elDeviceName?.value || 'সার্ভেয়ার' },
     lat: { doubleValue: lat },
@@ -2628,11 +3330,21 @@ async function saveHouseSurveyRecord(forceEligible = false) {
     // 3. Broadcast to room channel for tablets
     sendRoomMessage({
       type: 'survey_house_saved',
-      text: `📍 বাড়ি সংরক্ষিত: ${ladyName} (${surveyStatus === 'COMPLETED' ? '🟢 সম্পন্ন' : '⚠️ সমস্যাযুক্ত'})`,
+      text: `📍 বাড়ি সংরক্ষিত: ${ladyName} (${surveyStatus === 'COMPLETED' ? '🟢 সম্পন্ন' : '⚠️ সমস্যাযুক্ত'}) • ⏱️ ${timerDurationLabel}`,
       payload: houseObj
     });
 
-    showMapToast(`✅ ${ladyName}-এর বাড়ি ম্যাপে সংরক্ষিত হয়েছে!`);
+    if (!forceEligible) {
+      await endWebSurveyTimer('house_saved', {
+        endedAtMs: nowMs,
+        docId,
+        applicantName: ladyName,
+        surveyStatus,
+        skipDocPatch: true
+      });
+    }
+
+    showMapToast(`✅ ${ladyName}-এর বাড়ি ম্যাপে সংরক্ষিত হয়েছে! (⏱️ ${timerDurationLabel})`);
   } catch (err) {
     showMapToast('⚠️ অফলাইনে সেভ হয়েছে, পরবর্তীতে সিঙ্ক হবে');
   }
@@ -2751,6 +3463,51 @@ function setupSurveyMapEventListeners() {
   }
 }
 
+// Survey Timer Controls & Initialization
+function setupWebSurveyTimer() {
+  activeWebSurveyTimer = loadActiveWebSurveyTimer();
+  startWebSurveyTicker();
+  renderWebSurveyTimerUI();
+  flushPendingWebSurveyTimers();
+
+  const btnStart = document.getElementById('btnSurveyStart');
+  const btnEnd = document.getElementById('btnSurveyEnd');
+  const btnHist = document.getElementById('btnSurveyHistory');
+  const btnRefreshHist = document.getElementById('btnRefreshTimerHistory');
+  const histPanel = document.getElementById('surveyTimerHistoryPanel');
+
+  if (btnStart) {
+    btnStart.addEventListener('click', () => {
+      startNewWebSurveyTimer({ startReason: 'manual_start' });
+      showMapToast('⏱️ নতুন সার্ভে টাইমার শুরু হয়েছে!');
+    });
+  }
+  if (btnEnd) {
+    btnEnd.addEventListener('click', async () => {
+      const done = await endWebSurveyTimer('manual_end', {
+        docId: lastExtractedNid?.family_id || lastExtractedNid?.doc_number || lastExtractedNid?.nid_number || lastExtractedNid?.birth_reg_no || '',
+        applicantName: lastExtractedNid?.name_bn || lastExtractedNid?.name_en || ''
+      });
+      if (done) {
+        showMapToast(`✅ জরিপ শেষ: ${done.durationLabel} (ডাটাবেসে সেভ হয়েছে)`);
+        if (histPanel && histPanel.style.display !== 'none') fetchWebSurveyTimerHistory();
+      }
+    });
+  }
+  if (btnHist && histPanel) {
+    btnHist.addEventListener('click', () => {
+      const opening = histPanel.style.display === 'none';
+      histPanel.style.display = opening ? 'block' : 'none';
+      if (opening) fetchWebSurveyTimerHistory();
+    });
+  }
+  if (btnRefreshHist) {
+    btnRefreshHist.addEventListener('click', fetchWebSurveyTimerHistory);
+  }
+}
+
+setupWebSurveyTimer();
+
 // Initial Map Module Boot
 setupSurveyMapEventListeners();
 fetchAllSurveyHouses();
@@ -2760,7 +3517,10 @@ initSocket();
 fetchCloudRoomMessages(true);
 roomPollTimer = setInterval(() => fetchCloudRoomMessages(false), 3000);
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) fetchCloudRoomMessages(false);
+  if (!document.hidden) {
+    fetchCloudRoomMessages(false);
+    renderWebSurveyTimerUI();
+  }
 });
 startCamera();
 

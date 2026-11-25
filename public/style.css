@@ -1528,3 +1528,159 @@ input[type="text"]:focus, input[type="password"]:focus, .select-input:focus {
   transform: scale(1.01);
   box-shadow: 0 4px 14px rgba(37, 99, 235, 0.15);
 }
+
+/* Single-Survey Timer Bar & DB History */
+.survey-timer-bar {
+  background: #ffffff;
+  border: 1.5px solid #cbd5e1;
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
+  transition: border-color 0.2s, background 0.2s;
+}
+.survey-timer-bar.running {
+  border-color: #16a34a;
+  background: linear-gradient(135deg, #f0fdf4, #ffffff);
+}
+.survey-timer-bar.ended {
+  border-color: #0284c7;
+  background: linear-gradient(135deg, #f0f9ff, #ffffff);
+}
+.timer-main-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.timer-left {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+.timer-status-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.84rem;
+  color: #0f172a;
+}
+.timer-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #94a3b8;
+  flex: 0 0 auto;
+}
+.survey-timer-bar.running .timer-dot {
+  background: #16a34a;
+  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.22);
+}
+.survey-timer-bar.ended .timer-dot {
+  background: #0284c7;
+}
+.timer-meta {
+  font-size: 0.72rem;
+  color: #475569;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.timer-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.timer-clock {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: #0f172a;
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  padding: 4px 9px;
+  border-radius: 8px;
+}
+.survey-timer-bar.running .timer-clock {
+  background: #dcfce7;
+  border-color: #86efac;
+  color: #166534;
+}
+.survey-timer-bar.ended .timer-clock {
+  background: #e0f2fe;
+  border-color: #7dd3fc;
+  color: #0369a1;
+}
+.timer-actions {
+  display: flex;
+  gap: 5px;
+}
+.timer-btn {
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #0f172a;
+  border-radius: 7px;
+  padding: 5px 8px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.timer-btn.start {
+  background: #16a34a;
+  border-color: #16a34a;
+  color: #ffffff;
+}
+.timer-btn.end {
+  background: #dc2626;
+  border-color: #dc2626;
+  color: #ffffff;
+}
+.timer-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.timer-history-panel {
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px dashed #cbd5e1;
+}
+.timer-history-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #0f172a;
+  margin-bottom: 6px;
+}
+.timer-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.timer-history-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  font-size: 0.74rem;
+}
+.modal-timer-badge {
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  color: #0369a1;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  margin-bottom: 8px;
+}

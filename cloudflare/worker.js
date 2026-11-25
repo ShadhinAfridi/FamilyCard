@@ -24,7 +24,7 @@ function makeWorkerRoomMsgId(ts = Date.now()) {
 function normalizeWorkerRoomMsg(raw = {}, fallbackRoom = 'FC-101') {
   const ts = Number(raw.ts) > 0 ? Number(raw.ts) : Date.now();
   const room = normalizeWorkerRoomCode(raw.room || fallbackRoom);
-  const type = ['text', 'nid_data', 'summary', 'system'].includes(raw.type) ? raw.type : 'text';
+  const type = ['text', 'nid_data', 'summary', 'system', 'survey_house_saved', 'survey_timer_ended'].includes(raw.type) ? raw.type : 'text';
   const id = String(raw.id || makeWorkerRoomMsgId(ts)).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64) || makeWorkerRoomMsgId(ts);
   let payload = raw.payload || null;
   if (!payload && raw.payloadJson && typeof raw.payloadJson === 'string') {
@@ -304,55 +304,57 @@ function hasBengaliScript(str) {
 
 const BN_NAME_WORD_MAP = {
   'মোঃ': 'MD.', 'মো:': 'MD.', 'মো.': 'MD.', 'মোহাম্মদ': 'MOHAMMAD', 'মোহাম্মাদ': 'MOHAMMAD', 'মুহাম্মদ': 'MUHAMMAD', 'মুহাম্মাদ': 'MUHAMMAD',
-  'মোছাঃ': 'MST.', 'মোছা:': 'MST.', 'মোছা.': 'MST.', 'মোসাম্মাৎ': 'MOSAMMAT', 'মোসাম্মত': 'MOSAMMAT', 'মোসাঃ': 'MOSA.', 'মোসা.': 'MOSA.', 'মোসা:': 'MOSA.',
+  'মোছাঃ': 'MST.', 'মোছা:': 'MST.', 'মোছা.': 'MST.', 'মোসাম্মাৎ': 'MOSAMMAT', 'মোসাম্মৎ': 'MOSAMMAT', 'মোসাম্মত': 'MOSAMMAT', 'মোসাঃ': 'MOSA.', 'মোসা.': 'MOSA.', 'মোসা:': 'MOSA.',
   'শ্রী': 'SRI', 'শ্রীমতী': 'SRIMOTI', 'মৃত': 'LATE', 'হাজী': 'HAJI', 'হাজি': 'HAJI',
   'শেখ': 'SHEIKH', 'সৈয়দ': 'SYED', 'সৈয়দ': 'SYED', 'কাজী': 'KAZI', 'কাজি': 'KAZI', 'মির্জা': 'MIRZA', 'গাজী': 'GAZI', 'গাজি': 'GAZI',
   'খন্দকার': 'KHANDAKER', 'খোন্দকার': 'KHONDKER', 'চৌধুরী': 'CHOWDHURY', 'মজুমদার': 'MAJUMDER', 'তালুকদার': 'TALUKDER',
   'সরকার': 'SARKAR', 'মন্ডল': 'MONDAL', 'মণ্ডল': 'MONDAL', 'বিশ্বাস': 'BISWAS', 'শিকদার': 'SHIKDER', 'সিকদার': 'SIKDER',
-  'ভূঁইয়া': 'BHUIYAN', 'ভুইয়া': 'BHUIYAN', 'ভূইয়া': 'BHUIYAN', 'ভূঁইয়া': 'BHUIYAN', 'পাটোয়ারী': 'PATWARY', 'পাটোয়ারী': 'PATWARY',
+  'ভূঁইয়া': 'BHUIYAN', 'ভুইয়া': 'BHUIYAN', 'ভূইয়া': 'BHUIYAN', 'ভূঁইয়া': 'BHUIYAN', 'ভুঁইয়া': 'BHUIYAN', 'পাটোয়ারী': 'PATWARY', 'পাটোয়ারী': 'PATWARY',
   'মোল্লা': 'MOLLA', 'বেপারী': 'BEPARI', 'ব্যাপারী': 'BEPARI', 'মাতুব্বর': 'MATUBBAR', 'সাহা': 'SAHA', 'বড়ুয়া': 'BARUA', 'বড়ুয়া': 'BARUA',
   'হোসেন': 'HOSSAIN', 'হোসাইন': 'HOSSAIN', 'হোসনে': 'HOSNE', 'ইসলাম': 'ISLAM', 'আহমেদ': 'AHMED',
   'আহম্মেদ': 'AHMED', 'আহমদ': 'AHMED', 'আহম্মদ': 'AHMED', 'রহমান': 'RAHMAN', 'করিম': 'KARIM',
   'রহিম': 'RAHIM', 'আলী': 'ALI', 'আলি': 'ALI', 'খাতুন': 'KHATUN', 'বেগম': 'BEGUM', 'বিবি': 'BIBI', 'বানু': 'BANU', 'নেছা': 'NESSA', 'নেসা': 'NESA',
-  'আক্তার': 'AKTER', 'আখতার': 'AKTER', 'সুলতানা': 'SULTANA', 'জাহান': 'JAHAN',
+  'আক্তার': 'AKTER', 'আখতার': 'AKHTAR', 'সুলতানা': 'SULTANA', 'জাহান': 'JAHAN',
   'ইয়াসমিন': 'YASMIN', 'ইয়াসমিন': 'YASMIN', 'পারভীন': 'PARVIN', 'পারভিন': 'PARVIN',
-  'নাহার': 'NAHAR', 'রফিকুল': 'RAFIQUL', 'শফিকুল': 'SHAFIQUL', 'তরিকুল': 'TARIQUL', 'রফিক': 'RAFIQ', 'শফিক': 'SHAFIQ',
-  'আব্দুল': 'ABDUL', 'আবদুল': 'ABDUL', 'আব্দুর': 'ABDUR', 'আবদুর': 'ABDUR', 'আবুল': 'ABUL',
+  'নাহার': 'NAHAR', 'রফিকুল': 'RAFIQUL', 'শফিকুল': 'SHAFIQUL', 'তরিকুল': 'TARIQUL', 'তৌহিদুল': 'TOUHIDUL', 'সিরাজুল': 'SIRAJUL', 'রফিক': 'RAFIQ', 'শফিক': 'SHAFIQ',
+  'আব্দুল': 'ABDUL', 'আবদুল': 'ABDUL', 'আব্দুর': 'ABDUR', 'আবদুর': 'ABDUR', 'আব্দুস': 'ABDUS', 'আবুল': 'ABUL',
   'আব্দুল্লাহ': 'ABDULLAH', 'আবদুল্লাহ': 'ABDULLAH', 'আবু': 'ABU', 'হাসান': 'HASAN', 'হাছান': 'HASAN',
-  'হাবিব': 'HABIB', 'কবির': 'KABIR', 'নজরুল': 'NAZRUL', 'কামাল': 'KAMAL',
-  'জামাল': 'JAMAL', 'আলম': 'ALAM', 'মিয়া': 'MIA', 'মিয়া': 'MIA', 'মুন্সি': 'MUNSHI',
+  'হাবিব': 'HABIB', 'হাবিবুর': 'HABIBUR', 'কবির': 'KABIR', 'হুমায়ুন': 'HUMAYUN', 'হুমায়ুন': 'HUMAYUN', 'নজরুল': 'NAZRUL', 'কামাল': 'KAMAL',
+  'জামাল': 'JAMAL', 'আলম': 'ALAM', 'মিয়া': 'MIA', 'মিয়া': 'MIA', 'মিঞা': 'MIA', 'মুন্সি': 'MUNSHI',
   'মুন্সী': 'MUNSHI', 'মোস্তফা': 'MOSTAFA', 'সালাম': 'SALAM', 'মজিদ': 'MAJID',
-  'হাকিম': 'HAKIM', 'হালিম': 'HALIM', 'রশিদ': 'RASHID', 'লতিফ': 'LATIF',
+  'হাকিম': 'HAKIM', 'হালিম': 'HALIM', 'রশিদ': 'RASHID', 'লতিফ': 'LATIF', 'খালিদ': 'KHALID', 'খালেদ': 'KHALED',
   'জব্বার': 'JABBAR', 'সাত্তার': 'SATTAR', 'গফুর': 'GAFUR', 'মান্নান': 'MANNAN',
   'হান্নান': 'HANNAN', 'মনির': 'MONIR', 'মনিরুল': 'MONIRUL', 'নূর': 'NUR', 'নুর': 'NUR', 'নূরুল': 'NURUL', 'নুরুল': 'NURUL',
   'রুহুল': 'RUHUL', 'আমিন': 'AMIN', 'আমিনুল': 'AMINUL', 'শহীদ': 'SHAHID', 'শহিদ': 'SHAHID', 'শহীদুল': 'SHAHIDUL', 'শহিদুল': 'SHAHIDUL',
   'মাহমুদ': 'MAHMUD', 'মাহমুদুল': 'MAHMUDUL', 'রাসেল': 'RASEL', 'রিপন': 'RIPON', 'সজীব': 'SAJIB', 'সজিব': 'SAJIB',
-  'তানভীর': 'TANVIR', 'তানভির': 'TANVIR', 'সাকিব': 'SAKIB', 'শাকিব': 'SAKIB',
+  'তানভীর': 'TANVIR', 'তানভির': 'TANVIR', 'সাকিব': 'SAKIB', 'শাকিব': 'SAKIB', 'শাকিল': 'SHAKIL',
   'আরিফ': 'ARIF', 'আরিফুল': 'ARIFUL', 'আশরাফ': 'ASHRAF', 'আশরাফুল': 'ASHRAFUL', 'ফারুক': 'FARUK', 'ফজলুল': 'FAZLUL',
   'মশিউর': 'MOSHIUR', 'মাহবুব': 'MAHBUB', 'মাহবুবুর': 'MAHBUBUR', 'আনোয়ার': 'ANOWAR', 'আনোয়ার': 'ANOWAR',
   'দেলোয়ার': 'DELOWAR', 'দেলোয়ার': 'DELOWAR', 'মনোয়ার': 'MONOWAR', 'মনোয়ার': 'MONOWAR',
   'সরোয়ার': 'SAROWAR', 'সরোয়ার': 'SAROWAR', 'জাহাঙ্গীর': 'JAHANGIR', 'জাহাংগীর': 'JAHANGIR',
-  'আলমগীর': 'ALAMGIR', 'শাহীন': 'SHAHIN', 'শাহিন': 'SHAHIN', 'শাহজাহান': 'SHAHJAHAN',
+  'আলমগীর': 'ALAMGIR', 'শাহীন': 'SHAHIN', 'শাহিন': 'SHAHIN', 'শাহজাহান': 'SHAHJAHAN', 'সোহাগ': 'SOHAG',
   'ইব্রাহিম': 'IBRAHIM', 'ইব্রাহীম': 'IBRAHIM', 'ইসমাইল': 'ISMAIL', 'ইউসুফ': 'YUSUF',
-  'ইউনুস': 'YUNUS', 'ইয়াকুব': 'YAKUB', 'ইয়াকুব': 'YAKUB', 'সোলাইমান': 'SULAIMAN',
+  'ইউনুস': 'YUNUS', 'ইয়াকুব': 'YAKUB', 'ইয়াকুব': 'YAKUB', 'সোলাইমান': 'SULAIMAN', 'হক': 'HAQUE',
+  'বেলাল': 'BELAL', 'জালাল': 'JALAL', 'দুলাল': 'DULAL',
   'ফাতেমা': 'FATEMA', 'আয়েশা': 'AYESHA', 'আয়েশা': 'AYESHA', 'খাদিজা': 'KHADIJA',
   'মরিয়ম': 'MARIYAM', 'মরিয়ম': 'MARIYAM', 'সুমাইয়া': 'SUMAIYA', 'সুমাইয়া': 'SUMAIYA',
-  'তাসনিম': 'TASNIM', 'নুসরাত': 'NUSRAT', 'শারমিন': 'SHARMIN', 'রোকসানা': 'ROKSANA',
-  'সালমা': 'SALMA', 'হালিমা': 'HALIMA', 'সখিনা': 'SAKHINA', 'জামিলা': 'JAMILA',
+  'তাসনিম': 'TASNIM', 'নুসরাত': 'NUSRAT', 'শারমিন': 'SHARMIN', 'রোকসানা': 'ROKSANA', 'ফারজানা': 'FARZANA', 'তানিয়া': 'TANIA', 'তানিয়া': 'TANIA',
+  'সালমা': 'SALMA', 'হালিমা': 'HALIMA', 'সখিনা': 'SAKHINA', 'সকিনা': 'SAKINA', 'জামিলা': 'JAMILA', 'জাহানারা': 'JAHANARA', 'সাহারা': 'SAHARA',
   'আনোয়ারা': 'ANOWARA', 'আনোয়ারা': 'ANOWARA', 'মনোয়ারা': 'MONOWARA', 'মনোয়ারা': 'MONOWARA',
   'রেহানা': 'REHANA', 'শাহানা': 'SHAHANA', 'রুবিনা': 'RUBINA', 'শিরিন': 'SHIRIN',
+  'তাসলিমা': 'TASLIMA', 'বিলকিস': 'BILKIS', 'রাবেয়া': 'RABEYA', 'রাবেয়া': 'RABEYA', 'সালেহা': 'SALEHA', 'নূরজাহান': 'NURJAHAN', 'নুরজাহান': 'NURJAHAN',
   'লায়লা': 'LAYLA', 'লায়লা': 'LAYLA', 'রানী': 'RANI', 'রাণী': 'RANI', 'দেবী': 'DEVI',
-  'দাস': 'DAS', 'পাল': 'PAL', 'রায়': 'ROY', 'রায়': 'ROY', 'সেন': 'SEN', 'ঘোষ': 'GHOSH',
-  'দত্ত': 'DUTTA', 'হালদার': 'HALDER', 'মল্লিক': 'MALLICK', 'প্রামাণিক': 'PRAMANIK',
-  'ফকির': 'FAKIR', 'মৃধা': 'MRIDHA', 'হাওলাদার': 'HOWLADER', 'সরদার': 'SARDAR',
+  'দাস': 'DAS', 'দাশ': 'DAS', 'পাল': 'PAL', 'রায়': 'ROY', 'রায়': 'ROY', 'সেন': 'SEN', 'ঘোষ': 'GHOSH', 'বসু': 'BASU', 'বর্মন': 'BARMAN',
+  'দত্ত': 'DUTTA', 'হালদার': 'HALDER', 'মল্লিক': 'MALLICK', 'প্রামাণিক': 'PRAMANIK', 'শর্মা': 'SHARMA', 'চক্রবর্তী': 'CHAKRABORTY', 'চন্দ্র': 'CHANDRA',
+  'ফকির': 'FAKIR', 'মৃধা': 'MRIDHA', 'হাওলাদার': 'HOWLADER', 'সরদার': 'SARDAR', 'তরফদার': 'TARAFDAR',
   'খান': 'KHAN', 'খাঁ': 'KHAN', 'উদ্দিন': 'UDDIN', 'উদ্দীন': 'UDDIN', 'আহসান': 'AHSAN', 'সাঈদ': 'SAID',
-  'বাচ্চু': 'BACHCHU', 'বাবুল': 'BABUL', 'মিজানুর': 'MIZANUR', 'সাইফুল': 'SAIFUL',
+  'বাচ্চু': 'BACHCHU', 'বাবুল': 'BABUL', 'মিজানুর': 'MIZANUR', 'মজিবুর': 'MUJIBUR', 'আনিছুর': 'ANISUR', 'আনিসুর': 'ANISUR', 'সাইফুল': 'SAIFUL',
   'নাজমুল': 'NAZMUL', 'কামরুল': 'KAMRUL', 'জহিরুল': 'ZAHIRUL', 'জহির': 'ZAHIR',
-  'আজিজ': 'AZIZ', 'আজিজুল': 'AZIZUL', 'তৌহিদ': 'TOWHID', 'তৌহিদুল': 'TOWHIDUL',
+  'আজিজ': 'AZIZ', 'আজিজুল': 'AZIZUL', 'তৌহিদ': 'TOWHID',
   'হামিদ': 'HAMID', 'হামিদুল': 'HAMIDUL', 'খালেক': 'KHALEQ', 'মালেক': 'MALEK',
   'সিদ্দিক': 'SIDDIK', 'সিদ্দিকুর': 'SIDDIQUR', 'মোতালেব': 'MOTALEB', 'মোশাররফ': 'MOSHARRAF',
   'সেলিম': 'SELIM', 'সোহেল': 'SOHEL', 'সুমন': 'SUMON', 'মাসুদ': 'MASUD', 'জসিম': 'JASIM', 'হেলাল': 'HELAL',
-  'সুজন': 'SUJON', 'পলাশ': 'PALASH', 'জহুরুল': 'ZAHURUL', 'আকবর': 'AKBAR', 'আসাদ': 'ASAD', 'আসলাম': 'ASLAM',
+  'সুজন': 'SUJAN', 'পলাশ': 'PALASH', 'জহুরুল': 'ZAHURUL', 'আকবর': 'AKBAR', 'আসাদ': 'ASAD', 'আসলাম': 'ASLAM',
   'বোরহান': 'BORHAN', 'বশির': 'BASHIR', 'কাদের': 'KADER', 'রেজা': 'REZA', 'রেজাউল': 'REZAUL',
   'রবিউল': 'RABIUL', 'শামীম': 'SHAMIM', 'শামিম': 'SHAMIM', 'শরীফ': 'SHARIF', 'শরিফ': 'SHARIF', 'শরিফুল': 'SHARIFUL',
   'জিয়া': 'ZIA', 'জিয়া': 'ZIA', 'জিয়াউর': 'ZIAUR', 'জিয়াউর': 'ZIAUR', 'খলিল': 'KHALIL', 'খলিলুর': 'KHALILUR',
@@ -387,64 +389,86 @@ function transliterateBnWordToEn(word) {
   };
   let out = '';
   let i = 0;
-  let lastHadConjunct = false;
+  let lastConsStartIdx = 0;
+  let lastWasVowel = true;
   while (i < bare.length) {
     const ch = bare[i];
     if (bare.slice(i, i + 3) === 'ক্ষ') {
       out += i === 0 ? 'KH' : 'KSH';
       i += 3;
       const nextCh = bare[i] || '';
-      if (!kars[nextCh] && nextCh !== '্' && i < bare.length && cons[nextCh]) out += 'A';
-      lastHadConjunct = false;
+      if (!kars[nextCh] && nextCh !== '্' && i < bare.length && cons[nextCh]) { out += 'A'; lastWasVowel = true; } else { lastWasVowel = Boolean(kars[nextCh]); }
       continue;
     }
     if (bare.slice(i, i + 3) === 'জ্ঞ') {
       out += 'GY';
       i += 3;
       const nextCh = bare[i] || '';
-      if (!kars[nextCh] && nextCh !== '্' && i < bare.length && cons[nextCh]) out += 'A';
-      lastHadConjunct = false;
+      if (!kars[nextCh] && nextCh !== '্' && i < bare.length && cons[nextCh]) { out += 'A'; lastWasVowel = true; } else { lastWasVowel = Boolean(kars[nextCh]); }
       continue;
     }
-    if (indVowels[ch]) {
-      out += indVowels[ch];
-      lastHadConjunct = false;
-      i++;
-      continue;
-    }
-    if (kars[ch]) {
-      out += kars[ch];
-      lastHadConjunct = false;
-      i++;
-      continue;
-    }
-    if (ch === 'ং') { out += 'NG'; lastHadConjunct = false; i++; continue; }
-    if (ch === 'ঃ') { out += i === bare.length - 1 ? '' : 'H'; lastHadConjunct = false; i++; continue; }
+    if (indVowels[ch]) { out += indVowels[ch]; lastWasVowel = true; i++; continue; }
+    if (kars[ch]) { out += kars[ch]; lastWasVowel = true; i++; continue; }
+    if (ch === 'ং') { out += 'NG'; lastWasVowel = false; i++; continue; }
+    if (ch === 'ঃ') { out += i === bare.length - 1 ? '' : 'H'; lastWasVowel = false; i++; continue; }
     if (ch === 'ঁ') { i++; continue; }
     if (ch === '্') {
-      if (bare[i + 1] === 'য') { out += 'Y'; lastHadConjunct = true; i += 2; continue; }
-      if (bare[i + 1] === 'র') { out += 'R'; lastHadConjunct = true; i += 2; continue; }
-      if (bare[i + 1] === 'ব' && i > 0) { out += 'W'; lastHadConjunct = true; i += 2; continue; }
-      lastHadConjunct = true;
+      const nextC = bare[i + 1] || '';
+      if (nextC === 'য') { out += 'Y'; i += 2; lastWasVowel = false; continue; }
+      if (nextC === 'র') {
+        out += 'R';
+        i += 2;
+        const afterCluster = bare[i] || '';
+        if (!kars[afterCluster] && afterCluster !== '্' && afterCluster !== 'ং' && afterCluster !== 'ঃ' && i < bare.length && cons[afterCluster]) {
+          out += 'A';
+          lastWasVowel = true;
+        } else {
+          lastWasVowel = false;
+        }
+        continue;
+      }
+      if (nextC === 'ব') {
+        if (lastConsStartIdx === 0 || (lastConsStartIdx > 0 && cons[bare[i - 1]])) out += 'W';
+        i += 2;
+        const afterCluster = bare[i] || '';
+        if (lastConsStartIdx === 0 && !kars[afterCluster] && afterCluster !== '্' && afterCluster !== 'ং' && afterCluster !== 'ঃ' && i < bare.length && cons[afterCluster]) {
+          out += 'A';
+          lastWasVowel = true;
+        } else {
+          lastWasVowel = false;
+        }
+        continue;
+      }
+      lastWasVowel = false;
       i++;
       continue;
     }
     if (cons[ch]) {
-      out += cons[ch];
+      if (ch === 'র' && bare[i + 1] === '্' && cons[bare[i + 2]]) {
+        out += 'R' + cons[bare[i + 2]];
+        i += 3;
+        const afterCluster = bare[i] || '';
+        if (!kars[afterCluster] && afterCluster !== '্' && i < bare.length && cons[afterCluster]) { out += 'A'; lastWasVowel = true; } else { lastWasVowel = false; }
+        continue;
+      }
+      lastConsStartIdx = i;
+      out += (ch === 'য' && i > 0) ? 'J' : cons[ch];
       const nextCh = bare[i + 1] || '';
       if (!kars[nextCh] && nextCh !== '্' && nextCh !== 'ং' && nextCh !== 'ঃ' && ch !== 'ৎ') {
-        const isLastConsonant = i + 1 >= bare.length;
-        const prevWasAa = i > 0 && bare[i - 1] === 'া';
-        if (!isLastConsonant && (cons[nextCh] || (!indVowels[nextCh] && i + 2 < bare.length)) && !(prevWasAa && !lastHadConjunct)) {
-          out += 'A';
-        }
+        const afterNext = bare[i + 2] || '';
+        const shouldInsertInherentA =
+          i + 1 < bare.length &&
+          (cons[nextCh] || (!indVowels[nextCh] && i + 2 < bare.length)) &&
+          !(nextCh === 'ম' && !afterNext && bare[i] !== 'ত' && out.length > 2) &&
+          !(lastWasVowel === false && i > 1 && !kars[bare[i - 1]]);
+        if (shouldInsertInherentA) { out += 'A'; lastWasVowel = true; } else { lastWasVowel = false; }
+      } else {
+        lastWasVowel = false;
       }
-      lastHadConjunct = false;
       i++;
       continue;
     }
-    out += /[A-Za-z0-9.]/.test(ch) ? ch.toUpperCase() : '';
-    lastHadConjunct = false;
+    out += /[A-Za-z0-9.\-]/.test(ch) ? ch.toUpperCase() : '';
     i++;
   }
   return out.replace(/AAA+/g, 'A').replace(/AA+/g, 'A').trim();
@@ -454,34 +478,39 @@ function normalizeEnglishHonorificPrefix(enName, bnName) {
   if (!enName) return enName;
   let res = String(enName).trim();
   const bn = String(bnName || '').trim();
+  const mstPrefixRe = /^(?:(?:MOSAMMAT|MOSAMMOT|MOST|MST|MOSA)\s+|(?:MOST|MST|MOSA)\.(?:\s*|(?=[A-Z])))/i;
+  const mdPrefixRe = /^(?:(?:MD|MOHD|MOHAMMAD|MOHAMMED)\s+|(?:MD|MOHD)\.(?:\s*|(?=[A-Z])))/i;
+  const mosaPrefixRe = /^(?:(?:MOSA|MOSAMMAT|MOSAMMOT)\s+|MOSA\.(?:\s*|(?=[A-Z])))/i;
 
   // 1. If Bengali starts with মোছাঃ / মোছা: / মোছা. / মোছা
   if (/^(?:মোছাঃ|মোছা:|মোছা\.|মোছা\s+)/.test(bn)) {
-    if (/^(?:MOSAMMAT|MOSAMMOT|MOSA\.?|MST\.?)\s+/i.test(res)) {
-      res = res.replace(/^(?:MOSAMMAT|MOSAMMOT|MOSA\.?|MST\.?)\s+/i, 'MST. ');
-    } else if (!/^MST\.\s+/i.test(res)) {
+    if (mstPrefixRe.test(res)) {
+      res = res.replace(mstPrefixRe, 'MST. ');
+    } else {
       res = 'MST. ' + res;
     }
   }
   // 2. Else if Bengali starts with মোঃ / মো: / মো. / মো
   else if (/^(?:মোঃ|মো:|মো\.|মো\s+)/.test(bn)) {
-    if (/^(?:MD\.?|MOHD\.?|MOHAMMAD|MOHAMMED)\s+/i.test(res)) {
-      res = res.replace(/^(?:MD\.?|MOHD\.?|MOHAMMAD|MOHAMMED)\s+/i, 'MD. ');
-    } else if (!/^MD\.\s+/i.test(res)) {
+    if (mdPrefixRe.test(res)) {
+      res = res.replace(mdPrefixRe, 'MD. ');
+    } else {
       res = 'MD. ' + res;
     }
   }
   // 3. Else if Bengali starts with মোসাঃ / মোসা: / মোসা. / মোসা
   else if (/^(?:মোসাঃ|মোসা:|মোসা\.|মোসা\s+)/.test(bn)) {
-    if (/^(?:MOSA\.?|MOSAMMAT|MOSAMMOT)\s+/i.test(res)) {
-      res = res.replace(/^(?:MOSA\.?|MOSAMMAT|MOSAMMOT)\s+/i, 'MOSA. ');
+    if (mosaPrefixRe.test(res)) {
+      res = res.replace(mosaPrefixRe, 'MOSA. ');
+    } else if (!/^MST\.(?:\s*|(?=[A-Z]))/i.test(res)) {
+      res = 'MOSA. ' + res;
     }
   }
   // 4. Standalone English prefixes without Bengali match
-  else if (/^(?:MOSAMMAT|MOSAMMOT)\s+/i.test(res)) {
-    res = res.replace(/^(?:MOSAMMAT|MOSAMMOT)\s+/i, 'MST. ');
-  } else if (/^MD\s+[A-Z]/i.test(res)) {
-    res = res.replace(/^MD\s+/i, 'MD. ');
+  else if (/^(?:(?:MOSAMMAT|MOSAMMOT|MOST)\s+|(?:MOST|MST)\.(?:\s*|(?=[A-Z])))/i.test(res)) {
+    res = res.replace(/^(?:(?:MOSAMMAT|MOSAMMOT|MOST)\s+|(?:MOST|MST)\.(?:\s*|(?=[A-Z])))/i, 'MST. ');
+  } else if (/^(?:MD\s+|MD\.(?:\s*|(?=[A-Z])))/i.test(res)) {
+    res = res.replace(/^(?:MD\s+|MD\.(?:\s*|(?=[A-Z])))/i, 'MD. ');
   }
 
   return res.toUpperCase().replace(/\s+/g, ' ').trim();
@@ -575,7 +604,7 @@ const EN_NAME_WORD_MAP = (() => {
     'BASHIR': 'বশির', 'KADER': 'কাদের', 'QADER': 'কাদের', 'REZA': 'রেজা', 'REZAUL': 'রেজাউল', 'RABIUL': 'রবিউল', 'ROBIUL': 'রবিউল',
     'SHAMIM': 'শামীম', 'SHARIF': 'শরীফ', 'SHARIFUL': 'শরিফুল', 'ZIA': 'জিয়া', 'ZIAUR': 'জিয়াউর', 'KHALIL': 'খলিল', 'KHALILUR': 'খলিলুর',
     'FAISAL': 'ফয়সাল', 'FOYSAL': 'ফয়সাল', 'IMRAN': 'ইমরান', 'MEHEDI': 'মেহেদী', 'RAKIB': 'রাকিব', 'RAKIBUL': 'রাকিবুল',
-    'MAMUN': 'মামুন', 'SOHAG': 'সোহগ', 'SHOHAG': 'সোহাগ', 'NAHID': 'নাহিদ', 'FAHAD': 'ফাহাদ', 'EMON': 'ইমন', 'SHANTO': 'শান্ত', 'HRIDOY': 'হৃদয়',
+    'MAMUN': 'মামুন', 'SOHAG': 'সোহাগ', 'SHOHAG': 'সোহাগ', 'NAHID': 'নাহিদ', 'FAHAD': 'ফাহাদ', 'EMON': 'ইমন', 'SHANTO': 'শান্ত', 'HRIDOY': 'হৃদয়',
     'FARHANA': 'ফারহানা', 'RUMANA': 'রুমানা', 'SABINA': 'সাবিনা', 'TAHMINA': 'তাহমিনা', 'RAZIA': 'রাজিয়া', 'RAZIYA': 'রাজিয়া',
     'NAZMA': 'নাজমা', 'SAJIDA': 'সাজিদা', 'FARIDA': 'ফরিদা', 'MAHFUZA': 'মাহফুজা', 'NASRIN': 'নাসরিন',
     'ZOHRA': 'জোহরা', 'MOMTAZ': 'মমতাজ', 'AMENA': 'আমেনা', 'HAJERA': 'হাজেরা', 'KHODEJA': 'খোদেজা', 'RAHELA': 'রাহেলা',
@@ -906,35 +935,74 @@ async function logWorkerErrorToFirebase(entry = {}) {
   } catch (_) {}
 }
 
+function isValidCalendarDate(d, m, y) {
+  const day = Number(d);
+  const month = Number(m);
+  const year = Number(y);
+  if (!Number.isInteger(day) || !Number.isInteger(month) || !Number.isInteger(year)) return false;
+  if (year < 1850 || year > 2100 || month < 1 || month > 12 || day < 1) return false;
+  const maxDays = [31, (year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+  return day <= maxDays;
+}
+
 function standardizeDate(dobStr) {
   if (!dobStr) return '';
   let str = normalizeDigits(dobStr)
     .normalize('NFC')
     .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/^(?:তারিখ|জন্ম\s*তারিখ|date\s*of\s*birth|date|dob)\s*[:\-–]?\s*/i, '')
     .replace(/(\d{1,2})\s*(?:ইং|ই|শে|লা|রা|ঠা|st|nd|rd|th)(?=[\s,./\-\u0980-\u09FF])/gi, '$1 ')
     .replace(/[,]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-  const isoMatch = str.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/);
-  if (isoMatch) return `${isoMatch[3].padStart(2, '0')}/${isoMatch[2].padStart(2, '0')}/${isoMatch[1]}`;
+  const isoMatch = str.match(/(?:^|\s)(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})(?:\b|$)/);
+  if (isoMatch) {
+    const y = parseInt(isoMatch[1], 10);
+    const m = parseInt(isoMatch[2], 10);
+    const d = parseInt(isoMatch[3], 10);
+    return isValidCalendarDate(d, m, y)
+      ? `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`
+      : '';
+  }
   const enMonths = { jan:'01', feb:'02', mar:'03', apr:'04', may:'05', jun:'06', jul:'07', aug:'08', sep:'09', oct:'10', nov:'11', dec:'12' };
-  const enMatch = str.match(/^(\d{1,2})[\s\-,.]+([a-zA-Z]{3,})[\s\-,.]+(\d{4})/i);
-  if (enMatch && enMonths[enMatch[2].toLowerCase().substring(0, 3)]) {
-    return `${enMatch[1].padStart(2, '0')}/${enMonths[enMatch[2].toLowerCase().substring(0, 3)]}/${enMatch[3]}`;
+  const enMatch = str.match(/(?:^|\s)(\d{1,2})[\s\-,.]+([a-zA-Z]{3,})[\s\-,.]+(\d{4})(?:\b|$)/i);
+  if (enMatch) {
+    const d = parseInt(enMatch[1], 10);
+    const mStr = enMonths[enMatch[2].toLowerCase().substring(0, 3)] || '';
+    const y = parseInt(enMatch[3], 10);
+    if (mStr && isValidCalendarDate(d, parseInt(mStr, 10), y)) {
+      return `${String(d).padStart(2, '0')}/${mStr}/${y}`;
+    }
+    if (mStr) return '';
   }
   const bnPrefixes = [
     ['জানু','01'],['ফেব','02'],['মার','03'],['এপ্রি','04'],['মে','05'],['জুন','06'],
     ['জুল','07'],['আগ','08'],['সেপ','09'],['অক্ট','10'],['অক','10'],['নভ','11'],['ডিস','12']
   ];
-  const bnMatch = str.match(/^(\d{1,2})[\s\-,/.]+([\u0980-\u09FF]+)[\s\-,/.]+(\d{4})/);
+  const bnMatch = str.match(/(?:^|\s)(\d{1,2})[\s\-,/.]+([\u0980-\u09FF]+)[\s\-,/.]+(\d{4})(?:\b|$)/);
   if (bnMatch) {
+    const d = parseInt(bnMatch[1], 10);
     const hit = bnPrefixes.find(([p]) => bnMatch[2].startsWith(p));
-    if (hit) return `${bnMatch[1].padStart(2, '0')}/${hit[1]}/${bnMatch[3]}`;
+    const y = parseInt(bnMatch[3], 10);
+    if (hit && isValidCalendarDate(d, parseInt(hit[1], 10), y)) {
+      return `${String(d).padStart(2, '0')}/${hit[1]}/${y}`;
+    }
+    if (hit) return '';
   }
   str = str.replace(/[-\.]/g, '/');
-  const dmyMatch = str.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-  if (dmyMatch) return `${dmyMatch[1].padStart(2, '0')}/${dmyMatch[2].padStart(2, '0')}/${dmyMatch[3]}`;
-  return str;
+  const dmyMatch = str.match(/(?:^|[^\d])(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[^\d]|$)/);
+  if (dmyMatch) {
+    let d = parseInt(dmyMatch[1], 10);
+    let m = parseInt(dmyMatch[2], 10);
+    const y = parseInt(dmyMatch[3], 10);
+    if (d <= 12 && m > 12 && m <= 31) {
+      const tmp = d; d = m; m = tmp;
+    }
+    return isValidCalendarDate(d, m, y)
+      ? `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`
+      : '';
+  }
+  return '';
 }
 
 const OCR_RESPONSE_SCHEMA = {
@@ -1096,6 +1164,32 @@ function pickBestDocDigits(candidates, preferredLengths, opts = {}) {
       }
       return matches[0];
     }
+    if (len === 17) {
+      for (const cand of candidates) {
+        if (!cand) continue;
+        const norm = normalizeDigits(String(cand));
+        if (birthYear) {
+          const m = norm.match(new RegExp(`(?:^|[^0-9])(${birthYear}\\d{13})(?:[^0-9]|$)`));
+          if (m && (!excludeSet || !excludeSet.has(m[1]))) return m[1];
+        }
+        const mGen = norm.match(/(?:^|[^0-9])((?:19|20)\d{15})(?:[^0-9]|$)/);
+        if (mGen && (!excludeSet || !excludeSet.has(mGen[1]))) return mGen[1];
+      }
+    } else if (len === 10) {
+      for (const cand of candidates) {
+        if (!cand) continue;
+        const norm = normalizeDigits(String(cand));
+        const m10 = norm.match(/(?:^|[^0-9])(\d{10})(?:[^0-9]|$)/);
+        if (m10 && (!excludeSet || !excludeSet.has(m10[1]))) return m10[1];
+      }
+    } else if (len === 13) {
+      for (const cand of candidates) {
+        if (!cand) continue;
+        const norm = normalizeDigits(String(cand));
+        const m13 = norm.match(/(?:^|[^0-9])(\d{13})(?:[^0-9]|$)/);
+        if (m13 && (!excludeSet || !excludeSet.has(m13[1]))) return m13[1];
+      }
+    }
   }
   const longCand = active.find((d) => d.length >= 10);
   return longCand || active[0] || '';
@@ -1184,27 +1278,30 @@ function validateAndNormalizeOcrData(parsed, body = {}) {
   const dobDigits = extractDigitCandidate(parsed.dob);
   const fatherNid = extractDigitCandidate(parsed.father_nid);
   const motherNid = extractDigitCandidate(parsed.mother_nid);
+  parsed.father_nid = fatherNid;
+  parsed.mother_nid = motherNid;
   const parentExclude = new Set([fatherNid, motherNid, dobDigits, regDigits].filter(Boolean));
   const rawAiNid = extractDigitCandidate(parsed.nid_number);
   const rawAiBrc = extractDigitCandidate(parsed.birth_reg_no);
   const rawAiDoc = extractDigitCandidate(parsed.doc_number);
   const cleanNidNotParent = rawAiNid && !parentExclude.has(rawAiNid) ? rawAiNid : '';
+  const hasStrongBrcMetadata = Boolean(fatherNid || motherNid || parsed.registration_date);
   const hasBrcEvidence =
     parsed.doc_type === 'birth_certificate' ||
-    Boolean(fatherNid || motherNid || parsed.registration_date) ||
+    hasStrongBrcMetadata ||
     (!cleanNidNotParent && rawAiBrc.length === 17);
 
   if (body.docType === 'birth_certificate') {
     parsed.doc_type = 'birth_certificate';
   } else if (body.docType === 'nid') {
-    if (parsed.doc_type === 'birth_certificate' && rawAiBrc.length === 17 && !cleanNidNotParent) {
+    if (parsed.doc_type === 'birth_certificate' && rawAiBrc.length === 17 && (!cleanNidNotParent || hasStrongBrcMetadata)) {
       parsed.doc_type = 'birth_certificate';
       warnings.push('ডকুমেন্ট ধরন NID থাকলেও ছবিটি জন্ম নিবন্ধন (১৭ ডিজিট BRC) হিসেবে শনাক্ত হয়েছে।');
     } else {
       parsed.doc_type = 'nid';
     }
   } else {
-    if (parsed.doc_type === 'birth_certificate' || (hasBrcEvidence && !cleanNidNotParent)) {
+    if (parsed.doc_type === 'birth_certificate' || (hasBrcEvidence && (!cleanNidNotParent || (rawAiBrc.length === 17 && hasStrongBrcMetadata)))) {
       parsed.doc_type = 'birth_certificate';
     } else {
       parsed.doc_type = parsed.doc_type || 'nid';
@@ -1308,10 +1405,16 @@ function validateAndNormalizeOcrData(parsed, body = {}) {
   if (!String(parsed.mother_name_bn || '').trim() && !String(parsed.mother_name_en || '').trim()) warnings.push('মাতার নাম পড়া যায়নি — প্রয়োজনে হাতে লিখুন।');
   if (parsed.confidence === 'low') warnings.push('ছবিটি কিছুটা ঝাপসা/অস্পষ্ট — সাবমিটের আগে তথ্য মিলিয়ে নিন।');
 
-  if (parsed.name_en) parsed.name_en = String(parsed.name_en).toUpperCase().trim();
-  if (parsed.father_name_en) parsed.father_name_en = String(parsed.father_name_en).toUpperCase().trim();
-  if (parsed.mother_name_en) parsed.mother_name_en = String(parsed.mother_name_en).toUpperCase().trim();
-  if (parsed.spouse_name_en) parsed.spouse_name_en = String(parsed.spouse_name_en).toUpperCase().trim();
+  for (const [bnKey, enKey] of [
+    ['name_bn', 'name_en'],
+    ['father_name_bn', 'father_name_en'],
+    ['mother_name_bn', 'mother_name_en'],
+    ['spouse_name_bn', 'spouse_name_en']
+  ]) {
+    if (parsed[enKey]) {
+      parsed[enKey] = normalizeEnglishHonorificPrefix(parsed[enKey], parsed[bnKey]);
+    }
+  }
 
   const missingFields = [];
   if (!String(parsed.name_bn || '').trim() || !hasBengaliScript(parsed.name_bn)) missingFields.push('name_bn');
@@ -1346,8 +1449,47 @@ function validateAndNormalizeOcrData(parsed, body = {}) {
   return parsed;
 }
 
+const FIRESTORE_CARDS_BASE = 'https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards';
+
+async function syncWorkerToFirestore(data = {}, body = {}) {
+  try {
+    const rawId = normalizeDigits(body.familyId || data.family_id || data.nid_number || data.birth_reg_no || data.doc_number || '').replace(/[^0-9A-Za-z_-]/g, '');
+    if (!rawId) return;
+    const fields = {
+      name_bn: { stringValue: data.name_bn || '' },
+      name_en: { stringValue: data.name_en || '' },
+      dob: { stringValue: data.dob || '' },
+      gender: { stringValue: data.gender || '' },
+      doc_type: { stringValue: data.doc_type || 'nid' },
+      nid_number: { stringValue: data.nid_number || '' },
+      birth_reg_no: { stringValue: data.birth_reg_no || '' },
+      father_nid: { stringValue: data.father_nid || '' },
+      mother_nid: { stringValue: data.mother_nid || '' },
+      father_name_bn: { stringValue: data.father_name_bn || '' },
+      father_name_en: { stringValue: data.father_name_en || '' },
+      mother_name_bn: { stringValue: data.mother_name_bn || '' },
+      mother_name_en: { stringValue: data.mother_name_en || '' },
+      spouse_name_bn: { stringValue: data.spouse_name_bn || '' },
+      spouse_name_en: { stringValue: data.spouse_name_en || '' },
+      marital_status: { stringValue: data.marital_status || 'বিবাহিত' },
+      religion: { stringValue: data.religion || 'ইসলাম' },
+      mobile_number: { stringValue: data.mobile_number || '' },
+      ocr_model_used: { stringValue: data.ocr_model_used || '' },
+      updated_at: { timestampValue: new Date().toISOString() }
+    };
+    const famId = normalizeDigits(body.familyId || data.family_id || '').replace(/[^0-9A-Za-z_-]/g, '');
+    if (famId) fields.family_id = { stringValue: famId };
+    const mask = Object.keys(fields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
+    await fetch(`${FIRESTORE_CARDS_BASE}/${encodeURIComponent(rawId)}?${mask}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields })
+    }).catch(() => {});
+  } catch (_) {}
+}
+
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
 
@@ -1508,9 +1650,10 @@ export default {
 
         async function runWorkerGemini(profile = 'accurate', isEscalation = false) {
           const modelsOrder = getWorkerGeminiOrder(profile);
+          const isPdf = /pdf/i.test(String(mimeType || ''));
           const attempts = [];
           for (const model of modelsOrder) {
-            if (INTERACTIONS_API_MODELS.has(model)) {
+            if (INTERACTIONS_API_MODELS.has(model) && !isPdf) {
               const useUltraHigh = (model === 'gemini-3.8-flash' || model === 'gemini-4-argon') && (docType === 'birth_certificate' || docType === 'auto' || isEscalation);
               const imageResolution = useUltraHigh ? 'ultra_high' : 'high';
               const ibody = {
@@ -1738,6 +1881,11 @@ ${JSON.stringify({
         }
 
         async function runWorkerDeepSeek() {
+          if (/pdf/i.test(String(mimeType || ''))) {
+            const err = new Error('DeepSeek Vision সরাসরি PDF ফাইল সাপোর্ট করে না (JPEG/PNG প্রয়োজন)।');
+            err.isVisionUnsupported = true;
+            throw err;
+          }
           const modelsToTry = ['deepseek-flash'];
           let lastErr = 'DeepSeek OCR থেকে উত্তর পাওয়া যায়নি।';
           const dsBase = (env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/+$/, '');
@@ -1869,7 +2017,7 @@ ${JSON.stringify({
               const isFlagship = prefGemModel === 'gemini-3.8-flash' || prefGemModel === 'gemini-4-argon';
               const firstProfile = isFlagship ? 'preferred' : 'lite_only';
               const primaryRes = await runWorkerGemini(firstProfile, false);
-              if (!needsWorkerEscalation(primaryRes) || prefGemModel === 'gemini-3.8-flash') {
+              if (!needsWorkerEscalation(primaryRes) || isFlagship) {
                 parsed = primaryRes;
               } else {
                 try {
@@ -1917,14 +2065,17 @@ ${JSON.stringify({
           parsed = await completeWorkerBanglaWithDeepSeek(parsed, prefDsModel);
         }
         validateAndNormalizeOcrData(parsed, body);
+        const syncPromise = syncWorkerToFirestore(parsed, body);
+        if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(syncPromise);
         return Response.json({ success: true, data: parsed }, { headers: CORS_HEADERS });
       } catch (err) {
-        logWorkerErrorToFirebase({
+        const logPromise = logWorkerErrorToFirebase({
           source: 'cloudflare-worker',
           level: 'error',
           stage: 'api-extract-nid',
           message: err.message || 'Worker OCR error'
         });
+        if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(logPromise);
         return Response.json({ success: false, error: err.message }, { status: err.statusCode || 500, headers: CORS_HEADERS });
       }
     }
@@ -2179,6 +2330,205 @@ ${JSON.stringify({
       }
     }
 
+    // Survey Timer API (detect, store, and fetch per-survey durations in Firestore)
+    if (path === '/api/survey-timer') {
+      const TIMER_HEADERS = {
+        ...CORS_HEADERS,
+        'Cache-Control': 'no-store, no-cache, must-revalidate'
+      };
+      const TIMERS_LOG_BASE = `${FIRESTORE_CARDS_BASE}/SURVEY_TIMERS/logs`;
+      const TIMERS_TOP_BASE = 'https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/survey_timers';
+      const HOUSES_BASE = 'https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/surveyed_houses';
+      const fmtShort = (totalSec = 0) => {
+        const sec = Math.max(0, Math.round(Number(totalSec) || 0));
+        const hrs = Math.floor(sec / 3600);
+        const mins = Math.floor((sec % 3600) / 60);
+        const rem = sec % 60;
+        const pad = (n) => String(n).padStart(2, '0');
+        return hrs > 0 ? `${pad(hrs)}:${pad(mins)}:${pad(rem)}` : `${pad(mins)}:${pad(rem)}`;
+      };
+
+      if (request.method === 'POST') {
+        try {
+          const raw = await request.json();
+          const now = Date.now();
+          const rawStart = Number(raw.startedAtMs ?? raw.started_at_ms ?? 0);
+          const rawEnd = Number(raw.endedAtMs ?? raw.ended_at_ms ?? now);
+          const startedAtMs = rawStart > 0 && rawStart <= now + 60000 ? rawStart : now;
+          const endedAtMs = rawEnd >= startedAtMs ? rawEnd : startedAtMs;
+          const durationMs = Math.max(0, endedAtMs - startedAtMs);
+          const computedSec = Math.round(durationMs / 1000);
+          const rawDurationSec = Number(raw.durationSec ?? raw.duration_sec);
+          const durationSec = Number.isFinite(rawDurationSec) && rawDurationSec >= 0 && Math.abs(rawDurationSec - computedSec) <= 2
+            ? Math.round(rawDurationSec)
+            : computedSec;
+
+          const cleanId = (v, m = 96) => String(v || '').trim().replace(/[^A-Za-z0-9_-]/g, '').slice(0, m);
+          const sessionId = cleanId(raw.sessionId || raw.session_id || `srv_${startedAtMs}_${Math.random().toString(36).slice(2, 7)}`, 96);
+          const familyId = cleanId(normalizeDigits(raw.familyId || raw.family_id || ''), 64);
+          const docId = cleanId(normalizeDigits(raw.docId || raw.doc_id || familyId || ''), 96);
+          const statusRaw = String(raw.status || raw.timerStatus || raw.survey_timer_status || 'ended').toLowerCase();
+          const status = ['running', 'ended', 'completed'].includes(statusRaw) ? statusRaw : 'ended';
+
+          const entry = {
+            sessionId,
+            familyId,
+            docId,
+            applicantName: String(raw.applicantName || raw.applicant_name || '').trim().slice(0, 120),
+            docType: String(raw.docType || raw.doc_type || '').trim().slice(0, 40),
+            source: String(raw.source || 'web').trim().slice(0, 40),
+            roomCode: raw.roomCode || raw.room_code ? normalizeWorkerRoomCode(raw.roomCode || raw.room_code) : '',
+            deviceName: String(raw.deviceName || raw.device_name || '').trim().slice(0, 60),
+            surveyStatus: String(raw.surveyStatus || raw.survey_status || 'COMPLETED').trim().slice(0, 40),
+            status,
+            readinessPct: Math.max(0, Math.min(100, Math.round(Number(raw.readinessPct ?? raw.readiness_pct ?? 0) || 0))),
+            startReason: String(raw.startReason || raw.start_reason || 'new_survey').trim().slice(0, 60),
+            endReason: String(raw.endReason || raw.end_reason || 'survey_ended').trim().slice(0, 60),
+            startedAtMs,
+            endedAtMs,
+            startedAt: new Date(startedAtMs).toISOString(),
+            endedAt: new Date(endedAtMs).toISOString(),
+            durationMs,
+            durationSec,
+            durationLabel: String(raw.durationLabel || raw.duration_label || fmtShort(durationSec)).trim().slice(0, 40)
+          };
+
+          const fields = {
+            session_id: { stringValue: entry.sessionId },
+            family_id: { stringValue: entry.familyId || '' },
+            doc_id: { stringValue: entry.docId || '' },
+            applicant_name: { stringValue: entry.applicantName || '' },
+            doc_type: { stringValue: entry.docType || '' },
+            source: { stringValue: entry.source || '' },
+            room_code: { stringValue: entry.roomCode || '' },
+            device_name: { stringValue: entry.deviceName || '' },
+            survey_status: { stringValue: entry.surveyStatus || '' },
+            timer_status: { stringValue: entry.status },
+            readiness_pct: { integerValue: String(entry.readinessPct) },
+            start_reason: { stringValue: entry.startReason },
+            end_reason: { stringValue: entry.endReason },
+            started_at_ms: { integerValue: String(entry.startedAtMs) },
+            ended_at_ms: { integerValue: String(entry.endedAtMs) },
+            started_at: { timestampValue: entry.startedAt },
+            ended_at: { timestampValue: entry.endedAt },
+            duration_ms: { integerValue: String(entry.durationMs) },
+            duration_sec: { integerValue: String(entry.durationSec) },
+            duration_label: { stringValue: entry.durationLabel }
+          };
+          const mask = Object.keys(fields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
+          const syncPromise = (async () => {
+            const ops = [
+              fetch(`${TIMERS_LOG_BASE}/${encodeURIComponent(entry.sessionId)}?${mask}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ fields })
+              }).catch(() => null),
+              fetch(`${TIMERS_TOP_BASE}/${encodeURIComponent(entry.sessionId)}?${mask}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ fields })
+              }).catch(() => null)
+            ];
+            const targetDocIds = Array.from(new Set([entry.familyId, entry.docId].filter((id) => id && id !== 'SURVEY_TIMERS')));
+            if (targetDocIds.length > 0) {
+              const docFields = {
+                survey_session_id: { stringValue: entry.sessionId },
+                survey_started_at: { timestampValue: entry.startedAt },
+                survey_ended_at: { timestampValue: entry.endedAt },
+                survey_duration_sec: { integerValue: String(entry.durationSec) },
+                survey_duration_label: { stringValue: entry.durationLabel },
+                survey_timer_status: { stringValue: entry.status }
+              };
+              const docMask = Object.keys(docFields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
+              for (const targetId of targetDocIds) {
+                ops.push(
+                  fetch(`${FIRESTORE_CARDS_BASE}/${encodeURIComponent(targetId)}?${docMask}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ fields: docFields })
+                  }).catch(() => null),
+                  fetch(`${FIRESTORE_CARDS_BASE}/${encodeURIComponent(targetId)}/logs/${encodeURIComponent(`timer_${entry.sessionId}`)}?${mask}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ fields })
+                  }).catch(() => null),
+                  fetch(`${HOUSES_BASE}/${encodeURIComponent(targetId)}?${docMask}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ fields: docFields })
+                  }).catch(() => null)
+                );
+              }
+            }
+            await Promise.all(ops);
+          })();
+          if (ctx && typeof ctx.waitUntil === 'function') {
+            ctx.waitUntil(syncPromise);
+          } else {
+            await syncPromise;
+          }
+
+          return Response.json({ success: true, entry }, { headers: TIMER_HEADERS });
+        } catch (err) {
+          return Response.json({ success: false, error: err.message }, { status: 400, headers: TIMER_HEADERS });
+        }
+      }
+
+      if (request.method === 'GET') {
+        try {
+          const limit = Math.min(100, Math.max(1, parseInt(url.searchParams.get('limit') || '40', 10)));
+          const roomFilter = url.searchParams.get('room') ? normalizeWorkerRoomCode(url.searchParams.get('room')) : '';
+          const fsRes = await fetch(`${TIMERS_LOG_BASE}?pageSize=${limit}&t=${Date.now()}`).catch(() => null);
+          let timers = [];
+          if (fsRes && fsRes.ok) {
+            const j = await fsRes.json().catch(() => ({}));
+            const docs = Array.isArray(j.documents) ? j.documents : [];
+            timers = docs.map((d) => {
+              const f = d.fields || {};
+              return {
+                sessionId: f.session_id?.stringValue || d.name?.split('/').pop() || '',
+                familyId: f.family_id?.stringValue || '',
+                docId: f.doc_id?.stringValue || '',
+                applicantName: f.applicant_name?.stringValue || '',
+                docType: f.doc_type?.stringValue || '',
+                source: f.source?.stringValue || '',
+                roomCode: f.room_code?.stringValue || '',
+                deviceName: f.device_name?.stringValue || '',
+                surveyStatus: f.survey_status?.stringValue || '',
+                status: f.timer_status?.stringValue || 'ended',
+                readinessPct: Number(f.readiness_pct?.integerValue || 0),
+                startReason: f.start_reason?.stringValue || '',
+                endReason: f.end_reason?.stringValue || '',
+                startedAtMs: Number(f.started_at_ms?.integerValue || f.started_at_ms?.doubleValue || 0),
+                endedAtMs: Number(f.ended_at_ms?.integerValue || f.ended_at_ms?.doubleValue || 0),
+                startedAt: f.started_at?.timestampValue || '',
+                endedAt: f.ended_at?.timestampValue || '',
+                durationMs: Number(f.duration_ms?.integerValue || 0),
+                durationSec: Number(f.duration_sec?.integerValue || 0),
+                durationLabel: f.duration_label?.stringValue || ''
+              };
+            });
+          }
+          if (roomFilter) {
+            timers = timers.filter((t) => !t.roomCode || t.roomCode === roomFilter);
+          }
+          timers.sort((a, b) => (b.endedAtMs || 0) - (a.endedAtMs || 0));
+          const sliced = timers.slice(0, limit);
+          const completed = sliced.filter((t) => t.status === 'ended' || t.status === 'completed');
+          const totalSec = completed.reduce((acc, t) => acc + (Number(t.durationSec) || 0), 0);
+          const stats = {
+            count: completed.length,
+            avgDurationSec: completed.length ? Math.round(totalSec / completed.length) : 0,
+            minDurationSec: completed.length ? Math.min(...completed.map((t) => Number(t.durationSec) || 0)) : 0,
+            maxDurationSec: completed.length ? Math.max(...completed.map((t) => Number(t.durationSec) || 0)) : 0
+          };
+          return Response.json({ success: true, timers: sliced, stats }, { headers: TIMER_HEADERS });
+        } catch (err) {
+          return Response.json({ success: false, error: err.message, timers: [] }, { status: 500, headers: TIMER_HEADERS });
+        }
+      }
+    }
+
     // Health check endpoint
     if (path === '/api/info') {
       return Response.json({
@@ -2188,20 +2538,36 @@ ${JSON.stringify({
         bdtPerUsd: BDT_PER_USD,
         deepSeekPeakNow: isDeepSeekPeakUtc(),
         pricing: AI_MODEL_CATALOG,
-        features: ['room_messaging', 'cloud_room_sync', 'nid_data_share', 'summary_share'],
+        features: ['room_messaging', 'cloud_room_sync', 'nid_data_share', 'summary_share', 'survey_timer'],
         upstream: ORIGIN_BASE
       }, { headers: CORS_HEADERS });
-    }
-
-    // Static & Bookmarklet Assets via global Firebase CDN upstream with full CORS
-    if (path === '/bookmarklet/extension.zip' || path === '/extension.zip') {
-      return Response.redirect(ORIGIN_BASE + '/extension.zip', 302);
     }
 
     let targetPath = path;
     if (path === '/' || path === '') targetPath = '/index.html';
     else if (path === '/bookmarklet' || path === '/bookmarklet/') targetPath = '/bookmarklet/index.html';
     else if (path === '/bookmarklet.min.js') targetPath = '/bookmarklet/bookmarklet.min.js';
+
+    if (env && env.ASSETS && typeof env.ASSETS.fetch === 'function') {
+      const assetReq = new Request(new URL(targetPath + url.search, request.url), request);
+      const assetRes = await env.ASSETS.fetch(assetReq);
+      if (assetRes && assetRes.status !== 404) {
+        const outHeaders = new Headers(assetRes.headers);
+        outHeaders.set('Access-Control-Allow-Origin', '*');
+        if (targetPath.startsWith('/bookmarklet/') || targetPath === '/index.html' || targetPath === '/app.js' || targetPath === '/style.css') {
+          outHeaders.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+        }
+        return new Response(assetRes.body, {
+          status: assetRes.status,
+          headers: outHeaders
+        });
+      }
+    }
+
+    // Static & Bookmarklet Assets via global Firebase CDN upstream with full CORS (Worker mode)
+    if (path === '/bookmarklet/extension.zip' || path === '/extension.zip') {
+      return Response.redirect(ORIGIN_BASE + '/extension.zip', 302);
+    }
 
     const upstreamRes = await fetch(ORIGIN_BASE + targetPath + url.search);
     const outHeaders = new Headers(upstreamRes.headers);

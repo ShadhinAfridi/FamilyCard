@@ -11,6 +11,15 @@
     "https://fc.bhata.gov.bd/*",
     "https://generativelanguage.googleapis.com/*",
     "https://api.deepseek.com/*",
+    "https://firestore.googleapis.com/*",
+    "https://binary-ict.web.app/*",
+    "https://familycard.afridi.app/*",
+    "https://familycard-10n.pages.dev/*",
+    "https://familycard.fourdevs-pro.workers.dev/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "optional_host_permissions": [
     "http://*/*",
     "https://*/*"
   ],

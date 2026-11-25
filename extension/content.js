@@ -61,7 +61,7 @@
 
   const BN_NAME_WORD_MAP = {
     'মোঃ': 'MD.', 'মো:': 'MD.', 'মো.': 'MD.', 'মোহাম্মদ': 'MOHAMMAD', 'মোহাম্মাদ': 'MOHAMMAD', 'মুহাম্মদ': 'MUHAMMAD',
-    'মোছাঃ': 'MOSAMMAT', 'মোছা:': 'MOSAMMAT', 'মোছা.': 'MOSAMMAT', 'মোসাম্মৎ': 'MOSAMMAT', 'মোসাম্মত': 'MOSAMMAT',
+    'মোছাঃ': 'MST.', 'মোছা:': 'MST.', 'মোছা.': 'MST.', 'মোসাম্মাৎ': 'MOSAMMAT', 'মোসাম্মৎ': 'MOSAMMAT', 'মোসাম্মত': 'MOSAMMAT', 'মোসাঃ': 'MOSA.', 'মোসা:': 'MOSA.',
     'শ্রী': 'SRI', 'শ্রীমতী': 'SRIMOTI', 'শেখ': 'SHEIKH', 'সৈয়দ': 'SYED', 'সৈয়দ': 'SYED',
     'খন্দকার': 'KHANDAKER', 'চৌধুরী': 'CHOWDHURY', 'মজুমদার': 'MAJUMDER', 'তালুকদার': 'TALUKDER',
     'সরকার': 'SARKAR', 'মন্ডল': 'MONDAL', 'মণ্ডল': 'MONDAL', 'বিশ্বাস': 'BISWAS', 'ভূঁইয়া': 'BHUIYAN', 'ভুঁইয়া': 'BHUIYAN',
@@ -193,11 +193,28 @@
       if (ch === '্') {
         const nextC = bare[i + 1] || '';
         if (nextC === 'য') { out += 'Y'; i += 2; lastWasVowel = false; continue; }
-        if (nextC === 'র') { out += 'R'; i += 2; lastWasVowel = false; continue; }
-        if (nextC === 'ব') {
-          if (lastConsStartIdx > 0 && cons[bare[i - 1]]) out += 'W';
+        if (nextC === 'র') {
+          out += 'R';
           i += 2;
-          lastWasVowel = false;
+          const afterCluster = bare[i] || '';
+          if (!kars[afterCluster] && afterCluster !== '্' && afterCluster !== 'ং' && afterCluster !== 'ঃ' && i < bare.length && cons[afterCluster]) {
+            out += 'A';
+            lastWasVowel = true;
+          } else {
+            lastWasVowel = false;
+          }
+          continue;
+        }
+        if (nextC === 'ব') {
+          if (lastConsStartIdx === 0 || (lastConsStartIdx > 0 && cons[bare[i - 1]])) out += 'W';
+          i += 2;
+          const afterCluster = bare[i] || '';
+          if (lastConsStartIdx === 0 && !kars[afterCluster] && afterCluster !== '্' && afterCluster !== 'ং' && afterCluster !== 'ঃ' && i < bare.length && cons[afterCluster]) {
+            out += 'A';
+            lastWasVowel = true;
+          } else {
+            lastWasVowel = false;
+          }
           continue;
         }
         i++;
@@ -239,34 +256,39 @@
   if (!enName) return enName;
   let res = String(enName).trim();
   const bn = String(bnName || '').trim();
+  const mstPrefixRe = /^(?:(?:MOSAMMAT|MOSAMMOT|MOST|MST|MOSA)\s+|(?:MOST|MST|MOSA)\.(?:\s*|(?=[A-Z])))/i;
+  const mdPrefixRe = /^(?:(?:MD|MOHD|MOHAMMAD|MOHAMMED)\s+|(?:MD|MOHD)\.(?:\s*|(?=[A-Z])))/i;
+  const mosaPrefixRe = /^(?:(?:MOSA|MOSAMMAT|MOSAMMOT)\s+|MOSA\.(?:\s*|(?=[A-Z])))/i;
 
   // 1. If Bengali starts with মোছাঃ / মোছা: / মোছা. / মোছা
   if (/^(?:মোছাঃ|মোছা:|মোছা\.|মোছা\s+)/.test(bn)) {
-    if (/^(?:MOSAMMAT|MOSAMMOT|MOSA\.?|MST\.?)\s+/i.test(res)) {
-      res = res.replace(/^(?:MOSAMMAT|MOSAMMOT|MOSA\.?|MST\.?)\s+/i, 'MST. ');
-    } else if (!/^MST\.\s+/i.test(res)) {
+    if (mstPrefixRe.test(res)) {
+      res = res.replace(mstPrefixRe, 'MST. ');
+    } else {
       res = 'MST. ' + res;
     }
   }
   // 2. Else if Bengali starts with মোঃ / মো: / মো. / মো
   else if (/^(?:মোঃ|মো:|মো\.|মো\s+)/.test(bn)) {
-    if (/^(?:MD\.?|MOHD\.?|MOHAMMAD|MOHAMMED)\s+/i.test(res)) {
-      res = res.replace(/^(?:MD\.?|MOHD\.?|MOHAMMAD|MOHAMMED)\s+/i, 'MD. ');
-    } else if (!/^MD\.\s+/i.test(res)) {
+    if (mdPrefixRe.test(res)) {
+      res = res.replace(mdPrefixRe, 'MD. ');
+    } else {
       res = 'MD. ' + res;
     }
   }
   // 3. Else if Bengali starts with মোসাঃ / মোসা: / মোসা. / মোসা
   else if (/^(?:মোসাঃ|মোসা:|মোসা\.|মোসা\s+)/.test(bn)) {
-    if (/^(?:MOSA\.?|MOSAMMAT|MOSAMMOT)\s+/i.test(res)) {
-      res = res.replace(/^(?:MOSA\.?|MOSAMMAT|MOSAMMOT)\s+/i, 'MOSA. ');
+    if (mosaPrefixRe.test(res)) {
+      res = res.replace(mosaPrefixRe, 'MOSA. ');
+    } else if (!/^MST\.(?:\s*|(?=[A-Z]))/i.test(res)) {
+      res = 'MOSA. ' + res;
     }
   }
   // 4. Standalone English prefixes without Bengali match
-  else if (/^(?:MOSAMMAT|MOSAMMOT)\s+/i.test(res)) {
-    res = res.replace(/^(?:MOSAMMAT|MOSAMMOT)\s+/i, 'MST. ');
-  } else if (/^MD\s+[A-Z]/i.test(res)) {
-    res = res.replace(/^MD\s+/i, 'MD. ');
+  else if (/^(?:(?:MOSAMMAT|MOSAMMOT|MOST)\s+|(?:MOST|MST)\.(?:\s*|(?=[A-Z])))/i.test(res)) {
+    res = res.replace(/^(?:(?:MOSAMMAT|MOSAMMOT|MOST)\s+|(?:MOST|MST)\.(?:\s*|(?=[A-Z])))/i, 'MST. ');
+  } else if (/^(?:MD\s+|MD\.(?:\s*|(?=[A-Z])))/i.test(res)) {
+    res = res.replace(/^(?:MD\s+|MD\.(?:\s*|(?=[A-Z])))/i, 'MD. ');
   }
 
   return res.toUpperCase().replace(/\s+/g, ' ').trim();
@@ -654,6 +676,14 @@
         }
       }
     }
+    for (const [bnK, enK] of [
+      ['name_bn', 'name_en'],
+      ['father_name_bn', 'father_name_en'],
+      ['mother_name_bn', 'mother_name_en'],
+      ['spouse_name_bn', 'spouse_name_en']
+    ]) {
+      if (out[enK]) out[enK] = normalizeEnglishHonorificPrefix(out[enK], out[bnK]);
+    }
 
     const isBrc = out.doc_type === 'birth_certificate' || (!rawNid && rawBrc.length === 17);
     out.doc_type = isBrc ? 'birth_certificate' : 'nid';
@@ -892,6 +922,9 @@
     widget.innerHTML = `
       <!-- Single Device Instant Actions (Tablet-Friendly) -->
       <div class="fc-fab-row">
+        <div id="fc-timer-btn" title="সার্ভে সময় গণনা ও ডাটাবেস ইতিহাস দেখুন">
+          <span>⏱️ ০০:০০</span>
+        </div>
         <div id="fc-summary-btn" title="পূর্ণাঙ্গ ফ্যামিলি কার্ড সারসংক্ষেপ দেখুন">
           <span>📊 সারসংক্ষেপ (0%)</span>
         </div>
@@ -992,8 +1025,10 @@
     const summaryBtn = document.getElementById('fc-summary-btn');
     const houseNoteBtn = document.getElementById('fc-house-note-btn');
     const chatBtn = document.getElementById('fc-chat-btn');
+    const timerBtn = document.getElementById('fc-timer-btn');
     const directScanBtn = document.getElementById('fc-btn-direct-scan');
 
+    if (timerBtn) timerBtn.addEventListener('click', openExtTimerModal);
     badge.addEventListener('click', () => card.classList.toggle('hidden'));
     closeBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -1137,7 +1172,7 @@
             </div>
           </div>
 
-          <input type="file" id="fc-modal-file-input" accept="image/*" capture="environment" style="display: none;">
+          <input type="file" id="fc-modal-file-input" accept="image/*,application/pdf" style="display: none;">
 
           <div id="fc-modal-viewfinder" class="fc-modal-cam-box mode-id" style="display: none;">
             <video id="fc-modal-video" playsinline autoplay muted></video>
@@ -1722,7 +1757,14 @@
       try {
         const maxDim = window.__fcModalFrameMode === 'a4' ? 2200 : 1800;
         currentCompressedBase64 = await compressImageFile(file, maxDim, 0.92);
-        imgPreview.src = currentCompressedBase64;
+        if (String(currentCompressedBase64).startsWith('data:application/pdf')) {
+          if (imgPreview) {
+            imgPreview.removeAttribute('src');
+            imgPreview.alt = `📄 PDF: ${file.name || 'document.pdf'}`;
+          }
+        } else if (imgPreview) {
+          imgPreview.src = currentCompressedBase64;
+        }
         previewWrap.style.display = 'flex';
         btnCamera.textContent = '🔄 পুনরায় ছবি তুলুন';
         triggerModalOCR(currentCompressedBase64);
@@ -2689,9 +2731,14 @@
   // Compress & enhance document image on an off-screen canvas
   function compressImageFile(file, maxDimension = 2048, quality = 0.92) {
     return new Promise((resolve, reject) => {
+      const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
       const reader = new FileReader();
       reader.onerror = reject;
       reader.onload = (evt) => {
+        if (isPdf) {
+          resolve(evt.target.result);
+          return;
+        }
         const img = new Image();
         img.onerror = reject;
         img.onload = () => {
@@ -2882,6 +2929,7 @@
         } else {
           lastExtractedData = data;
           cacheFamilyScan(data);
+          adoptOrStartPortalTimerForScan(data, { startReason: 'ext_modal_ocr_scan' });
           window.__fcStep1FilledKey = '';
           updateWidgetPreview(data);
           await fillFormFields(data, { overwriteExisting: true });
@@ -3368,6 +3416,11 @@
         });
         lastExtractedData = norm;
         cacheFamilyScan(norm);
+        adoptOrStartPortalTimerForScan(norm, {
+          startReason: 'room_nid_data',
+          remoteStartedAtMs: Number(msg.payload?.survey_started_at_ms || 0),
+          remoteSessionId: String(msg.payload?.survey_session_id || '')
+        });
         window.__fcStep1FilledKey = '';
         updateWidgetPreview(norm);
         fillFormFields(norm, { overwriteExisting: false });
@@ -3723,6 +3776,11 @@
           lastExtractedData = norm;
           window.__fcLastScannedAny = norm;
           cacheFamilyScan(norm);
+          adoptOrStartPortalTimerForScan(norm, {
+            startReason: 'socket_nid_data',
+            remoteStartedAtMs: Number(payload.data?.survey_started_at_ms || 0),
+            remoteSessionId: String(payload.data?.survey_session_id || '')
+          });
           window.__fcStep1FilledKey = '';
           updateWidgetPreview(norm);
           const filled = await fillFormFields(norm, { overwriteExisting: false });
@@ -4160,21 +4218,37 @@
     });
   }
 
+  function isValidCalendarDate(d, m, y) {
+    const day = Number(d);
+    const month = Number(m);
+    const year = Number(y);
+    if (!Number.isInteger(day) || !Number.isInteger(month) || !Number.isInteger(year)) return false;
+    if (year < 1850 || year > 2100 || month < 1 || month > 12 || day < 1) return false;
+    const maxDays = [31, (year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+    return day <= maxDays;
+  }
+
   // Helper to standardize Date of Birth (supports English & Bengali months/digits/ordinals) to DD/MM/YYYY
   function standardizeDate(dobStr) {
     if (!dobStr) return '';
     let str = normalizeDigits(dobStr)
       .normalize('NFC')
       .replace(/[\u200B-\u200D\uFEFF]/g, '')
+      .replace(/^(?:তারিখ|জন্ম\s*তারিখ|date\s*of\s*birth|date|dob)\s*[:\-–]?\s*/i, '')
       .replace(/(\d{1,2})\s*(?:ইং|ই|শে|লা|রা|ঠা|st|nd|rd|th)(?=[\s,./\-\u0980-\u09FF])/gi, '$1 ')
       .replace(/[,]/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
 
     // ISO: YYYY-MM-DD or YYYY/MM/DD
-    const isoMatch = str.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/);
+    const isoMatch = str.match(/(?:^|\s)(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})(?:\b|$)/);
     if (isoMatch) {
-      return `${isoMatch[3].padStart(2, '0')}/${isoMatch[2].padStart(2, '0')}/${isoMatch[1]}`;
+      const y = parseInt(isoMatch[1], 10);
+      const m = parseInt(isoMatch[2], 10);
+      const d = parseInt(isoMatch[3], 10);
+      return isValidCalendarDate(d, m, y)
+        ? `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`
+        : '';
     }
 
     // English month names: 15 Aug 1985
@@ -4182,10 +4256,15 @@
       jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
       jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12'
     };
-    const monthMatch = str.match(/^(\d{1,2})[\s\-,.]+([a-zA-Z]{3,})[\s\-,.]+(\d{4})/i);
+    const monthMatch = str.match(/(?:^|\s)(\d{1,2})[\s\-,.]+([a-zA-Z]{3,})[\s\-,.]+(\d{4})(?:\b|$)/i);
     if (monthMatch) {
-      const m = months[monthMatch[2].toLowerCase().substring(0, 3)] || '';
-      if (m) return `${monthMatch[1].padStart(2, '0')}/${m}/${monthMatch[3]}`;
+      const d = parseInt(monthMatch[1], 10);
+      const mStr = months[monthMatch[2].toLowerCase().substring(0, 3)] || '';
+      const y = parseInt(monthMatch[3], 10);
+      if (mStr && isValidCalendarDate(d, parseInt(mStr, 10), y)) {
+        return `${String(d).padStart(2, '0')}/${mStr}/${y}`;
+      }
+      if (mStr) return '';
     }
 
     // Bengali month names: ১৪ মে ১৯৮৫ / ১২ই জানুয়ারি, ২০১২
@@ -4194,20 +4273,33 @@
       ['মে', '05'], ['জুন', '06'], ['জুল', '07'], ['আগ', '08'],
       ['সেপ', '09'], ['অক্ট', '10'], ['অক', '10'], ['নভ', '11'], ['ডিস', '12']
     ];
-    const bnMatch = str.match(/^(\d{1,2})[\s\-,/.]+([\u0980-\u09FF]+)[\s\-,/.]+(\d{4})/);
+    const bnMatch = str.match(/(?:^|\s)(\d{1,2})[\s\-,/.]+([\u0980-\u09FF]+)[\s\-,/.]+(\d{4})(?:\b|$)/);
     if (bnMatch) {
+      const d = parseInt(bnMatch[1], 10);
       const hit = bnPrefixes.find(([p]) => bnMatch[2].startsWith(p));
-      if (hit) return `${bnMatch[1].padStart(2, '0')}/${hit[1]}/${bnMatch[3]}`;
+      const y = parseInt(bnMatch[3], 10);
+      if (hit && isValidCalendarDate(d, parseInt(hit[1], 10), y)) {
+        return `${String(d).padStart(2, '0')}/${hit[1]}/${y}`;
+      }
+      if (hit) return '';
     }
 
-    // Standard DD/MM/YYYY
+    // Standard DD/MM/YYYY with swapped MM/DD/YYYY fix
     str = str.replace(/[-\.]/g, '/');
-    const dmyMatch = str.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    const dmyMatch = str.match(/(?:^|[^\d])(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[^\d]|$)/);
     if (dmyMatch) {
-      return `${dmyMatch[1].padStart(2, '0')}/${dmyMatch[2].padStart(2, '0')}/${dmyMatch[3]}`;
+      let d = parseInt(dmyMatch[1], 10);
+      let m = parseInt(dmyMatch[2], 10);
+      const y = parseInt(dmyMatch[3], 10);
+      if (d <= 12 && m > 12 && m <= 31) {
+        const tmp = d; d = m; m = tmp;
+      }
+      return isValidCalendarDate(d, m, y)
+        ? `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`
+        : '';
     }
 
-    return str;
+    return '';
   }
 
   // Fast, layout-thrashing-free family ID lookup with short-lived cache
@@ -4692,7 +4784,12 @@
       const lng = lastCapturedHouseGps?.lng || 89.644;
       const accuracy = lastCapturedHouseGps?.accuracy || 15;
       const plusCode = lastCapturedHouseGps?.plusCode || encodePlusCode(lat, lng);
-      const nowIso = new Date().toISOString();
+      const nowMs = Date.now();
+      const nowIso = new Date(nowMs).toISOString();
+      const curTimer = getPortalSurveyTimerState() || startPortalSurveyTimer({ docId: rawId, applicantName: lady, startReason: 'house_note_save' });
+      const timerStartMs = curTimer?.startedAtMs || nowMs;
+      const timerDurationSec = Math.max(0, Math.round((nowMs - timerStartMs) / 1000));
+      const timerDurationLabel = formatPortalTimerDurationLabel(timerDurationSec);
 
       const houseObj = {
         docId: rawId,
@@ -4703,6 +4800,12 @@
         notes,
         issues,
         survey_status: surveyStatus,
+        survey_session_id: curTimer?.sessionId || '',
+        survey_started_at: new Date(timerStartMs).toISOString(),
+        survey_ended_at: nowIso,
+        survey_duration_sec: timerDurationSec,
+        survey_duration_label: timerDurationLabel,
+        survey_timer_status: 'ended',
         lat,
         lng,
         accuracy,
@@ -4719,6 +4822,12 @@
           mobile_number: { stringValue: phone },
           notes: { stringValue: notes },
           survey_status: { stringValue: surveyStatus },
+          survey_session_id: { stringValue: curTimer?.sessionId || '' },
+          survey_started_at: { timestampValue: new Date(timerStartMs).toISOString() },
+          survey_ended_at: { timestampValue: nowIso },
+          survey_duration_sec: { integerValue: String(timerDurationSec) },
+          survey_duration_label: { stringValue: timerDurationLabel },
+          survey_timer_status: { stringValue: 'ended' },
           lat: { doubleValue: lat },
           lng: { doubleValue: lng },
           accuracy: { integerValue: String(accuracy) },
@@ -4740,13 +4849,20 @@
 
         sendRoomMessage({
           type: 'survey_house_saved',
-          text: `📍 বাড়ি সেভ করা হয়েছে: ${lady} (${isBlocked ? '🔴 ব্লকড' : '🟠 সমস্যাযুক্ত'})`,
+          text: `📍 বাড়ি সেভ করা হয়েছে: ${lady} (${isBlocked ? '🔴 ব্লকড' : '🟠 সমস্যাযুক্ত'}) • ⏱️ ${timerDurationLabel}`,
           payload: houseObj
+        });
+        endPortalSurveyTimer('house_note_saved', {
+          endedAtMs: nowMs,
+          docId: rawId,
+          applicantName: lady,
+          surveyStatus,
+          skipDocPatch: true
         });
       } catch (_) {}
 
       closeModal();
-      showToast(`📍 ${lady}-এর বাড়ি সমস্যাযুক্ত হিসেবে ম্যাপে সংরক্ষিত!`);
+      showToast(`📍 ${lady}-এর বাড়ি সমস্যাযুক্ত হিসেবে ম্যাপে সংরক্ষিত! (⏱️ ${timerDurationLabel})`);
     };
   }
 
@@ -9640,12 +9756,15 @@
     const s = collectFullFamilyCardSummary();
 
     const headerColor = s.readinessPct >= 85 && s.blockers.length === 0 ? '#15803d' : (s.readinessPct >= 50 ? '#b45309' : '#b91c1c');
+    const curTimerSnap = getPortalSurveyTimerState();
+    const curTimerSec = getPortalTimerElapsedSec(curTimerSnap);
+    const curTimerLabel = curTimerSnap ? `${curTimerSnap.status === 'ended' ? '✅ শেষ সময়' : '⏱️ চলমান সময়'}: ${formatPortalTimerDurationLabel(curTimerSec)}` : '⏱️ সময়: ০০:০০';
     let html = `
       <div class="fc-sum-card" style="border-color: ${headerColor}; background: #f8fafc;">
         <div class="fc-sum-row">
           <div>
             <div style="font-weight: 800; font-size: 13.5px; color: #0f172a;">🆔 পরিবার আইডি: ${escapeHtml(s.familyId || 'নেই')}</div>
-            <div style="font-size: 11.5px; color: #475569; margin-top: 2px;">👤 ${escapeHtml(s.applicant.nameBn || 'আবেদনকারী অজানা')} • 📱 ${escapeHtml(s.applicant.mobile || 'নেই')}</div>
+            <div style="font-size: 11.5px; color: #475569; margin-top: 2px;">👤 ${escapeHtml(s.applicant.nameBn || 'আবেদনকারী অজানা')} • 📱 ${escapeHtml(s.applicant.mobile || 'নেই')} • <b>${escapeHtml(curTimerLabel)}</b></div>
           </div>
           <div style="text-align: right;">
             <span style="background: ${headerColor}; color: #fff; padding: 4px 10px; border-radius: 20px; font-weight: 800; font-size: 12px;">প্রস্তুতি ${toBnDigits(s.readinessPct)}%</span>
@@ -9863,9 +9982,636 @@
     if (summaryBtn.className !== cls) summaryBtn.className = cls;
   }
 
+  // ==========================================================================
+  // ⏱️ SINGLE-SURVEY AUTOMATIC TIMER & FIRESTORE DB PERSISTENCE ENGINE
+  // ==========================================================================
+  const PORTAL_TIMER_STORAGE_KEY = 'fc_portal_active_survey_timer_v1';
+  const PORTAL_TIMER_PENDING_KEY = 'fc_portal_pending_survey_timers_v1';
+  const PORTAL_TIMER_HISTORY_KEY = 'fc_portal_survey_timer_history_v1';
+  const FIRESTORE_SURVEY_TIMERS_LOG_BASE = 'https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/SURVEY_TIMERS/logs';
+  const FIRESTORE_SURVEY_TIMERS_COLLECTION_BASE = 'https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/survey_timers';
+  const EDGE_SURVEY_TIMER_API = 'https://familycard-10n.pages.dev/api/survey-timer';
+
+  let activePortalTimer = null;
+  let portalTimerTickInterval = null;
+  let portalTimerHooksAttached = false;
+  let pendingPortalSubmitAt = 0;
+
+  function formatPortalTimerClock(totalSec = 0) {
+    const sec = Math.max(0, Math.round(Number(totalSec) || 0));
+    const hrs = Math.floor(sec / 3600);
+    const mins = Math.floor((sec % 3600) / 60);
+    const rem = sec % 60;
+    const pad = (n) => toBnDigits(String(n).padStart(2, '0'));
+    return hrs > 0 ? `${pad(hrs)}:${pad(mins)}:${pad(rem)}` : `${pad(mins)}:${pad(rem)}`;
+  }
+
+  function formatPortalTimerDurationLabel(totalSec = 0) {
+    const sec = Math.max(0, Math.round(Number(totalSec) || 0));
+    const hrs = Math.floor(sec / 3600);
+    const mins = Math.floor((sec % 3600) / 60);
+    const rem = sec % 60;
+    if (hrs > 0) return `${toBnDigits(hrs)} ঘঃ ${toBnDigits(mins)} মিঃ ${toBnDigits(rem)} সেঃ`;
+    if (mins > 0) return `${toBnDigits(mins)} মিঃ ${toBnDigits(rem)} সেঃ`;
+    return `${toBnDigits(sec)} সেঃ`;
+  }
+
+  function getPortalTimerElapsedSec(state = activePortalTimer, nowMs = Date.now()) {
+    if (!state || !state.startedAtMs) return 0;
+    if (state.status === 'ended') {
+      if (typeof state.durationSec === 'number') return Math.max(0, state.durationSec);
+      if (state.endedAtMs) return Math.max(0, Math.round((state.endedAtMs - state.startedAtMs) / 1000));
+    }
+    return Math.max(0, Math.round((nowMs - state.startedAtMs) / 1000));
+  }
+
+  function getPortalSurveyTimerState() {
+    if (activePortalTimer) return activePortalTimer;
+    try {
+      const raw = localStorage.getItem(PORTAL_TIMER_STORAGE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.sessionId) activePortalTimer = parsed;
+    } catch (_) {}
+    return activePortalTimer;
+  }
+
+  function savePortalSurveyTimerState(state) {
+    activePortalTimer = state;
+    try {
+      if (state) localStorage.setItem(PORTAL_TIMER_STORAGE_KEY, JSON.stringify(state));
+      else localStorage.removeItem(PORTAL_TIMER_STORAGE_KEY);
+    } catch (_) {}
+  }
+
+  function pushPortalTimerLocalHistory(entry) {
+    if (!entry || !entry.sessionId) return;
+    try {
+      const arr = JSON.parse(localStorage.getItem(PORTAL_TIMER_HISTORY_KEY) || '[]');
+      const next = Array.isArray(arr) ? arr.filter((x) => x && x.sessionId !== entry.sessionId) : [];
+      next.unshift(entry);
+      localStorage.setItem(PORTAL_TIMER_HISTORY_KEY, JSON.stringify(next.slice(0, 60)));
+    } catch (_) {}
+  }
+
+  function updateExtTimerBadgeUI() {
+    const btn = document.getElementById('fc-timer-btn');
+    const st = getPortalSurveyTimerState();
+    const sec = getPortalTimerElapsedSec(st);
+    const clock = formatPortalTimerClock(sec);
+    if (btn) {
+      btn.classList.remove('running', 'ended');
+      let label = `⏱️ ${clock}`;
+      if (st && st.status === 'running') {
+        btn.classList.add('running');
+        label = `⏱️ ${clock}`;
+      } else if (st && st.status === 'ended') {
+        btn.classList.add('ended');
+        label = `✅ ${clock}`;
+      }
+      if (btn.dataset.lastLabel !== label) {
+        btn.dataset.lastLabel = label;
+        btn.innerHTML = `<span>${label}</span>`;
+      }
+    }
+    const mClock = document.getElementById('fc-ext-tm-clock');
+    const mStatus = document.getElementById('fc-ext-tm-status');
+    if (mClock) mClock.textContent = clock;
+    if (mStatus) {
+      mStatus.textContent = st && st.status === 'running'
+        ? `চলমান (${formatPortalTimerDurationLabel(sec)})`
+        : (st && st.status === 'ended' ? `সম্পন্ন: ${formatPortalTimerDurationLabel(sec)}` : 'প্রস্তুত');
+    }
+  }
+
+  function startPortalTimerTicker() {
+    if (portalTimerTickInterval) clearInterval(portalTimerTickInterval);
+    portalTimerTickInterval = setInterval(() => {
+      const st = getPortalSurveyTimerState();
+      if (st && st.status === 'running') updateExtTimerBadgeUI();
+    }, 1000);
+  }
+
+  function startPortalSurveyTimer(meta = {}) {
+    const prev = getPortalSurveyTimerState();
+    if (meta.archivePreviousIfMeaningful && prev && prev.status === 'running') {
+      const prevSec = getPortalTimerElapsedSec(prev);
+      if (prevSec >= 3 && (prev.familyId || prev.docId || prev.docNumber || prev.applicantName)) {
+        endPortalSurveyTimer('new_survey_rollover', { skipBroadcast: true });
+      }
+    }
+    const now = Date.now();
+    const curUrlKey = (window.location?.pathname || '') + (window.location?.search || '');
+    const state = {
+      sessionId: meta.sessionId || `srv_${now}_${Math.random().toString(36).slice(2, 7)}`,
+      status: 'running',
+      startedAtMs: Number(meta.startedAtMs) > 0 ? Number(meta.startedAtMs) : now,
+      endedAtMs: null,
+      durationSec: 0,
+      durationMs: 0,
+      durationLabel: '০ সেঃ',
+      familyId: String(meta.familyId || '').trim(),
+      docId: String(meta.docId || meta.familyId || '').trim(),
+      docNumber: String(meta.docNumber || '').trim(),
+      applicantName: String(meta.applicantName || '').trim(),
+      docType: String(meta.docType || '').trim(),
+      portalUrlKey: String(meta.portalUrlKey || curUrlKey),
+      startReason: String(meta.startReason || 'portal_new_survey'),
+      endReason: '',
+      readinessPct: 0,
+      pendingSubmitAt: 0,
+      syncedToDb: false
+    };
+    pendingPortalSubmitAt = 0;
+    savePortalSurveyTimerState(state);
+    startPortalTimerTicker();
+    updateExtTimerBadgeUI();
+    return state;
+  }
+
+  function adoptOrStartPortalTimerForScan(data, meta = {}) {
+    if (!data) return getPortalSurveyTimerState();
+    const curFid = scrapeFamilyId() || data.family_id || '';
+    const docNumber = String(data.doc_number || data.nid_number || data.birth_reg_no || '').trim();
+    const applicantName = String(data.name_bn || data.name_en || '').trim();
+    const docType = String(data.doc_type || 'nid').trim();
+    const st = getPortalSurveyTimerState();
+    const now = Date.now();
+    const validRemoteStart = Number(meta.remoteStartedAtMs) > 0 && (now - Number(meta.remoteStartedAtMs)) < 6 * 3600 * 1000
+      ? Number(meta.remoteStartedAtMs)
+      : 0;
+
+    if (!st || st.status === 'ended') {
+      return startPortalSurveyTimer({
+        sessionId: validRemoteStart && meta.remoteSessionId ? meta.remoteSessionId : undefined,
+        startedAtMs: validRemoteStart || now,
+        familyId: curFid,
+        docId: curFid || docNumber,
+        docNumber,
+        applicantName,
+        docType,
+        startReason: meta.startReason || 'ocr_scan'
+      });
+    }
+
+    if (curFid && st.familyId && curFid !== st.familyId) {
+      return startPortalSurveyTimer({
+        archivePreviousIfMeaningful: true,
+        sessionId: validRemoteStart && meta.remoteSessionId ? meta.remoteSessionId : undefined,
+        startedAtMs: validRemoteStart || now,
+        familyId: curFid,
+        docId: curFid || docNumber,
+        docNumber,
+        applicantName,
+        docType,
+        startReason: meta.startReason || 'new_family_scan'
+      });
+    }
+
+    if (validRemoteStart && validRemoteStart < st.startedAtMs && (st.startedAtMs - validRemoteStart) < 3600000) {
+      st.startedAtMs = validRemoteStart;
+      if (meta.remoteSessionId) st.sessionId = meta.remoteSessionId;
+    }
+    if (curFid && !st.familyId) st.familyId = curFid;
+    if (docNumber) st.docNumber = docNumber;
+    if (!st.docId && (curFid || docNumber)) st.docId = curFid || docNumber;
+    if (applicantName) st.applicantName = applicantName;
+    if (docType) st.docType = docType;
+    savePortalSurveyTimerState(st);
+    updateExtTimerBadgeUI();
+    return st;
+  }
+
+  async function persistPortalSurveyTimerToDb(entry, opts = {}) {
+    if (!entry || !entry.sessionId) return false;
+    const payload = {
+      sessionId: entry.sessionId,
+      familyId: entry.familyId || '',
+      docId: entry.docId || entry.familyId || entry.docNumber || '',
+      applicantName: entry.applicantName || '',
+      docType: entry.docType || '',
+      source: 'extension',
+      roomCode: typeof roomCode === 'string' ? roomCode : '',
+      deviceName: typeof myDeviceName === 'string' ? myDeviceName : '',
+      surveyStatus: entry.surveyStatus || 'COMPLETED',
+      status: 'ended',
+      readinessPct: Number(entry.readinessPct || 0),
+      startReason: entry.startReason || 'portal_survey',
+      endReason: entry.endReason || 'portal_submit',
+      startedAtMs: entry.startedAtMs,
+      endedAtMs: entry.endedAtMs,
+      durationMs: entry.durationMs,
+      durationSec: entry.durationSec,
+      durationLabel: entry.durationLabel
+    };
+
+    try {
+      const q = JSON.parse(localStorage.getItem(PORTAL_TIMER_PENDING_KEY) || '[]');
+      const next = q.filter((x) => x && x.sessionId !== payload.sessionId);
+      next.push(payload);
+      localStorage.setItem(PORTAL_TIMER_PENDING_KEY, JSON.stringify(next.slice(-30)));
+    } catch (_) {}
+
+    const fields = {
+      session_id: { stringValue: payload.sessionId },
+      family_id: { stringValue: payload.familyId },
+      doc_id: { stringValue: payload.docId },
+      applicant_name: { stringValue: payload.applicantName },
+      doc_type: { stringValue: payload.docType },
+      source: { stringValue: payload.source },
+      room_code: { stringValue: payload.roomCode },
+      device_name: { stringValue: payload.deviceName },
+      survey_status: { stringValue: payload.surveyStatus },
+      timer_status: { stringValue: 'ended' },
+      readiness_pct: { integerValue: String(payload.readinessPct) },
+      start_reason: { stringValue: payload.startReason },
+      end_reason: { stringValue: payload.endReason },
+      started_at_ms: { integerValue: String(payload.startedAtMs) },
+      ended_at_ms: { integerValue: String(payload.endedAtMs) },
+      started_at: { timestampValue: new Date(payload.startedAtMs).toISOString() },
+      ended_at: { timestampValue: new Date(payload.endedAtMs).toISOString() },
+      duration_ms: { integerValue: String(payload.durationMs) },
+      duration_sec: { integerValue: String(payload.durationSec) },
+      duration_label: { stringValue: payload.durationLabel }
+    };
+    const mask = Object.keys(fields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
+    let synced = false;
+    try {
+      const bodyStr = JSON.stringify({ fields });
+      const [fsRes] = await Promise.all([
+        fetch(`${FIRESTORE_SURVEY_TIMERS_LOG_BASE}/${encodeURIComponent(payload.sessionId)}?${mask}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: bodyStr,
+          keepalive: true
+        }).catch(() => null),
+        fetch(`${FIRESTORE_SURVEY_TIMERS_COLLECTION_BASE}/${encodeURIComponent(payload.sessionId)}?${mask}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: bodyStr,
+          keepalive: true
+        }).catch(() => null)
+      ]);
+      if (fsRes && fsRes.ok) synced = true;
+
+      const targetDocIds = !opts.skipDocPatch
+        ? Array.from(new Set([payload.familyId, payload.docId].filter((id) => id && id !== 'SURVEY_TIMERS')))
+        : [];
+      if (targetDocIds.length > 0) {
+        const docFields = {
+          survey_session_id: { stringValue: payload.sessionId },
+          survey_started_at: { timestampValue: new Date(payload.startedAtMs).toISOString() },
+          survey_ended_at: { timestampValue: new Date(payload.endedAtMs).toISOString() },
+          survey_duration_sec: { integerValue: String(payload.durationSec) },
+          survey_duration_label: { stringValue: payload.durationLabel },
+          survey_timer_status: { stringValue: 'ended' }
+        };
+        const docMask = Object.keys(docFields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
+        for (const targetId of targetDocIds) {
+          fetch(`https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(targetId)}?${docMask}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fields: docFields }),
+            keepalive: true
+          }).catch(() => {});
+          fetch(`https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(targetId)}/logs/${encodeURIComponent(`timer_${payload.sessionId}`)}?${mask}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: bodyStr,
+            keepalive: true
+          }).catch(() => {});
+        }
+      }
+
+      const edgeRes = await fetch(EDGE_SURVEY_TIMER_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        keepalive: true
+      }).catch(() => null);
+      if (edgeRes && edgeRes.ok) synced = true;
+    } catch (_) {}
+
+    if (synced) {
+      try {
+        const q = JSON.parse(localStorage.getItem(PORTAL_TIMER_PENDING_KEY) || '[]');
+        localStorage.setItem(PORTAL_TIMER_PENDING_KEY, JSON.stringify(q.filter((x) => x && x.sessionId !== payload.sessionId)));
+      } catch (_) {}
+    }
+    return synced;
+  }
+
+  async function flushPendingPortalTimers() {
+    try {
+      const q = JSON.parse(localStorage.getItem(PORTAL_TIMER_PENDING_KEY) || '[]');
+      if (!Array.isArray(q) || q.length === 0) return;
+      for (const item of q.slice(0, 10)) {
+        await persistPortalSurveyTimerToDb(item, { skipDocPatch: true });
+      }
+    } catch (_) {}
+  }
+
+  async function endPortalSurveyTimer(endReason = 'portal_submit', opts = {}) {
+    const st = getPortalSurveyTimerState();
+    if (!st) return null;
+    if (st.status === 'ended' && !opts.forceUpdate) return st;
+
+    const now = Number(opts.endedAtMs) > 0 ? Number(opts.endedAtMs) : Date.now();
+    const endedAtMs = Math.max(st.startedAtMs, now);
+    const durationMs = Math.max(0, endedAtMs - st.startedAtMs);
+    const durationSec = Math.round(durationMs / 1000);
+    const durationLabel = formatPortalTimerDurationLabel(durationSec);
+    const summarySnap = typeof collectFullFamilyCardSummary === 'function' ? collectFullFamilyCardSummary() : null;
+
+    const finalState = {
+      ...st,
+      status: 'ended',
+      endedAtMs,
+      durationMs,
+      durationSec,
+      durationLabel,
+      familyId: String(opts.familyId || st.familyId || summarySnap?.familyId || '').trim(),
+      docId: String(opts.docId || st.docId || opts.familyId || st.familyId || summarySnap?.familyId || summarySnap?.applicant?.nid || st.docNumber || '').trim(),
+      applicantName: String(opts.applicantName || st.applicantName || summarySnap?.applicant?.nameBn || '').trim(),
+      readinessPct: Number(opts.readinessPct ?? summarySnap?.readinessPct ?? st.readinessPct ?? 0),
+      surveyStatus: String(opts.surveyStatus || ((summarySnap?.readinessPct || 0) >= 85 && (summarySnap?.blockers?.length || 0) === 0 ? 'COMPLETED' : 'ENDED')),
+      endReason: String(endReason || 'portal_submit'),
+      syncedToDb: false
+    };
+    savePortalSurveyTimerState(finalState);
+    pushPortalTimerLocalHistory(finalState);
+    updateExtTimerBadgeUI();
+
+    if (!opts.skipBroadcast && typeof sendRoomMessage === 'function') {
+      Promise.resolve(sendRoomMessage({
+        type: 'survey_timer_ended',
+        text: `⏱️ জরিপ সম্পন্ন (${finalState.applicantName || finalState.familyId || finalState.docId || 'সার্ভে'}): ${durationLabel}`,
+        payload: {
+          sessionId: finalState.sessionId,
+          familyId: finalState.familyId,
+          docId: finalState.docId,
+          applicantName: finalState.applicantName,
+          endedAtMs: finalState.endedAtMs,
+          durationSec: finalState.durationSec,
+          durationLabel: finalState.durationLabel,
+          endReason: finalState.endReason
+        }
+      })).catch(() => {});
+    }
+
+    const synced = await persistPortalSurveyTimerToDb(finalState, { skipDocPatch: Boolean(opts.skipDocPatch) });
+    if (activePortalTimer && activePortalTimer.sessionId === finalState.sessionId) {
+      activePortalTimer.syncedToDb = synced;
+      savePortalSurveyTimerState(activePortalTimer);
+      updateExtTimerBadgeUI();
+    }
+    return finalState;
+  }
+
+  function isPortalSurveyFormVisible() {
+    return Boolean(document.querySelector('[data-family-card-tab], .family-card-form-step, .family-card-form-footer__btn--submit, #tab0, #tab1'));
+  }
+
+  function isStep0BlankForNewSurvey() {
+    const tab0 = document.querySelector('[data-family-card-tab="0"]');
+    if (!tab0 || !isPanelActiveVisible(tab0)) return false;
+    const inputs = Array.from(tab0.querySelectorAll('input')).filter(i => !/hidden|checkbox|radio|button|submit|file/i.test(i.type || ''));
+    if (inputs.length === 0) return false;
+    return inputs.every(i => !String(i.value || '').trim());
+  }
+
+  function syncPortalSurveyLifecycle() {
+    const formOpen = isPortalSurveyFormVisible();
+    const curFid = scrapeFamilyId() || '';
+    const curUrlKey = (window.location?.pathname || '') + (window.location?.search || '');
+    const st = getPortalSurveyTimerState();
+    const now = Date.now();
+
+    if (formOpen) {
+      if (!st) {
+        startPortalSurveyTimer({ familyId: curFid, portalUrlKey: curUrlKey, startReason: 'portal_form_open' });
+        return;
+      }
+      if (st.status === 'running') {
+        if (st.familyId && curFid && curFid !== st.familyId) {
+          startPortalSurveyTimer({
+            archivePreviousIfMeaningful: true,
+            familyId: curFid,
+            portalUrlKey: curUrlKey,
+            startReason: 'new_family_id'
+          });
+          return;
+        }
+        let updated = false;
+        if (!st.familyId && curFid) {
+          st.familyId = curFid;
+          if (!st.docId) st.docId = curFid;
+          updated = true;
+        }
+        if (lastExtractedData?.name_bn && !st.applicantName) {
+          st.applicantName = lastExtractedData.name_bn;
+          updated = true;
+        }
+        if (updated) savePortalSurveyTimerState(st);
+
+        const activeDialogText = document.querySelector('.v-snack--active, .swal2-popup')?.textContent || '';
+        if (/সফলভাবে\s*(?:জমা|দাখিল|সংরক্ষণ)|আবেদন\s*সফল|submitted\s*successfully/i.test(activeDialogText)) {
+          endPortalSurveyTimer('portal_success_toast');
+        }
+        return;
+      }
+      // Ended state: only start fresh when a genuinely NEW survey starts
+      const msSinceEnd = now - Number(st.endedAtMs || 0);
+      if (msSinceEnd > 2200) {
+        if (curFid && curFid !== st.familyId) {
+          startPortalSurveyTimer({ familyId: curFid, portalUrlKey: curUrlKey, startReason: 'new_family_id_after_end' });
+          return;
+        }
+        if (curUrlKey !== st.portalUrlKey) {
+          startPortalSurveyTimer({ familyId: curFid, portalUrlKey: curUrlKey, startReason: 'new_route_after_end' });
+          return;
+        }
+        if (!curFid && (st.familyId || st.docNumber) && msSinceEnd > 3200 && isStep0BlankForNewSurvey()) {
+          startPortalSurveyTimer({ familyId: '', portalUrlKey: curUrlKey, startReason: 'step0_reset_after_end' });
+        }
+      }
+    } else if (st && st.status === 'running' && pendingPortalSubmitAt > 0 && now - pendingPortalSubmitAt < 120000) {
+      endPortalSurveyTimer('portal_submit_navigated');
+    }
+  }
+
+  function attachPortalSubmitTimerHooks() {
+    if (portalTimerHooksAttached) return;
+    portalTimerHooksAttached = true;
+
+    document.addEventListener('click', (e) => {
+      const btn = e.target?.closest?.('button, [role="button"], .v-btn');
+      if (!btn) return;
+      if (btn.closest('[id^="fc-"], .fc-fab-row')) return;
+
+      const isDisabled = Boolean(btn.disabled || btn.classList.contains('v-btn--disabled'));
+      const txt = normalizeBn(btn.textContent || '');
+      const isSubmitBtn = btn.matches('.family-card-form-footer__btn--submit')
+        || (btn.closest('.family-card-form-footer') && /দাখিল|সাবমিট|জমা|Submit/i.test(txt));
+
+      if (isSubmitBtn && !isDisabled) {
+        pendingPortalSubmitAt = Date.now();
+        const st = getPortalSurveyTimerState();
+        if (st && st.status === 'running') {
+          st.pendingSubmitAt = pendingPortalSubmitAt;
+          savePortalSurveyTimerState(st);
+          endPortalSurveyTimer('portal_submit', { endedAtMs: pendingPortalSubmitAt }).then((done) => {
+            if (done) showToast(`⏱️ জরিপ সম্পন্ন: ${done.durationLabel} (ডাটাবেসে সংরক্ষিত)`);
+          });
+        }
+        return;
+      }
+
+      const inDialog = btn.closest('.v-dialog--active, .swal2-popup');
+      if (inDialog && pendingPortalSubmitAt > 0 && Date.now() - pendingPortalSubmitAt < 60000) {
+        if (/না|বাতিল|বন্ধ|cancel|close/i.test(txt)) {
+          const st = getPortalSurveyTimerState();
+          if (st && st.status === 'ended' && st.endReason === 'portal_submit') {
+            st.status = 'running';
+            st.endedAtMs = null;
+            st.endReason = '';
+            pendingPortalSubmitAt = 0;
+            savePortalSurveyTimerState(st);
+            startPortalTimerTicker();
+            updateExtTimerBadgeUI();
+          }
+        } else if (/হ্যাঁ|নিশ্চিত|দাখিল|জমা|সাবমিট|ok|confirm|yes/i.test(txt)) {
+          endPortalSurveyTimer('portal_submit_confirmed', { forceUpdate: true });
+        }
+      }
+    }, true);
+
+    const wrapHistory = (fnName) => {
+      const orig = history[fnName];
+      if (typeof orig === 'function' && !orig.__fcTimerWrapped) {
+        history[fnName] = function (...args) {
+          const ret = orig.apply(this, args);
+          setTimeout(syncPortalSurveyLifecycle, 120);
+          return ret;
+        };
+        history[fnName].__fcTimerWrapped = true;
+      }
+    };
+    wrapHistory('pushState');
+    wrapHistory('replaceState');
+    window.addEventListener('popstate', () => setTimeout(syncPortalSurveyLifecycle, 120));
+    window.addEventListener('hashchange', () => setTimeout(syncPortalSurveyLifecycle, 120));
+    window.addEventListener('pagehide', () => { flushPendingPortalTimers(); });
+  }
+
+  async function openExtTimerModal() {
+    let tm = document.getElementById('fc-timer-modal');
+    if (!tm) {
+      tm = document.createElement('div');
+      tm.id = 'fc-timer-modal';
+      tm.className = 'fc-modal-overlay';
+      tm.style.display = 'none';
+      tm.innerHTML = `
+        <div class="fc-modal-container" style="max-width:460px;">
+          <div class="fc-modal-header" style="background:linear-gradient(135deg,#0f172a,#1e3a8a);">
+            <h3>⏱️ সার্ভে সময় ও ডাটাবেস হিসাব</h3>
+            <span class="fc-modal-close" id="fc-ext-tm-close">&times;</span>
+          </div>
+          <div class="fc-modal-body" style="display:flex; flex-direction:column; gap:10px; max-height:78vh; overflow-y:auto;">
+            <div style="background:#f8fafc; border:1.5px solid #cbd5e1; border-radius:10px; padding:10px 12px; display:flex; justify-content:space-between; align-items:center; gap:8px;">
+              <div>
+                <div style="font-size:11.5px; color:#475569; font-weight:700;">বর্তমান সার্ভে অবস্থা</div>
+                <div id="fc-ext-tm-status" style="font-size:13px; font-weight:800; color:#0f172a;">প্রস্তুত</div>
+              </div>
+              <div id="fc-ext-tm-clock" style="font-family:monospace; font-size:20px; font-weight:800; color:#0f766e; background:#f0fdf4; border:1px solid #86efac; padding:4px 10px; border-radius:8px;">০০:০০</div>
+            </div>
+            <div style="display:flex; gap:6px;">
+              <button type="button" id="fc-ext-tm-start" style="flex:1; background:#16a34a; color:#fff; border:none; border-radius:8px; padding:9px; font-weight:700; font-size:12px; cursor:pointer;">▶️ নতুন সার্ভে শুরু</button>
+              <button type="button" id="fc-ext-tm-end" style="flex:1; background:#dc2626; color:#fff; border:none; border-radius:8px; padding:9px; font-weight:700; font-size:12px; cursor:pointer;">⏹️ শেষ ও সেভ</button>
+            </div>
+            <div id="fc-ext-tm-stats" style="font-size:11.5px; font-weight:700; color:#1e3a8a;">⏳ ডাটাবেস হিসাব লোড হচ্ছে...</div>
+            <div id="fc-ext-tm-list" style="display:flex; flex-direction:column; gap:5px;"></div>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(tm);
+      tm.querySelector('#fc-ext-tm-close').onclick = () => { tm.style.display = 'none'; };
+      tm.onclick = (e) => { if (e.target === tm) tm.style.display = 'none'; };
+      tm.querySelector('#fc-ext-tm-start').onclick = () => {
+        startPortalSurveyTimer({ familyId: scrapeFamilyId() || '', startReason: 'manual_start' });
+        showToast('⏱️ নতুন সার্ভে টাইমার শুরু হয়েছে!');
+        updateExtTimerBadgeUI();
+      };
+      tm.querySelector('#fc-ext-tm-end').onclick = async () => {
+        const done = await endPortalSurveyTimer('manual_end');
+        if (done) {
+          showToast(`✅ জরিপ শেষ: ${done.durationLabel} (ডাটাবেসে সেভ)`);
+          loadExtTimerModalList();
+        }
+      };
+    }
+    tm.style.display = 'flex';
+    updateExtTimerBadgeUI();
+    loadExtTimerModalList();
+  }
+
+  async function loadExtTimerModalList() {
+    const statsEl = document.getElementById('fc-ext-tm-stats');
+    const listEl = document.getElementById('fc-ext-tm-list');
+    if (!statsEl || !listEl) return;
+    let localArr = [];
+    try {
+      const r = JSON.parse(localStorage.getItem(PORTAL_TIMER_HISTORY_KEY) || '[]');
+      if (Array.isArray(r)) localArr = r;
+    } catch (_) {}
+    let remoteArr = [];
+    try {
+      const resp = await fetch(`${FIRESTORE_SURVEY_TIMERS_LOG_BASE}?pageSize=25&t=${Date.now()}`, { cache: 'no-store' }).catch(() => null);
+      if (resp && resp.ok) {
+        const j = await resp.json().catch(() => ({}));
+        remoteArr = (Array.isArray(j.documents) ? j.documents : []).map((d) => {
+          const f = d.fields || {};
+          return {
+            sessionId: f.session_id?.stringValue || d.name?.split('/').pop() || '',
+            familyId: f.family_id?.stringValue || '',
+            docId: f.doc_id?.stringValue || '',
+            applicantName: f.applicant_name?.stringValue || '',
+            source: f.source?.stringValue || '',
+            endedAtMs: Number(f.ended_at_ms?.integerValue || f.ended_at_ms?.doubleValue || 0),
+            durationSec: Number(f.duration_sec?.integerValue || 0),
+            durationLabel: f.duration_label?.stringValue || ''
+          };
+        });
+      }
+    } catch (_) {}
+    const merged = new Map();
+    for (const x of [...localArr, ...remoteArr]) {
+      if (x && x.sessionId) merged.set(x.sessionId, x);
+    }
+    const items = Array.from(merged.values()).sort((a, b) => (b.endedAtMs || 0) - (a.endedAtMs || 0));
+    if (items.length === 0) {
+      statsEl.textContent = '📊 এখনো কোনো সার্ভের সময় ডাটাবেসে নেই';
+      listEl.innerHTML = '';
+      return;
+    }
+    const avg = Math.round(items.reduce((a, b) => a + (Number(b.durationSec) || 0), 0) / items.length);
+    statsEl.textContent = `📊 মোট ${toBnDigits(items.length)}টি সার্ভে • গড় সময়: ${formatPortalTimerDurationLabel(avg)}`;
+    listEl.innerHTML = items.slice(0, 15).map((t) => {
+      const who = t.applicantName || t.familyId || t.docId || 'সার্ভে';
+      const dur = t.durationLabel || formatPortalTimerDurationLabel(t.durationSec || 0);
+      return `<div style="display:flex; justify-content:space-between; align-items:center; padding:6px 8px; border-radius:7px; background:#f8fafc; border:1px solid #e2e8f0; font-size:11.5px;"><span>👤 <b>${escapeHtml(who)}</b> <small style="color:#64748b;">(${escapeHtml(t.source || '')})</small></span><b style="color:#0369a1;">⏱️ ${escapeHtml(dur)}</b></div>`;
+    }).join('');
+  }
+
+  attachPortalSubmitTimerHooks();
+  flushPendingPortalTimers();
+  startPortalTimerTicker();
+  updateExtTimerBadgeUI();
+
   // Auto-fill Step 2 (ব্যক্তিগত তথ্য) and Sections 3-9 safely with debounced MutationObserver
   function setupStepObserver() {
     function runExtensionAutomations() {
+      syncPortalSurveyLifecycle();
       if (document.hidden || activeMediaStream) return;
 
       const curFid = scrapeFamilyId() || '';

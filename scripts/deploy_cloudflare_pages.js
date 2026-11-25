@@ -38,7 +38,7 @@ function getAllFiles(dir, base = '') {
     const stat = fs.statSync(full);
     if (stat.isDirectory()) {
       results = results.concat(getAllFiles(full, rel));
-    } else {
+    } else if (item !== '_worker.js') {
       results.push({
         full,
         rel: '/' + rel.replace(/\\/g, '/'),

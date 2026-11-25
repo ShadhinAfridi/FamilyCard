@@ -127,6 +127,14 @@ document.addEventListener('DOMContentLoaded', () => {
       serverUrl, roomCode, deviceName,
       s5MfsAccount, s5Training, s5TransCount, s5AbroadDefault, s5AutoFill
     }, () => {
+      try {
+        const parsedSrv = new URL(serverUrl);
+        if (!['localhost', '127.0.0.1'].includes(parsedSrv.hostname) && chrome.permissions && chrome.permissions.request) {
+          chrome.permissions.request({ origins: [`${parsedSrv.origin}/*`] }, () => {
+            if (chrome.runtime.lastError) {}
+          });
+        }
+      } catch (_) {}
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         if (tabs[0]) {
           chrome.tabs.sendMessage(tabs[0].id, {

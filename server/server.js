@@ -245,7 +245,7 @@ function hasBengaliScript(str) {
 
 const BN_NAME_WORD_MAP = {
   'মোঃ': 'MD.', 'মো:': 'MD.', 'মো.': 'MD.', 'মোহাম্মদ': 'MOHAMMAD', 'মোহাম্মাদ': 'MOHAMMAD', 'মুহাম্মদ': 'MUHAMMAD',
-  'মোছাঃ': 'MST.', 'মোছা:': 'MST.', 'মোছা.': 'MST.', 'মোসাম্মাৎ': 'MOSAMMAT', 'মোসাম্মত': 'MOSAMMAT', 'মোসাঃ': 'MOSA.', 'মোসা:': 'MOSA.',
+  'মোছাঃ': 'MST.', 'মোছা:': 'MST.', 'মোছা.': 'MST.', 'মোসাম্মাৎ': 'MOSAMMAT', 'মোসাম্মৎ': 'MOSAMMAT', 'মোসাম্মত': 'MOSAMMAT', 'মোসাঃ': 'MOSA.', 'মোসা:': 'MOSA.',
   'শ্রী': 'SRI', 'শ্রীমতী': 'SRIMOTI', 'শেখ': 'SHEIKH', 'সৈয়দ': 'SYED', 'সৈয়দ': 'SYED',
   'খন্দকার': 'KHANDAKER', 'চৌধুরী': 'CHOWDHURY', 'মজুমদার': 'MAJUMDER', 'তালুকদার': 'TALUKDER',
   'সরকার': 'SARKAR', 'মন্ডল': 'MONDAL', 'মণ্ডল': 'MONDAL', 'বিশ্বাস': 'BISWAS', 'ভূঁইয়া': 'BHUIYAN', 'ভুঁইয়া': 'BHUIYAN',
@@ -381,11 +381,28 @@ function transliterateBnWordToEn(word) {
     if (ch === '্') {
       const nextC = bare[i + 1] || '';
       if (nextC === 'য') { out += 'Y'; i += 2; lastWasVowel = false; continue; }
-      if (nextC === 'র') { out += 'R'; i += 2; lastWasVowel = false; continue; }
-      if (nextC === 'ব') {
-        if (lastConsStartIdx > 0 && cons[bare[i - 1]]) out += 'W';
+      if (nextC === 'র') {
+        out += 'R';
         i += 2;
-        lastWasVowel = false;
+        const afterCluster = bare[i] || '';
+        if (!kars[afterCluster] && afterCluster !== '্' && afterCluster !== 'ং' && afterCluster !== 'ঃ' && i < bare.length && cons[afterCluster]) {
+          out += 'A';
+          lastWasVowel = true;
+        } else {
+          lastWasVowel = false;
+        }
+        continue;
+      }
+      if (nextC === 'ব') {
+        if (lastConsStartIdx === 0 || (lastConsStartIdx > 0 && cons[bare[i - 1]])) out += 'W';
+        i += 2;
+        const afterCluster = bare[i] || '';
+        if (lastConsStartIdx === 0 && !kars[afterCluster] && afterCluster !== '্' && afterCluster !== 'ং' && afterCluster !== 'ঃ' && i < bare.length && cons[afterCluster]) {
+          out += 'A';
+          lastWasVowel = true;
+        } else {
+          lastWasVowel = false;
+        }
         continue;
       }
       lastWasVowel = false;
@@ -427,34 +444,39 @@ function normalizeEnglishHonorificPrefix(enName, bnName) {
   if (!enName) return enName;
   let res = String(enName).trim();
   const bn = String(bnName || '').trim();
+  const mstPrefixRe = /^(?:(?:MOSAMMAT|MOSAMMOT|MOST|MST|MOSA)\s+|(?:MOST|MST|MOSA)\.(?:\s*|(?=[A-Z])))/i;
+  const mdPrefixRe = /^(?:(?:MD|MOHD|MOHAMMAD|MOHAMMED)\s+|(?:MD|MOHD)\.(?:\s*|(?=[A-Z])))/i;
+  const mosaPrefixRe = /^(?:(?:MOSA|MOSAMMAT|MOSAMMOT)\s+|MOSA\.(?:\s*|(?=[A-Z])))/i;
 
-  // 1. If Bengali starts with মোছাঃ / মোছা: / মোছা. / মোছা
+  // 1. If Bengali starts with মোছাঃ / মোছা: / মোছা. / মোছা -> English MUST start with MST.
   if (/^(?:মোছাঃ|মোছা:|মোছা\.|মোছা\s+)/.test(bn)) {
-    if (/^(?:MOSAMMAT|MOSAMMOT|MOSA\.?|MST\.?)\s+/i.test(res)) {
-      res = res.replace(/^(?:MOSAMMAT|MOSAMMOT|MOSA\.?|MST\.?)\s+/i, 'MST. ');
-    } else if (!/^MST\.\s+/i.test(res)) {
+    if (mstPrefixRe.test(res)) {
+      res = res.replace(mstPrefixRe, 'MST. ');
+    } else {
       res = 'MST. ' + res;
     }
   }
-  // 2. Else if Bengali starts with মোঃ / মো: / মো. / মো
+  // 2. Else if Bengali starts with মোঃ / মো: / মো. / মো -> English MUST start with MD.
   else if (/^(?:মোঃ|মো:|মো\.|মো\s+)/.test(bn)) {
-    if (/^(?:MD\.?|MOHD\.?|MOHAMMAD|MOHAMMED)\s+/i.test(res)) {
-      res = res.replace(/^(?:MD\.?|MOHD\.?|MOHAMMAD|MOHAMMED)\s+/i, 'MD. ');
-    } else if (!/^MD\.\s+/i.test(res)) {
+    if (mdPrefixRe.test(res)) {
+      res = res.replace(mdPrefixRe, 'MD. ');
+    } else {
       res = 'MD. ' + res;
     }
   }
-  // 3. Else if Bengali starts with মোসাঃ / মোসা: / মোসা. / মোসা
+  // 3. Else if Bengali starts with মোসাঃ / মোসা: / মোসা. / মোসা -> preserve MOSA.
   else if (/^(?:মোসাঃ|মোসা:|মোসা\.|মোসা\s+)/.test(bn)) {
-    if (/^(?:MOSA\.?|MOSAMMAT|MOSAMMOT)\s+/i.test(res)) {
-      res = res.replace(/^(?:MOSA\.?|MOSAMMAT|MOSAMMOT)\s+/i, 'MOSA. ');
+    if (mosaPrefixRe.test(res)) {
+      res = res.replace(mosaPrefixRe, 'MOSA. ');
+    } else if (!/^MST\.(?:\s*|(?=[A-Z]))/i.test(res)) {
+      res = 'MOSA. ' + res;
     }
   }
   // 4. Standalone English prefixes without Bengali match
-  else if (/^(?:MOSAMMAT|MOSAMMOT)\s+/i.test(res)) {
-    res = res.replace(/^(?:MOSAMMAT|MOSAMMOT)\s+/i, 'MST. ');
-  } else if (/^MD\s+[A-Z]/i.test(res)) {
-    res = res.replace(/^MD\s+/i, 'MD. ');
+  else if (/^(?:(?:MOSAMMAT|MOSAMMOT|MOST)\s+|(?:MOST|MST)\.(?:\s*|(?=[A-Z])))/i.test(res)) {
+    res = res.replace(/^(?:(?:MOSAMMAT|MOSAMMOT|MOST)\s+|(?:MOST|MST)\.(?:\s*|(?=[A-Z])))/i, 'MST. ');
+  } else if (/^(?:MD\s+|MD\.(?:\s*|(?=[A-Z])))/i.test(res)) {
+    res = res.replace(/^(?:MD\s+|MD\.(?:\s*|(?=[A-Z])))/i, 'MD. ');
   }
 
   return res.toUpperCase().replace(/\s+/g, ' ').trim();
@@ -679,21 +701,38 @@ function needsEnglishCompletion(data = {}) {
   return needsIntelligentCompletion(data);
 }
 
+function isValidCalendarDate(d, m, y) {
+  const day = Number(d);
+  const month = Number(m);
+  const year = Number(y);
+  if (!Number.isInteger(day) || !Number.isInteger(month) || !Number.isInteger(year)) return false;
+  if (year < 1850 || year > 2100 || month < 1 || month > 12 || day < 1) return false;
+  const maxDays = [31, (year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+  return day <= maxDays;
+}
+
 // Helper to standardize Date of Birth (supports English & Bengali months/digits/ordinals) to DD/MM/YYYY
 function standardizeDate(dobStr) {
   if (!dobStr) return '';
   let str = normalizeDigits(dobStr)
     .normalize('NFC')
     .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/^(?:তারিখ|জন্ম\s*তারিখ|date\s*of\s*birth|date|dob)\s*[:\-–]?\s*/i, '')
     .replace(/(\d{1,2})\s*(?:ইং|ই|শে|লা|রা|ঠা|st|nd|rd|th)(?=[\s,./\-\u0980-\u09FF])/gi, '$1 ')
     .replace(/[,]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 
   // ISO: YYYY-MM-DD or YYYY/MM/DD
-  const isoMatch = str.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/);
+  const isoMatch = str.match(/(?:^|\s)(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})(?:\b|$)/);
   if (isoMatch) {
-    return `${isoMatch[3].padStart(2, '0')}/${isoMatch[2].padStart(2, '0')}/${isoMatch[1]}`;
+    const y = parseInt(isoMatch[1], 10);
+    const m = parseInt(isoMatch[2], 10);
+    const d = parseInt(isoMatch[3], 10);
+    if (isValidCalendarDate(d, m, y)) {
+      return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`;
+    }
+    return '';
   }
 
   // English month names: 15 Aug 1985 / 15-August-1985
@@ -701,11 +740,15 @@ function standardizeDate(dobStr) {
     jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
     jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12'
   };
-  const enMatch = str.match(/^(\d{1,2})[\s\-,.]+([a-zA-Z]{3,})[\s\-,.]+(\d{4})/i);
+  const enMatch = str.match(/(?:^|\s)(\d{1,2})[\s\-,.]+([a-zA-Z]{3,})[\s\-,.]+(\d{4})(?:\b|$)/i);
   if (enMatch) {
-    const d = enMatch[1].padStart(2, '0');
-    const m = enMonths[enMatch[2].toLowerCase().substring(0, 3)] || '';
-    if (m) return `${d}/${m}/${enMatch[3]}`;
+    const d = parseInt(enMatch[1], 10);
+    const mStr = enMonths[enMatch[2].toLowerCase().substring(0, 3)] || '';
+    const y = parseInt(enMatch[3], 10);
+    if (mStr && isValidCalendarDate(d, parseInt(mStr, 10), y)) {
+      return `${String(d).padStart(2, '0')}/${mStr}/${y}`;
+    }
+    if (mStr) return '';
   }
 
   // Bengali month names: ১৪ মে ১৯৮৫ / ০৫ জানুয়ারি ২০১০ / ০২-মার্চ-১৯৯০
@@ -714,28 +757,33 @@ function standardizeDate(dobStr) {
     ['মে', '05'], ['জুন', '06'], ['জুল', '07'], ['আগ', '08'],
     ['সেপ', '09'], ['অক', '10'], ['নভ', '11'], ['ডিস', '12']
   ];
-  const bnMatch = str.match(/^(\d{1,2})[\s\-,/.]+([\u0980-\u09FF]+)[\s\-,/.]+(\d{4})/);
+  const bnMatch = str.match(/(?:^|\s)(\d{1,2})[\s\-,/.]+([\u0980-\u09FF]+)[\s\-,/.]+(\d{4})(?:\b|$)/);
   if (bnMatch) {
-    const d = bnMatch[1].padStart(2, '0');
+    const d = parseInt(bnMatch[1], 10);
     const tok = bnMatch[2];
     const hit = bnMonthPrefixes.find(([prefix]) => tok.startsWith(prefix));
-    if (hit) return `${d}/${hit[1]}/${bnMatch[3]}`;
+    const y = parseInt(bnMatch[3], 10);
+    if (hit && isValidCalendarDate(d, parseInt(hit[1], 10), y)) {
+      return `${String(d).padStart(2, '0')}/${hit[1]}/${y}`;
+    }
+    if (hit) return '';
   }
 
   // Standard DD/MM/YYYY with swapped MM/DD/YYYY auto-correction
   str = str.replace(/[-\.]/g, '/');
-  const dmyMatch = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  const dmyMatch = str.match(/(?:^|[^\d])(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[^\d]|$)/);
   if (dmyMatch) {
     let d = parseInt(dmyMatch[1], 10);
     let m = parseInt(dmyMatch[2], 10);
-    const y = dmyMatch[3];
+    const y = parseInt(dmyMatch[3], 10);
     if (d <= 12 && m > 12 && m <= 31) {
       const tmp = d; d = m; m = tmp;
     }
+    if (!isValidCalendarDate(d, m, y)) return '';
     return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`;
   }
 
-  return str;
+  return '';
 }
 
 const OCR_RESPONSE_SCHEMA = {
@@ -967,39 +1015,14 @@ function extractDigitCandidate(raw) {
 function pickBestDocDigits(candidates, preferredLengths, opts = {}) {
   const { excludeSet = null, birthYear = '' } = opts || {};
   const rawList = candidates.map(extractDigitCandidate).filter(Boolean);
-
-  // 1. Direct embedded substring match for 17-digit BRC
-  if (preferredLengths.includes(17)) {
-    for (const cand of candidates) {
-      if (!cand) continue;
-      const norm = normalizeDigits(String(cand));
-      if (birthYear) {
-        const m = norm.match(new RegExp(`(?:^|[^0-9])(${birthYear}\\d{13})(?:[^0-9]|$)`));
-        if (m && (!excludeSet || !excludeSet.has(m[1]))) return m[1];
-      }
-      const mGen = norm.match(/(?:^|[^0-9])((?:19|20)\d{15})(?:[^0-9]|$)/);
-      if (mGen && (!excludeSet || !excludeSet.has(mGen[1]))) return mGen[1];
-    }
-  }
-
-  // 2. Direct embedded substring match for 10-digit Smart NID
-  if (preferredLengths.includes(10)) {
-    for (const cand of candidates) {
-      if (!cand) continue;
-      const norm = normalizeDigits(String(cand));
-      const m10 = norm.match(/(?:^|[^0-9])([1-9]\d{9})(?:[^0-9]|$)/);
-      if (m10 && (!excludeSet || !excludeSet.has(m10[1]))) {
-        if (!m10[1].startsWith('01')) return m10[1];
-      }
-    }
-  }
-
   const filtered = (excludeSet && excludeSet.size > 0)
     ? rawList.filter((c) => !excludeSet.has(c))
     : rawList;
   const pool = filtered.length ? filtered : rawList;
   const nonDate = pool.filter((d) => !/^(?:(?:19|20)\d{6}|(?:0[1-9]|[12]\d|3[01])(?:0[1-9]|1[0-2])(?:19|20)\d{2})$/.test(d));
   const active = nonDate.length ? nonDate : pool;
+
+  // Strictly respect preferredLengths order (e.g. [10, 17, 13] for NID vs [17] for BRC)
   for (const len of preferredLengths) {
     const matches = active.filter((c) => c.length === len);
     if (matches.length) {
@@ -1009,7 +1032,36 @@ function pickBestDocDigits(candidates, preferredLengths, opts = {}) {
       }
       return matches[0];
     }
+
+    // Embedded substring extraction fallback ONLY when exact match wasn't found for this length
+    if (len === 17) {
+      for (const cand of candidates) {
+        if (!cand) continue;
+        const norm = normalizeDigits(String(cand));
+        if (birthYear) {
+          const m = norm.match(new RegExp(`(?:^|[^0-9])(${birthYear}\\d{13})(?:[^0-9]|$)`));
+          if (m && (!excludeSet || !excludeSet.has(m[1]))) return m[1];
+        }
+        const mGen = norm.match(/(?:^|[^0-9])((?:19|20)\d{15})(?:[^0-9]|$)/);
+        if (mGen && (!excludeSet || !excludeSet.has(mGen[1]))) return mGen[1];
+      }
+    } else if (len === 10) {
+      for (const cand of candidates) {
+        if (!cand) continue;
+        const norm = normalizeDigits(String(cand));
+        const m10 = norm.match(/(?:^|[^0-9])(\d{10})(?:[^0-9]|$)/);
+        if (m10 && (!excludeSet || !excludeSet.has(m10[1]))) return m10[1];
+      }
+    } else if (len === 13) {
+      for (const cand of candidates) {
+        if (!cand) continue;
+        const norm = normalizeDigits(String(cand));
+        const m13 = norm.match(/(?:^|[^0-9])(\d{13})(?:[^0-9]|$)/);
+        if (m13 && (!excludeSet || !excludeSet.has(m13[1]))) return m13[1];
+      }
+    }
   }
+
   const longCand = active.find((d) => d.length >= 10);
   return longCand || active[0] || '';
 }
@@ -1084,22 +1136,23 @@ function validateAndNormalizeOcrData(data, options = {}) {
   const rawAiNid = extractDigitCandidate(data.nid_number);
   const rawAiBrc = extractDigitCandidate(data.birth_reg_no);
   const cleanNidNotParent = rawAiNid && !parentExclude.has(rawAiNid) ? rawAiNid : '';
+  const hasStrongBrcMetadata = Boolean(fatherNid || motherNid || data.registration_date);
   const hasBrcEvidence =
     data.doc_type === 'birth_certificate' ||
-    Boolean(fatherNid || motherNid || data.registration_date) ||
+    hasStrongBrcMetadata ||
     (!cleanNidNotParent && rawAiBrc.length === 17);
 
   if (docType === 'birth_certificate') {
     data.doc_type = 'birth_certificate';
   } else if (docType === 'nid') {
-    if (data.doc_type === 'birth_certificate' && rawAiBrc.length === 17 && !cleanNidNotParent) {
+    if (data.doc_type === 'birth_certificate' && rawAiBrc.length === 17 && (!cleanNidNotParent || hasStrongBrcMetadata)) {
       data.doc_type = 'birth_certificate';
       warnings.push('ডকুমেন্ট ধরন NID থাকলেও ছবিটি জন্ম নিবন্ধন (১৭ ডিজিট BRC) হিসেবে শনাক্ত হয়েছে।');
     } else {
       data.doc_type = 'nid';
     }
   } else {
-    if (data.doc_type === 'birth_certificate' || (hasBrcEvidence && !cleanNidNotParent)) {
+    if (data.doc_type === 'birth_certificate' || (hasBrcEvidence && (!cleanNidNotParent || (rawAiBrc.length === 17 && hasStrongBrcMetadata)))) {
       data.doc_type = 'birth_certificate';
     } else {
       data.doc_type = data.doc_type || 'nid';
@@ -1488,9 +1541,17 @@ async function completeBilingualWithGemini(geminiKey, partialData, preferredMode
 }
 
 async function callDeepSeekVisionOCR(deepseekKey, cleanBase64, mimeType, promptText, deepseekModel = 'deepseek-flash') {
-  const modelCandidates = [];
-  if (deepseekModel && String(deepseekModel).trim()) modelCandidates.push(String(deepseekModel).trim());
-  if (!modelCandidates.includes('deepseek-flash')) modelCandidates.push('deepseek-flash');
+  if (/pdf/i.test(String(mimeType || ''))) {
+    const err = new Error('DeepSeek Vision সরাসরি PDF ফাইল সাপোর্ট করে না (JPEG/PNG প্রয়োজন)।');
+    err.isVisionUnsupported = true;
+    throw err;
+  }
+  const normalizedPref = normalizeModelId(deepseekModel);
+  const rawReq = String(deepseekModel || '').trim();
+  const modelCandidates = ['deepseek-flash'];
+  if (rawReq && normalizedPref !== 'deepseek-flash' && !/^deepseek-chat$/i.test(rawReq) && !modelCandidates.includes(rawReq)) {
+    modelCandidates.push(rawReq);
+  }
   let lastError = 'Empty response from DeepSeek OCR.';
   const dsBase = (process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/+$/, '');
 
@@ -1698,9 +1759,10 @@ function getOrderedGeminiModels(profile = 'accurate', preferredGeminiModel = DEF
 
 function buildGeminiAttemptsForModels(models, apiKey, cleanBase64, mimeType, promptText, opts = {}) {
   const { docType = 'auto', isEscalation = false } = opts;
+  const isPdf = /pdf/i.test(String(mimeType || ''));
   const attempts = [];
   for (const model of models) {
-    if (INTERACTIONS_API_MODELS.has(model)) {
+    if (INTERACTIONS_API_MODELS.has(model) && !isPdf) {
       const useUltraHigh = (model === 'gemini-3.8-flash' || model === 'gemini-4-argon') && (docType === 'birth_certificate' || docType === 'auto' || isEscalation);
       const imageResolution = useUltraHigh ? 'ultra_high' : 'high';
       const body = {
@@ -1873,7 +1935,7 @@ async function extractNidWithAI(base64Image, customApiKey, options = {}) {
         const isFlagship = validPrefGemModel === 'gemini-3.8-flash' || validPrefGemModel === 'gemini-4-argon';
         const firstProfile = isFlagship ? 'preferred' : 'lite_only';
         const primaryRes = await runGeminiCascade(gKey, cleanBase64, mimeType, promptText, firstProfile, validPrefGemModel, { docType });
-        if (!needsAccurateEscalation(primaryRes, docType) || validPrefGemModel === 'gemini-3.8-flash') {
+        if (!needsAccurateEscalation(primaryRes, docType) || isFlagship) {
           rawParsed = primaryRes;
         } else {
           try {
@@ -2058,7 +2120,7 @@ function makeRoomMsgId(ts = Date.now()) {
 function normalizeRoomMessage(raw = {}, fallbackRoom = 'FC-101') {
   const ts = Number(raw.ts) > 0 ? Number(raw.ts) : Date.now();
   const room = normalizeRoomCode(raw.room || fallbackRoom);
-  const type = ['text', 'nid_data', 'summary', 'system'].includes(raw.type) ? raw.type : 'text';
+  const type = ['text', 'nid_data', 'summary', 'system', 'survey_house_saved', 'survey_timer_ended'].includes(raw.type) ? raw.type : 'text';
   const id = String(raw.id || makeRoomMsgId(ts)).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64) || makeRoomMsgId(ts);
   let payload = raw.payload || null;
   if (!payload && raw.payloadJson && typeof raw.payloadJson === 'string') {
@@ -2143,9 +2205,32 @@ async function syncRoomMessageToFirestore(msg) {
   }
 }
 
+async function syncRoomClearedAtToFirestore(room, clearedAt = Date.now()) {
+  const metaFields = {
+    room: { stringValue: room },
+    last_msg_id: { stringValue: '' },
+    cleared_at_ms: { integerValue: String(clearedAt) },
+    updated_at: { timestampValue: new Date(clearedAt).toISOString() }
+  };
+  const metaMask = Object.keys(metaFields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
+  return fetch(`${FIRESTORE_ROOMS_BASE}/${encodeURIComponent(room)}?${metaMask}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fields: metaFields })
+  }).catch(() => {});
+}
+
 async function loadCloudRoomMessages(room) {
-  const listRes = await fetch(`${FIRESTORE_ROOMS_BASE}/${encodeURIComponent(room)}/messages?pageSize=60`);
-  if (!listRes.ok) return [];
+  const [metaRes, listRes] = await Promise.all([
+    fetch(`${FIRESTORE_ROOMS_BASE}/${encodeURIComponent(room)}`).catch(() => null),
+    fetch(`${FIRESTORE_ROOMS_BASE}/${encodeURIComponent(room)}/messages?pageSize=200`).catch(() => null)
+  ]);
+  let clearedAtMs = 0;
+  if (metaRes && metaRes.ok) {
+    const metaJson = await metaRes.json().catch(() => ({}));
+    clearedAtMs = Number(metaJson?.fields?.cleared_at_ms?.integerValue || metaJson?.fields?.cleared_at_ms?.doubleValue || 0);
+  }
+  if (!listRes || !listRes.ok) return [];
   const data = await listRes.json().catch(() => ({}));
   const docs = Array.isArray(data.documents) ? data.documents : [];
   return docs.map((d) => {
@@ -2163,7 +2248,8 @@ async function loadCloudRoomMessages(room) {
       ts: Number(f.ts?.integerValue || f.ts?.doubleValue || 0),
       createdAt: f.createdAt?.stringValue || ''
     }, room);
-  }).sort((a, b) => a.ts - b.ts);
+  }).filter((m) => !(clearedAtMs > 0 && m.ts <= clearedAtMs))
+    .sort((a, b) => a.ts - b.ts);
 }
 
 app.get(['/api/room-messages', '/api/rooms/:room/messages'], async (req, res) => {
@@ -2198,24 +2284,237 @@ app.post(['/api/room-messages', '/api/rooms/:room/messages'], async (req, res) =
 app.delete(['/api/room-messages', '/api/rooms/:room/messages'], async (req, res) => {
   try {
     const room = normalizeRoomCode(req.params.room || req.query.room || req.body?.room);
-    roomMessagesStore.set(room, []);
-    io.to(room).emit('room-cleared', { room, ts: Date.now() });
     const clearedAt = Date.now();
-    const metaFields = {
-      room: { stringValue: room },
-      last_msg_id: { stringValue: '' },
-      cleared_at_ms: { integerValue: String(clearedAt) },
-      updated_at: { timestampValue: new Date().toISOString() }
-    };
-    const metaMask = Object.keys(metaFields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
-    fetch(`${FIRESTORE_ROOMS_BASE}/${encodeURIComponent(room)}?${metaMask}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fields: metaFields })
-    }).catch(() => {});
+    roomMessagesStore.set(room, []);
+    io.to(room).emit('room-cleared', { room, ts: clearedAt });
+    syncRoomClearedAtToFirestore(room, clearedAt);
     res.json({ success: true, room, clearedAt });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Survey Duration Timer Persistence (Firestore + In-Memory Cache)
+const FIRESTORE_CARDS_BASE = 'https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards';
+const FIRESTORE_SURVEY_TIMERS_LOG_BASE = `${FIRESTORE_CARDS_BASE}/SURVEY_TIMERS/logs`;
+const FIRESTORE_SURVEY_TIMERS_COLLECTION_BASE = 'https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/survey_timers';
+const FIRESTORE_HOUSES_BASE = 'https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/surveyed_houses';
+const surveyTimerStore = [];
+
+function formatSurveyDurationShort(totalSec = 0) {
+  const sec = Math.max(0, Math.round(Number(totalSec) || 0));
+  const hrs = Math.floor(sec / 3600);
+  const mins = Math.floor((sec % 3600) / 60);
+  const rem = sec % 60;
+  const pad = (n) => String(n).padStart(2, '0');
+  if (hrs > 0) return `${pad(hrs)}:${pad(mins)}:${pad(rem)}`;
+  return `${pad(mins)}:${pad(rem)}`;
+}
+
+function normalizeSurveyTimerPayload(raw = {}) {
+  const now = Date.now();
+  const rawStart = Number(raw.startedAtMs ?? raw.started_at_ms ?? 0);
+  const rawEnd = Number(raw.endedAtMs ?? raw.ended_at_ms ?? now);
+  const startedAtMs = rawStart > 0 && rawStart <= now + 60000 ? rawStart : now;
+  const endedAtMs = rawEnd >= startedAtMs ? rawEnd : startedAtMs;
+  const durationMs = Math.max(0, endedAtMs - startedAtMs);
+  const computedSec = Math.round(durationMs / 1000);
+  const rawDurationSec = Number(raw.durationSec ?? raw.duration_sec);
+  const durationSec = Number.isFinite(rawDurationSec) && rawDurationSec >= 0 && Math.abs(rawDurationSec - computedSec) <= 2
+    ? Math.round(rawDurationSec)
+    : computedSec;
+
+  const cleanId = (val, maxLen = 100) => String(val || '').trim().replace(/[^A-Za-z0-9_-]/g, '').slice(0, maxLen);
+  const sessionId = cleanId(raw.sessionId || raw.session_id || `srv_${startedAtMs}_${Math.random().toString(36).slice(2, 7)}`, 96);
+  const familyId = cleanId(normalizeDigits(raw.familyId || raw.family_id || ''), 64);
+  const docId = cleanId(normalizeDigits(raw.docId || raw.doc_id || familyId || ''), 96);
+  const statusRaw = String(raw.status || raw.timerStatus || raw.survey_timer_status || 'ended').toLowerCase();
+  const status = ['running', 'ended', 'completed'].includes(statusRaw) ? statusRaw : 'ended';
+
+  return {
+    sessionId,
+    familyId,
+    docId,
+    applicantName: String(raw.applicantName || raw.applicant_name || '').trim().slice(0, 120),
+    docType: String(raw.docType || raw.doc_type || '').trim().slice(0, 40),
+    source: String(raw.source || 'web').trim().slice(0, 40),
+    roomCode: raw.roomCode || raw.room_code ? normalizeRoomCode(raw.roomCode || raw.room_code) : '',
+    deviceName: String(raw.deviceName || raw.device_name || '').trim().slice(0, 60),
+    surveyStatus: String(raw.surveyStatus || raw.survey_status || 'COMPLETED').trim().slice(0, 40),
+    status,
+    readinessPct: Math.max(0, Math.min(100, Math.round(Number(raw.readinessPct ?? raw.readiness_pct ?? 0) || 0))),
+    startReason: String(raw.startReason || raw.start_reason || 'new_survey').trim().slice(0, 60),
+    endReason: String(raw.endReason || raw.end_reason || 'survey_ended').trim().slice(0, 60),
+    startedAtMs,
+    endedAtMs,
+    startedAt: new Date(startedAtMs).toISOString(),
+    endedAt: new Date(endedAtMs).toISOString(),
+    durationMs,
+    durationSec,
+    durationLabel: String(raw.durationLabel || raw.duration_label || formatSurveyDurationShort(durationSec)).trim().slice(0, 40)
+  };
+}
+
+function buildSurveyTimerFirestoreFields(entry) {
+  return {
+    session_id: { stringValue: entry.sessionId },
+    family_id: { stringValue: entry.familyId || '' },
+    doc_id: { stringValue: entry.docId || '' },
+    applicant_name: { stringValue: entry.applicantName || '' },
+    doc_type: { stringValue: entry.docType || '' },
+    source: { stringValue: entry.source || '' },
+    room_code: { stringValue: entry.roomCode || '' },
+    device_name: { stringValue: entry.deviceName || '' },
+    survey_status: { stringValue: entry.surveyStatus || '' },
+    timer_status: { stringValue: entry.status || 'ended' },
+    readiness_pct: { integerValue: String(entry.readinessPct || 0) },
+    start_reason: { stringValue: entry.startReason || '' },
+    end_reason: { stringValue: entry.endReason || '' },
+    started_at_ms: { integerValue: String(entry.startedAtMs) },
+    ended_at_ms: { integerValue: String(entry.endedAtMs) },
+    started_at: { timestampValue: entry.startedAt },
+    ended_at: { timestampValue: entry.endedAt },
+    duration_ms: { integerValue: String(entry.durationMs) },
+    duration_sec: { integerValue: String(entry.durationSec) },
+    duration_label: { stringValue: entry.durationLabel || formatSurveyDurationShort(entry.durationSec) }
+  };
+}
+
+async function syncSurveyTimerToFirestore(entry) {
+  try {
+    const fields = buildSurveyTimerFirestoreFields(entry);
+    const mask = Object.keys(fields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
+    const ops = [
+      fetch(`${FIRESTORE_SURVEY_TIMERS_LOG_BASE}/${encodeURIComponent(entry.sessionId)}?${mask}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields })
+      }).catch(() => null),
+      fetch(`${FIRESTORE_SURVEY_TIMERS_COLLECTION_BASE}/${encodeURIComponent(entry.sessionId)}?${mask}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields })
+      }).catch(() => null)
+    ];
+
+    const targetDocIds = Array.from(new Set([entry.familyId, entry.docId].filter((id) => id && id !== 'SURVEY_TIMERS')));
+    if (targetDocIds.length > 0) {
+      const docFields = {
+        survey_session_id: { stringValue: entry.sessionId },
+        survey_started_at: { timestampValue: entry.startedAt },
+        survey_ended_at: { timestampValue: entry.endedAt },
+        survey_duration_sec: { integerValue: String(entry.durationSec) },
+        survey_duration_label: { stringValue: entry.durationLabel },
+        survey_timer_status: { stringValue: entry.status }
+      };
+      const docMask = Object.keys(docFields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
+      for (const targetId of targetDocIds) {
+        ops.push(
+          fetch(`${FIRESTORE_CARDS_BASE}/${encodeURIComponent(targetId)}?${docMask}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fields: docFields })
+          }).catch(() => null),
+          fetch(`${FIRESTORE_CARDS_BASE}/${encodeURIComponent(targetId)}/logs/${encodeURIComponent(`timer_${entry.sessionId}`)}?${mask}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fields })
+          }).catch(() => null),
+          fetch(`${FIRESTORE_HOUSES_BASE}/${encodeURIComponent(targetId)}?${docMask}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fields: docFields })
+          }).catch(() => null)
+        );
+      }
+    }
+
+    await Promise.all(ops);
+  } catch (e) {
+    console.warn('[Firestore Survey Timer Sync notice]:', e.message);
+  }
+}
+
+async function fetchSurveyTimersFromFirestore(limit = 50) {
+  try {
+    const res = await fetch(`${FIRESTORE_SURVEY_TIMERS_LOG_BASE}?pageSize=${Math.min(100, Math.max(1, limit))}`);
+    if (!res || !res.ok) return [];
+    const data = await res.json().catch(() => ({}));
+    const docs = Array.isArray(data.documents) ? data.documents : [];
+    return docs.map((d) => {
+      const f = d.fields || {};
+      return {
+        sessionId: f.session_id?.stringValue || d.name?.split('/').pop() || '',
+        familyId: f.family_id?.stringValue || '',
+        docId: f.doc_id?.stringValue || '',
+        applicantName: f.applicant_name?.stringValue || '',
+        docType: f.doc_type?.stringValue || '',
+        source: f.source?.stringValue || '',
+        roomCode: f.room_code?.stringValue || '',
+        deviceName: f.device_name?.stringValue || '',
+        surveyStatus: f.survey_status?.stringValue || '',
+        status: f.timer_status?.stringValue || 'ended',
+        readinessPct: Number(f.readiness_pct?.integerValue || 0),
+        startReason: f.start_reason?.stringValue || '',
+        endReason: f.end_reason?.stringValue || '',
+        startedAtMs: Number(f.started_at_ms?.integerValue || f.started_at_ms?.doubleValue || 0),
+        endedAtMs: Number(f.ended_at_ms?.integerValue || f.ended_at_ms?.doubleValue || 0),
+        startedAt: f.started_at?.timestampValue || '',
+        endedAt: f.ended_at?.timestampValue || '',
+        durationMs: Number(f.duration_ms?.integerValue || 0),
+        durationSec: Number(f.duration_sec?.integerValue || 0),
+        durationLabel: f.duration_label?.stringValue || ''
+      };
+    }).sort((a, b) => (b.endedAtMs || 0) - (a.endedAtMs || 0));
+  } catch (_) {
+    return [];
+  }
+}
+
+app.get('/api/survey-timer', async (req, res) => {
+  try {
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 40));
+    const roomFilter = req.query.room ? normalizeRoomCode(req.query.room) : '';
+    const remote = await fetchSurveyTimersFromFirestore(limit);
+    const mergedMap = new Map();
+    for (const item of [...remote, ...surveyTimerStore]) {
+      if (!item || !item.sessionId) continue;
+      if (roomFilter && item.roomCode && item.roomCode !== roomFilter) continue;
+      mergedMap.set(item.sessionId, item);
+    }
+    const timers = Array.from(mergedMap.values())
+      .sort((a, b) => (b.endedAtMs || 0) - (a.endedAtMs || 0))
+      .slice(0, limit);
+    const completed = timers.filter((t) => t.status === 'ended' || t.status === 'completed');
+    const totalSec = completed.reduce((acc, t) => acc + (Number(t.durationSec) || 0), 0);
+    const stats = {
+      count: completed.length,
+      avgDurationSec: completed.length ? Math.round(totalSec / completed.length) : 0,
+      minDurationSec: completed.length ? Math.min(...completed.map((t) => Number(t.durationSec) || 0)) : 0,
+      maxDurationSec: completed.length ? Math.max(...completed.map((t) => Number(t.durationSec) || 0)) : 0
+    };
+    res.json({ success: true, timers, stats });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message, timers: [] });
+  }
+});
+
+app.post('/api/survey-timer', async (req, res) => {
+  try {
+    const entry = normalizeSurveyTimerPayload(req.body || {});
+    const idx = surveyTimerStore.findIndex((t) => t.sessionId === entry.sessionId);
+    if (idx !== -1) surveyTimerStore[idx] = entry;
+    else {
+      surveyTimerStore.unshift(entry);
+      if (surveyTimerStore.length > 200) surveyTimerStore.length = 200;
+    }
+    await syncSurveyTimerToFirestore(entry);
+    if (entry.roomCode) {
+      io.to(entry.roomCode).emit('survey-timer-saved', entry);
+    }
+    res.json({ success: true, entry });
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
   }
 });
 
@@ -2230,7 +2529,7 @@ app.get('/api/info', (req, res) => {
     bdtPerUsd: BDT_PER_USD,
     deepSeekPeakNow: isDeepSeekPeakUtc(),
     pricing: AI_MODEL_CATALOG,
-    features: ['room_messaging', 'cloud_room_sync', 'nid_data_share', 'summary_share']
+    features: ['room_messaging', 'cloud_room_sync', 'nid_data_share', 'summary_share', 'survey_timer']
   });
 });
 
@@ -2270,8 +2569,10 @@ io.on('connection', (socket) => {
 
   socket.on('clear-room-messages', (rawPayload) => {
     const room = normalizeRoomCode(typeof rawPayload === 'string' ? rawPayload : rawPayload?.room);
+    const clearedAt = Date.now();
     roomMessagesStore.set(room, []);
-    io.to(room).emit('room-cleared', { room, ts: Date.now() });
+    syncRoomClearedAtToFirestore(room, clearedAt);
+    io.to(room).emit('room-cleared', { room, ts: clearedAt });
   });
 
   // Mobile device sending image for processing and forwarding
@@ -2301,9 +2602,14 @@ io.on('connection', (socket) => {
       syncToFirestore(extracted);
 
       // Broadcast extracted data to all devices in the room (including extension on PC)
+      const enrichedExtracted = {
+        ...extracted,
+        ...(payload.survey_started_at_ms ? { survey_started_at_ms: Number(payload.survey_started_at_ms) } : {}),
+        ...(payload.survey_session_id ? { survey_session_id: String(payload.survey_session_id) } : {})
+      };
       io.to(targetRoom).emit('nid-data-extracted', {
         success: true,
-        data: extracted,
+        data: enrichedExtracted,
         timestamp: new Date().toISOString()
       });
 
@@ -2311,8 +2617,8 @@ io.on('connection', (socket) => {
       const scanMsg = appendRoomMessageInMemory({
         room: targetRoom,
         type: 'nid_data',
-        text: `🪪 স্ক্যান: ${extracted.name_bn || extracted.name_en || ''} (${extracted.doc_number || extracted.nid_number || extracted.birth_reg_no || ''})`,
-        payload: extracted,
+        text: `🪪 স্ক্যান: ${enrichedExtracted.name_bn || enrichedExtracted.name_en || ''} (${enrichedExtracted.doc_number || enrichedExtracted.nid_number || enrichedExtracted.birth_reg_no || ''})`,
+        payload: enrichedExtracted,
         senderName: payload.senderName || 'মোবাইল স্ক্যানার',
         senderClient: 'companion'
       }, targetRoom);

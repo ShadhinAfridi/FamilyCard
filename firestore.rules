@@ -2,48 +2,77 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    function isReasonableDoc() {
+      return request.resource.data.keys().size() <= 45;
+    }
+
+    function isReasonableFamilyCardDoc() {
+      return request.resource.data.keys().size() <= 85;
+    }
+
     // Allow read, create and update to family_cards collection, members, and smart step backups
     // Explicitly disallow unauthenticated permanent deletions
     match /family_cards/{docId} {
-      allow read, create, update: if true;
+      allow read: if true;
+      allow create, update: if isReasonableFamilyCardDoc() && docId.size() <= 128;
       allow delete: if false;
 
       match /members/{memberId} {
-        allow read, create, update: if true;
+        allow read: if true;
+        allow create, update: if isReasonableDoc() && memberId.size() <= 64;
         allow delete: if false;
       }
 
       match /backups/{backupId} {
-        allow read, create, update: if true;
+        allow read: if true;
+        allow create, update: if isReasonableDoc() && backupId.size() <= 64;
         allow delete: if false;
       }
 
       match /logs/{logId} {
-        allow read, create, update: if true;
+        allow read: if true;
+        allow create, update: if isReasonableDoc() && logId.size() <= 128;
         allow delete: if false;
       }
     }
 
     // Pre-survey houses, GPS target locations, and missing document note tags
     match /surveyed_houses/{houseId} {
-      allow read, create, update: if true;
+      allow read: if true;
+      allow create, update: if isReasonableDoc()
+        && houseId.size() <= 128
+        && !houseId.matches('.*[<>"\'\\\\].*');
       allow delete: if false;
     }
 
     // Cross-device room messaging & live NID/summary data sharing channels
     match /room_channels/{roomCode} {
-      allow read, create, update: if true;
+      allow read: if true;
+      allow create, update: if isReasonableDoc() && roomCode.matches('^[A-Za-z0-9_-]{2,40}$');
       allow delete: if false;
 
       match /messages/{messageId} {
-        allow read, create, update: if true;
+        allow read: if true;
+        allow create, update: if isReasonableDoc()
+          && messageId.size() <= 80
+          && (!('text' in request.resource.data) || (request.resource.data.text is string && request.resource.data.text.size() <= 4000));
         allow delete: if false;
       }
     }
 
     // Diagnostic telemetry, OCR/DeepSeek repair traces & error logs
     match /fc_error_logs/{logId} {
-      allow read, create, update: if true;
+      allow read: if true;
+      allow create, update: if isReasonableDoc() && logId.size() <= 80;
+      allow delete: if false;
+    }
+
+    // Per-survey duration & completion timing records
+    match /survey_timers/{timerId} {
+      allow read: if true;
+      allow create, update: if isReasonableDoc()
+        && timerId.size() <= 128
+        && !timerId.matches('.*[<>"\'\\\\].*');
       allow delete: if false;
     }
 

@@ -101,7 +101,7 @@
 
   const BN_NAME_WORD_MAP = {
     'মোঃ': 'MD.', 'মো:': 'MD.', 'মো.': 'MD.', 'মোহাম্মদ': 'MOHAMMAD', 'মোহাম্মাদ': 'MOHAMMAD', 'মুহাম্মদ': 'MUHAMMAD',
-    'মোছাঃ': 'MOSAMMAT', 'মোছা:': 'MOSAMMAT', 'মোছা.': 'MOSAMMAT', 'মোসাম্মৎ': 'MOSAMMAT', 'মোসাম্মত': 'MOSAMMAT',
+    'মোছাঃ': 'MST.', 'মোছা:': 'MST.', 'মোছা.': 'MST.', 'মোসাম্মাৎ': 'MOSAMMAT', 'মোসাম্মৎ': 'MOSAMMAT', 'মোসাম্মত': 'MOSAMMAT', 'মোসাঃ': 'MOSA.', 'মোসা:': 'MOSA.',
     'শ্রী': 'SRI', 'শ্রীমতী': 'SRIMOTI', 'শেখ': 'SHEIKH', 'সৈয়দ': 'SYED', 'সৈয়দ': 'SYED',
     'খন্দকার': 'KHANDAKER', 'চৌধুরী': 'CHOWDHURY', 'মজুমদার': 'MAJUMDER', 'তালুকদার': 'TALUKDER',
     'সরকার': 'SARKAR', 'মন্ডল': 'MONDAL', 'মণ্ডল': 'MONDAL', 'বিশ্বাস': 'BISWAS', 'ভূঁইয়া': 'BHUIYAN', 'ভুঁইয়া': 'BHUIYAN',
@@ -237,11 +237,28 @@
       if (ch === '্') {
         const nextC = bare[i + 1] || '';
         if (nextC === 'য') { out += 'Y'; i += 2; lastWasVowel = false; continue; }
-        if (nextC === 'র') { out += 'R'; i += 2; lastWasVowel = false; continue; }
-        if (nextC === 'ব') {
-          if (lastConsStartIdx > 0 && cons[bare[i - 1]]) out += 'W';
+        if (nextC === 'র') {
+          out += 'R';
           i += 2;
-          lastWasVowel = false;
+          const afterCluster = bare[i] || '';
+          if (!kars[afterCluster] && afterCluster !== '্' && afterCluster !== 'ং' && afterCluster !== 'ঃ' && i < bare.length && cons[afterCluster]) {
+            out += 'A';
+            lastWasVowel = true;
+          } else {
+            lastWasVowel = false;
+          }
+          continue;
+        }
+        if (nextC === 'ব') {
+          if (lastConsStartIdx === 0 || (lastConsStartIdx > 0 && cons[bare[i - 1]])) out += 'W';
+          i += 2;
+          const afterCluster = bare[i] || '';
+          if (lastConsStartIdx === 0 && !kars[afterCluster] && afterCluster !== '্' && afterCluster !== 'ং' && afterCluster !== 'ঃ' && i < bare.length && cons[afterCluster]) {
+            out += 'A';
+            lastWasVowel = true;
+          } else {
+            lastWasVowel = false;
+          }
           continue;
         }
         lastWasVowel = false;
@@ -283,34 +300,39 @@
   if (!enName) return enName;
   let res = String(enName).trim();
   const bn = String(bnName || '').trim();
+  const mstPrefixRe = /^(?:(?:MOSAMMAT|MOSAMMOT|MOST|MST|MOSA)\s+|(?:MOST|MST|MOSA)\.(?:\s*|(?=[A-Z])))/i;
+  const mdPrefixRe = /^(?:(?:MD|MOHD|MOHAMMAD|MOHAMMED)\s+|(?:MD|MOHD)\.(?:\s*|(?=[A-Z])))/i;
+  const mosaPrefixRe = /^(?:(?:MOSA|MOSAMMAT|MOSAMMOT)\s+|MOSA\.(?:\s*|(?=[A-Z])))/i;
 
   // 1. If Bengali starts with মোছাঃ / মোছা: / মোছা. / মোছা
   if (/^(?:মোছাঃ|মোছা:|মোছা\.|মোছা\s+)/.test(bn)) {
-    if (/^(?:MOSAMMAT|MOSAMMOT|MOSA\.?|MST\.?)\s+/i.test(res)) {
-      res = res.replace(/^(?:MOSAMMAT|MOSAMMOT|MOSA\.?|MST\.?)\s+/i, 'MST. ');
-    } else if (!/^MST\.\s+/i.test(res)) {
+    if (mstPrefixRe.test(res)) {
+      res = res.replace(mstPrefixRe, 'MST. ');
+    } else {
       res = 'MST. ' + res;
     }
   }
   // 2. Else if Bengali starts with মোঃ / মো: / মো. / মো
   else if (/^(?:মোঃ|মো:|মো\.|মো\s+)/.test(bn)) {
-    if (/^(?:MD\.?|MOHD\.?|MOHAMMAD|MOHAMMED)\s+/i.test(res)) {
-      res = res.replace(/^(?:MD\.?|MOHD\.?|MOHAMMAD|MOHAMMED)\s+/i, 'MD. ');
-    } else if (!/^MD\.\s+/i.test(res)) {
+    if (mdPrefixRe.test(res)) {
+      res = res.replace(mdPrefixRe, 'MD. ');
+    } else {
       res = 'MD. ' + res;
     }
   }
   // 3. Else if Bengali starts with মোসাঃ / মোসা: / মোসা. / মোসা
   else if (/^(?:মোসাঃ|মোসা:|মোসা\.|মোসা\s+)/.test(bn)) {
-    if (/^(?:MOSA\.?|MOSAMMAT|MOSAMMOT)\s+/i.test(res)) {
-      res = res.replace(/^(?:MOSA\.?|MOSAMMAT|MOSAMMOT)\s+/i, 'MOSA. ');
+    if (mosaPrefixRe.test(res)) {
+      res = res.replace(mosaPrefixRe, 'MOSA. ');
+    } else if (!/^MST\.(?:\s*|(?=[A-Z]))/i.test(res)) {
+      res = 'MOSA. ' + res;
     }
   }
   // 4. Standalone English prefixes without Bengali match
-  else if (/^(?:MOSAMMAT|MOSAMMOT)\s+/i.test(res)) {
-    res = res.replace(/^(?:MOSAMMAT|MOSAMMOT)\s+/i, 'MST. ');
-  } else if (/^MD\s+[A-Z]/i.test(res)) {
-    res = res.replace(/^MD\s+/i, 'MD. ');
+  else if (/^(?:(?:MOSAMMAT|MOSAMMOT|MOST)\s+|(?:MOST|MST)\.(?:\s*|(?=[A-Z])))/i.test(res)) {
+    res = res.replace(/^(?:(?:MOSAMMAT|MOSAMMOT|MOST)\s+|(?:MOST|MST)\.(?:\s*|(?=[A-Z])))/i, 'MST. ');
+  } else if (/^(?:MD\s+|MD\.(?:\s*|(?=[A-Z])))/i.test(res)) {
+    res = res.replace(/^(?:MD\s+|MD\.(?:\s*|(?=[A-Z])))/i, 'MD. ');
   }
 
   return res.toUpperCase().replace(/\s+/g, ' ').trim();
@@ -924,21 +946,37 @@
     });
   }
 
+  function isValidCalendarDate(d, m, y) {
+    const day = Number(d);
+    const month = Number(m);
+    const year = Number(y);
+    if (!Number.isInteger(day) || !Number.isInteger(month) || !Number.isInteger(year)) return false;
+    if (year < 1850 || year > 2100 || month < 1 || month > 12 || day < 1) return false;
+    const maxDays = [31, (year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+    return day <= maxDays;
+  }
+
   // --- Utility: Date of Birth Standardizer (English & Bengali months/digits/ordinals) to DD/MM/YYYY ---
   function standardizeDate(dobStr) {
     if (!dobStr) return '';
     let str = normalizeDigits(dobStr)
       .normalize('NFC')
       .replace(/[\u200B-\u200D\uFEFF]/g, '')
+      .replace(/^(?:তারিখ|জন্ম\s*তারিখ|date\s*of\s*birth|date|dob)\s*[:\-–]?\s*/i, '')
       .replace(/(\d{1,2})\s*(?:ইং|ই|শে|লা|রা|ঠা|st|nd|rd|th)(?=[\s,./\-\u0980-\u09FF])/gi, '$1 ')
       .replace(/[,]/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
 
     // ISO format: YYYY-MM-DD or YYYY/MM/DD
-    const isoMatch = str.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/);
+    const isoMatch = str.match(/(?:^|\s)(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})(?:\b|$)/);
     if (isoMatch) {
-      return `${isoMatch[3].padStart(2, '0')}/${isoMatch[2].padStart(2, '0')}/${isoMatch[1]}`;
+      const y = parseInt(isoMatch[1], 10);
+      const m = parseInt(isoMatch[2], 10);
+      const d = parseInt(isoMatch[3], 10);
+      return isValidCalendarDate(d, m, y)
+        ? `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`
+        : '';
     }
 
     // English month format: 15 Apr 1988
@@ -946,10 +984,15 @@
       jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
       jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12'
     };
-    const enMatch = str.match(/^(\d{1,2})[\s\-,.]+([a-zA-Z]{3,})[\s\-,.]+(\d{4})/i);
+    const enMatch = str.match(/(?:^|\s)(\d{1,2})[\s\-,.]+([a-zA-Z]{3,})[\s\-,.]+(\d{4})(?:\b|$)/i);
     if (enMatch) {
-      const m = enMonths[enMatch[2].toLowerCase().substring(0, 3)] || '';
-      if (m) return `${enMatch[1].padStart(2, '0')}/${m}/${enMatch[3]}`;
+      const d = parseInt(enMatch[1], 10);
+      const mStr = enMonths[enMatch[2].toLowerCase().substring(0, 3)] || '';
+      const y = parseInt(enMatch[3], 10);
+      if (mStr && isValidCalendarDate(d, parseInt(mStr, 10), y)) {
+        return `${String(d).padStart(2, '0')}/${mStr}/${y}`;
+      }
+      if (mStr) return '';
     }
 
     // Bengali month format: ১৪ মে ১৯৮৫ / ১২ই জানুয়ারি, ২০১২
@@ -958,20 +1001,33 @@
       ['মে', '05'], ['জুন', '06'], ['জুল', '07'], ['আগ', '08'],
       ['সেপ', '09'], ['অক্ট', '10'], ['অক', '10'], ['নভ', '11'], ['ডিস', '12']
     ];
-    const bnMatch = str.match(/^(\d{1,2})[\s\-,/.]+([\u0980-\u09FF]+)[\s\-,/.]+(\d{4})/);
+    const bnMatch = str.match(/(?:^|\s)(\d{1,2})[\s\-,/.]+([\u0980-\u09FF]+)[\s\-,/.]+(\d{4})(?:\b|$)/);
     if (bnMatch) {
+      const d = parseInt(bnMatch[1], 10);
       const hit = bnPrefixes.find(([p]) => bnMatch[2].startsWith(p));
-      if (hit) return `${bnMatch[1].padStart(2, '0')}/${hit[1]}/${bnMatch[3]}`;
+      const y = parseInt(bnMatch[3], 10);
+      if (hit && isValidCalendarDate(d, parseInt(hit[1], 10), y)) {
+        return `${String(d).padStart(2, '0')}/${hit[1]}/${y}`;
+      }
+      if (hit) return '';
     }
 
-    // Standard DD/MM/YYYY or DD-MM-YYYY
+    // Standard DD/MM/YYYY or DD-MM-YYYY with swapped MM/DD/YYYY fix
     str = str.replace(/[-\.]/g, '/');
-    const dmyMatch = str.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    const dmyMatch = str.match(/(?:^|[^\d])(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[^\d]|$)/);
     if (dmyMatch) {
-      return `${dmyMatch[1].padStart(2, '0')}/${dmyMatch[2].padStart(2, '0')}/${dmyMatch[3]}`;
+      let d = parseInt(dmyMatch[1], 10);
+      let m = parseInt(dmyMatch[2], 10);
+      const y = parseInt(dmyMatch[3], 10);
+      if (d <= 12 && m > 12 && m <= 31) {
+        const tmp = d; d = m; m = tmp;
+      }
+      return isValidCalendarDate(d, m, y)
+        ? `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`
+        : '';
     }
 
-    return str;
+    return '';
   }
 
   // --- Utility: Zero-Reflow DOM Scraper for পরিবার আইডি ---
@@ -1103,6 +1159,14 @@
           data.auto_transliterated_bn = true;
         }
       }
+    }
+    for (const [bnK, enK] of [
+      ['name_bn', 'name_en'],
+      ['father_name_bn', 'father_name_en'],
+      ['mother_name_bn', 'mother_name_en'],
+      ['spouse_name_bn', 'spouse_name_en']
+    ]) {
+      if (data[enK]) data[enK] = normalizeEnglishHonorificPrefix(data[enK], data[bnK]);
     }
     if (data.dob) data.dob = standardizeDate(data.dob);
     if (data.gender) data.gender = normalizeGenderValue(data.gender);
@@ -1260,58 +1324,55 @@
   };
 
   function buildGeminiPrompt(docTypeHint = 'auto') {
-    const bilingualRule = `
-CRITICAL BIDIRECTIONAL BILINGUAL RULES (BANGLA-ONLY & ENGLISH-ONLY DOCUMENTS):
-- Case A — BANGLA-ONLY document (শুধু বাংলায় সনদ বা পুরাতন কাগজ, ইংরেজি লেখা নেই):
-  You MUST STILL populate EVERY English field ("name_en", "father_name_en", "mother_name_en", "spouse_name_en") by accurately transliterating Bengali into standard Bangladeshi ALL-CAPS English spelling (e.g. "মোঃ" -> "MD.", "মোছাঃ" -> "MST.", "রফিকুল ইসলাম" -> "RAFIQUL ISLAM", "জাহানারা বেগম" -> "JAHANARA BEGUM", "শ্রী" -> "SRI", "দেবী" -> "DEVI").
-- Case B — ENGLISH-ONLY document (শুধু ইংরেজিতে সনদ, বাংলা লেখা নেই):
-  You MUST STILL populate EVERY Bengali field ("name_bn", "father_name_bn", "mother_name_bn", "spouse_name_bn") in standard Bangladeshi Bengali Unicode spelling (e.g. "MD." -> "মোঃ", "MST."/"MOSAMMAT" -> "মোছাঃ", "MOHAMMAD" -> "মোহাম্মদ", "ABDUL" -> "আব্দুল", "RAFIQUL ISLAM" -> "রফিকুল ইসলাম", "BEGUM" -> "বেগম", "KHATUN" -> "খাতুন", "AKTER" -> "আক্তার", "SULTANA" -> "সুলতানা", "RAHMAN" -> "রহমান", "UDDIN" -> "উদ্দিন", "HOSSAIN" -> "হোসেন", "AHMED" -> "আহমেদ", "RANI" -> "রাণী", "DEVI" -> "দেবী", "DAS" -> "দাস").
-- Set "detected_language" strictly to "bilingual", "bn_only", or "en_only".
-- NEVER put Bengali characters inside *_en fields, NEVER put English letters inside *_bn fields, NEVER write "null" or "N/A".
-- Convert Bengali digits (০-৯) to ASCII 0-9, convert dates like "১২ই জানুয়ারি, ২০১২" to strict "DD/MM/YYYY", and return ONE valid raw JSON object.`;
     const hintLine = docTypeHint === 'nid'
-      ? `HINT: User selected Bangladeshi NID Card. Still verify the image visually first — if the image is clearly a Birth Registration Certificate (জন্ম নিবন্ধন সনদ / 17-digit Birth Registration No), set "doc_type": "birth_certificate" and extract its 17-digit number into "birth_reg_no" and "doc_number".${bilingualRule}`
+      ? 'HINT: User selected Bangladeshi NID Card. Still verify visually first — if it is clearly a Birth Registration Certificate (জন্ম নিবন্ধন সনদপত্র / 17-digit Birth Registration No), set "doc_type": "birth_certificate" and put the 17 digits into "birth_reg_no" and "doc_number".'
       : docTypeHint === 'birth_certificate'
-        ? `HINT: User selected Bangladeshi Digital Birth Registration Certificate (জন্ম নিবন্ধন সনদপত্র). Focus carefully on the 17-digit Birth Registration Number, Date of Birth (NOT Registration/Issuance Date), and parent names (put Father/Mother NID into father_nid/mother_nid, NEVER into doc_number/nid_number).${bilingualRule}`
-        : `Detect automatically whether this is an NID Card or Birth Registration Certificate.${bilingualRule}`;
+        ? 'HINT: User selected Bangladeshi Digital/Manual Birth Registration Certificate (জন্ম নিবন্ধন সনদপত্র). Focus on the 17-digit Birth Registration Number (starts with birth year YYYY), Date of Birth (NOT Registration Date), and parent names (put Father/Mother NID into father_nid/mother_nid, NEVER into doc_number/nid_number/birth_reg_no).'
+        : 'Detect automatically whether this is a Bangladeshi NID Card or a Birth Registration Certificate.';
+
     return `
-You are an expert OCR and document understanding system specializing in Bangladeshi identity documents:
-1. Bangladeshi National Identity (NID) Cards (Smart Cards and Old Paper/Laminated NID cards).
-2. Bangladeshi Birth Registration Certificates (ডিজিটাল জন্ম নিবন্ধন সনদপত্র / BRC — bilingual, Bangla-only / শুধু বাংলায়, OR English-only / শুধু ইংরেজিতে).
+You are an ultra-precise OCR engine specializing in Bangladeshi identity documents:
+1. Bangladeshi National Identity (NID) Cards (Smart Cards and classic laminated paper NID cards).
+2. Bangladeshi Birth Registration Certificates (জন্ম নিবন্ধন সনদপত্র / BRC — bilingual, Bangla-only, or English-only).
 
 ${hintLine}
 
-Analyze the provided image carefully and extract ALL visible data into a single valid JSON object.
-
-RULES FOR CLASSIFICATION & EXTRACTION (VERIFY EVERY SINGLE DIGIT):
-
-A. "doc_type":
-- Strictly "nid" or "birth_certificate".
-  - NID Card ("জাতীয় পরিচয় পত্র" / "National ID Card" / "NID No" / "ID NO") -> "nid".
-  - Birth Registration Certificate ("জন্ম নিবন্ধন সনদ" / "জন্ম ও মৃত্যু নিবন্ধন" / "Birth and Death Registration" / "Birth Registration Number") -> "birth_certificate".
-
-B. "doc_number" & "nid_number" & "birth_reg_no" & parent isolation:
-- If "nid":
-  - Smart NID prints 10 digits under "NID No." / "জাতীয় পরিচয় নং".
-  - Old Laminated NID prints 13 or 17 digits at bottom under "ID NO:" (small font — read every digit carefully!). If 13 digits, extract those 13 digits or prepend 4-digit birth year to make 17 digits.
-  - Copy exact digits into BOTH "doc_number" and "nid_number", and set "birth_reg_no": "".
-- If "birth_certificate":
-  - Extract the exact 17-digit Birth Registration Number (জন্ম নিবন্ধন নম্বর / Birth Registration Number / Personal Identification Number). Its first 4 digits typically match the 4-digit Birth Year (YYYY)!
-  - CRITICAL: NEVER confuse Father's NID, Mother's NID, or Registration Book/Certificate Serial Number with the 17-digit Birth Registration Number! Put Father's/Mother's NID ONLY into "father_nid" / "mother_nid".
-  - Copy exact 17 digits into BOTH "doc_number" and "birth_reg_no", and set "nid_number": "".
-- Strip all spaces, hyphens, and punctuation. Convert ALL Bengali numerals (০-৯) to English (0-9).
-
-C. "name_bn" & "name_en": Exact registered person's Bengali & ALL-CAPS English name (transliterate if document is single-script!).
-D. "dob" vs "registration_date": Date of Birth strictly DD/MM/YYYY with English digits. On Birth Certificates, use "জন্ম তারিখ / Date of Birth", NOT "নিবন্ধনের তারিখ / Date of Registration" or Issuance Date (put registration date into "registration_date").
-E. "gender": Strictly "পুরুষ" (Male), "নারী" (Female), or "হিজড়া" (Third Gender). Infer accurately if not printed.
-F. "father_name_bn" & "father_name_en":
-- Extract ONLY from "পিতা:" / "পিতার নাম:" / "Father's Name". Provide BOTH accurate Bengali & ALL-CAPS English!
-- CRITICAL FOR MARRIED WOMEN'S OLD LAMINATED NID: Old laminated NIDs for married women often print "স্বামী:" (Husband) instead of "পিতা:" (Father). NEVER put "স্বামী:" into "father_name_bn" or "father_name_en"! Leave father fields "" if "পিতা:" is absent, and put husband's name into "spouse_name_bn" / "spouse_name_en".
-G. "mother_name_bn" & "mother_name_en": Mother's accurate Bengali name & ALL-CAPS English!
-H. "spouse_name_bn" & "spouse_name_en": Husband/Wife name from "স্বামী:" or "স্ত্রী:" if printed; otherwise "".
-I. "relation_suggestion": One of ("স্বামী", "স্ত্রী", "পুত্র", "কন্যা", "পিতা", "মাতা", "ভাই", "বোন", "অন্যান্য").
-J. "marital_status_suggestion": One of ("বিবাহিত", "অবিবাহিত", "বিধবা", "বিপত্নীক", "তালাকপ্রাপ্ত").
-K. "confidence": "low" if blurry/glare/cropped/uncertain digits; "medium" if minor uncertainty; "high" if crystal clear.
+STRICT VERBATIM ZERO-CORRECTION DIRECTIVE (CRITICAL):
+- Extract the EXACT glyphs, characters, spelling, and punctuation as printed on the document image.
+- NEVER correct spelling or pronunciation:
+  - If printed "মন্ডল" (with dental-n / দন্ত্য-ন), output "মন্ডল" (DO NOT change to "মণ্ডল").
+  - If printed "মোসাঃ", output "মোসাঃ" (DO NOT change to "মোছাঃ" or "মোসাম্মাৎ").
+  - If printed "মোছাঃ", output "মোছাঃ" (DO NOT change to "মোসাঃ").
+  - If printed "আঃ", output "আঃ" (DO NOT expand to "আব্দুস").
+  - If printed "নুর", output "নুর" (DO NOT change to "নূর").
+  - If printed "আলী", output "আলী" (DO NOT change to "আলি").
+  - If printed "হোসেন", output "হোসেন" (DO NOT change to "হোসাইন").
+- NAME ENGLISH TRANSLITERATION RULES:
+  - If English is physically printed on the document (e.g. "Name:" line on NID, or bilingual columns on Digital Birth Certificates), extract the EXACT printed English text. NEVER overwrite printed English!
+  - If English is physically absent from the document (Bangla-only document or father/mother on NID):
+    - If Bengali name starts with "মোছাঃ" (or "মোছা:"), the English prefix MUST BE "MST." in ALL-CAPS (e.g. "মোছাঃ রহিমা খাতুন" -> "MST. ROHIMA KHATUN").
+    - If Bengali name starts with "মোঃ" (or "মো:"), the English prefix MUST BE "MD." (e.g. "মোঃ আঃ ছালাম" -> "MD. A. SALAM").
+    - If Bengali name starts with "মোসাঃ", keep "মোসাঃ" in Bengali and English is "MOSA." or "MST.".
+  - Set "detected_language" strictly to "bilingual", "bn_only", or "en_only".
+  - NEVER put Bengali characters inside *_en fields, NEVER put English letters inside *_bn fields, NEVER write "null" or "N/A".
+- ZERO HALLUCINATION / ZERO IMAGINED NUMBERS:
+  - NEVER guess, invent, fabricate, pad, or synthesize missing digits or names!
+  - If any number or field is blurred, incomplete, or absent, extract ONLY what is clearly visible. If completely unreadable, return "".
+  - On Birth Registration Certificates (জন্ম নিবন্ধন সনদপত্র):
+    - The Birth Registration Number is strictly 17 digits starting with the 4-digit birth year (YYYY...).
+    - NEVER confuse Father's NID or Mother's NID with the 17-digit Birth Registration Number! Put Father's/Mother's NID ONLY into "father_nid" and "mother_nid".
+    - NEVER invent digits to complete 17 digits.
+  - On NID Cards:
+    - Smart NID prints 10 digits under "NID No." / "জাতীয় পরিচয় নং".
+    - Classic laminated NID prints 13 or 17 digits at the bottom under "ID NO:". Extract only clearly visible digits.
+- DATES:
+  - Extract "dob" strictly in DD/MM/YYYY ASCII digits.
+  - On Birth Certificates, extract "জন্ম তারিখ / Date of Birth" into "dob", and extract "নিবন্ধনের তারিখ / Date of Registration" into "registration_date" (NEVER put registration date into "dob").
+- GENDER:
+  - Strictly "পুরুষ" (Male), "নারী" (Female), or "হিজড়া" (Third Gender). Infer accurately if omitted.
+- MARRIED WOMEN'S CLASSIC NID:
+  - If classic laminated NID prints "স্বামী:" (Husband), put that name into "spouse_name_bn" and "spouse_name_en". NEVER put husband's name into father fields!
+- "confidence": "low" if blurry/glare/cropped/uncertain digits; "medium" if minor uncertainty; "high" if crystal clear.
 
 Return ONLY a single valid JSON object with keys: doc_type, detected_language, doc_number, nid_number, birth_reg_no, father_nid, mother_nid, registration_date, name_bn, name_en, dob, gender, father_name_bn, father_name_en, mother_name_bn, mother_name_en, spouse_name_bn, spouse_name_en, relation_suggestion, marital_status_suggestion, confidence.
 `;
@@ -1347,14 +1408,17 @@ Return ONLY a single valid JSON object with keys: doc_type, detected_language, d
       padding: 0; flex-shrink: 0; transition: background 0.15s ease;
     }
     #fc-bm-dock-toggle:hover { background: rgba(255,255,255,0.24); }
-    #fc-bm-fab, #fc-bm-chat-btn, #fc-bm-summary-btn, #fc-bm-house-dock-btn, #fc-bm-backup-dock-btn {
+    #fc-bm-fab, #fc-bm-chat-btn, #fc-bm-summary-btn, #fc-bm-house-dock-btn, #fc-bm-backup-dock-btn, #fc-bm-timer-btn {
       color: #fff; padding: 8px 13px; border-radius: 999px;
       font-size: 12.5px; font-weight: 700; cursor: pointer; display: flex; align-items: center;
       gap: 5px; border: 1px solid rgba(255,255,255,0.25); user-select: none;
       animation: fc-bm-pop 0.25s ease; transition: transform 0.12s ease, filter 0.12s ease;
       white-space: nowrap;
     }
-    #fc-bm-fab:active, #fc-bm-chat-btn:active, #fc-bm-summary-btn:active, #fc-bm-house-dock-btn:active, #fc-bm-backup-dock-btn:active { transform: scale(0.97); }
+    #fc-bm-fab:active, #fc-bm-chat-btn:active, #fc-bm-summary-btn:active, #fc-bm-house-dock-btn:active, #fc-bm-backup-dock-btn:active, #fc-bm-timer-btn:active { transform: scale(0.97); }
+    #fc-bm-timer-btn { background: linear-gradient(135deg, #334155, #1e293b); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; box-shadow: 0 3px 10px rgba(15,23,42,0.38); }
+    #fc-bm-timer-btn.running { background: linear-gradient(135deg, #16a34a, #15803d); box-shadow: 0 3px 12px rgba(22,163,74,0.42); }
+    #fc-bm-timer-btn.ended { background: linear-gradient(135deg, #0284c7, #0369a1); box-shadow: 0 3px 12px rgba(2,132,199,0.38); }
     #fc-bm-fab { background: linear-gradient(135deg, #2563eb, #1d4ed8); box-shadow: 0 3px 12px rgba(37,99,235,0.4); }
     #fc-bm-chat-btn { background: linear-gradient(135deg, #4f46e5, #3730a3); box-shadow: 0 3px 12px rgba(79,70,229,0.38); position: relative; }
     #fc-bm-chat-badge {
@@ -1366,7 +1430,7 @@ Return ONLY a single valid JSON object with keys: doc_type, detected_language, d
     #fc-bm-summary-btn.ready { background: linear-gradient(135deg, #16a34a, #15803d); }
     @media (max-width: 520px) {
       #fc-bm-dock { bottom: 10px; right: 8px; gap: 4px; padding: 4px; border-radius: 22px; }
-      #fc-bm-fab, #fc-bm-chat-btn, #fc-bm-summary-btn { padding: 7px 10px; font-size: 11.5px; }
+      #fc-bm-fab, #fc-bm-chat-btn, #fc-bm-summary-btn, #fc-bm-timer-btn { padding: 7px 10px; font-size: 11.5px; }
       #fc-bm-dock-toggle { width: 30px; height: 30px; font-size: 13px; }
     }
     .fc-chat-feed {
@@ -1852,6 +1916,12 @@ Return ONLY a single valid JSON object with keys: doc_type, detected_language, d
   dockToggleBtn.title = 'ডক ছোট/বড় করুন';
   dockToggleBtn.textContent = dock.classList.contains('collapsed') ? '🪪' : '✕';
 
+  const timerDockBtn = document.createElement('div');
+  timerDockBtn.id = 'fc-bm-timer-btn';
+  timerDockBtn.title = 'সার্ভে সময় ও ডাটাবেস হিসাব';
+  timerDockBtn.innerHTML = '<span>⏱️ ০০:০০</span>';
+  timerDockBtn.addEventListener('click', () => openBmTimerModal());
+
   const summaryBtn = document.createElement('div');
   summaryBtn.id = 'fc-bm-summary-btn';
   summaryBtn.innerHTML = '<span>📊 সারসংক্ষেপ (0%)</span>';
@@ -1882,6 +1952,7 @@ Return ONLY a single valid JSON object with keys: doc_type, detected_language, d
   fab.innerHTML = '<span>📸 NID / সদস্য স্ক্যান</span>';
 
   dock.appendChild(dockToggleBtn);
+  dock.appendChild(timerDockBtn);
   dock.appendChild(summaryBtn);
   dock.appendChild(houseNoteDockBtn);
   dock.appendChild(backupDockBtn);
@@ -1987,7 +2058,7 @@ Return ONLY a single valid JSON object with keys: doc_type, detected_language, d
             </div>
           </div>
 
-          <input type="file" id="fc-bm-file-input" accept="image/*" capture="environment" style="display: none;">
+          <input type="file" id="fc-bm-file-input" accept="image/*,application/pdf" style="display: none;">
 
           <div id="fc-bm-viewfinder" class="fc-bm-cam-box mode-id" style="display: none;">
             <video id="fc-bm-video" playsinline autoplay muted></video>
@@ -3233,7 +3304,12 @@ Return ONLY a single valid JSON object with keys: doc_type, detected_language, d
     try {
       const maxDim = currentBmFrameMode === 'a4' ? 2200 : 1800;
       const base64Data = await compressImage(file, maxDim, 0.92);
-      imgPreview.src = base64Data;
+      if (String(base64Data).startsWith('data:application/pdf')) {
+        imgPreview.removeAttribute('src');
+        imgPreview.alt = `📄 PDF: ${file.name || 'document.pdf'}`;
+      } else {
+        imgPreview.src = base64Data;
+      }
       imgWrap.style.display = 'flex';
       viewFinder.style.display = 'none';
       btnCam.textContent = '🔄 পুনরায় ছবি তুলুন';
@@ -3258,9 +3334,14 @@ Return ONLY a single valid JSON object with keys: doc_type, detected_language, d
 
   function compressImage(file, maxDim = 2048, quality = 0.92) {
     return new Promise((resolve, reject) => {
+      const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
       const reader = new FileReader();
       reader.onerror = reject;
       reader.onload = (evt) => {
+        if (isPdf) {
+          resolve(evt.target.result);
+          return;
+        }
         const img = new Image();
         img.onerror = reject;
         img.onload = () => {
@@ -3326,6 +3407,32 @@ Return ONLY a single valid JSON object with keys: doc_type, detected_language, d
           if (yrHit) return yrHit;
         }
         return matches[0];
+      }
+      if (len === 17) {
+        for (const cand of candidates) {
+          if (!cand) continue;
+          const norm = normalizeDigits(String(cand));
+          if (birthYear) {
+            const m = norm.match(new RegExp(`(?:^|[^0-9])(${birthYear}\\d{13})(?:[^0-9]|$)`));
+            if (m && (!excludeSet || !excludeSet.has(m[1]))) return m[1];
+          }
+          const mGen = norm.match(/(?:^|[^0-9])((?:19|20)\d{15})(?:[^0-9]|$)/);
+          if (mGen && (!excludeSet || !excludeSet.has(mGen[1]))) return mGen[1];
+        }
+      } else if (len === 10) {
+        for (const cand of candidates) {
+          if (!cand) continue;
+          const norm = normalizeDigits(String(cand));
+          const m10 = norm.match(/(?:^|[^0-9])(\d{10})(?:[^0-9]|$)/);
+          if (m10 && (!excludeSet || !excludeSet.has(m10[1]))) return m10[1];
+        }
+      } else if (len === 13) {
+        for (const cand of candidates) {
+          if (!cand) continue;
+          const norm = normalizeDigits(String(cand));
+          const m13 = norm.match(/(?:^|[^0-9])(\d{13})(?:[^0-9]|$)/);
+          if (m13 && (!excludeSet || !excludeSet.has(m13[1]))) return m13[1];
+        }
       }
     }
     const longCand = active.find((d) => d.length >= 10);
@@ -3469,9 +3576,10 @@ Return ONLY a single valid JSON object with keys: doc_type, detected_language, d
 
   function buildGeminiAttemptsForModels(models, apiKey, rawBase64, detectedMime, promptText, opts = {}) {
     const { docType = 'auto', isEscalation = false } = opts;
+    const isPdf = /pdf/i.test(String(detectedMime || ''));
     const attempts = [];
     for (const model of models) {
-      if (INTERACTIONS_API_MODELS.has(model)) {
+      if (INTERACTIONS_API_MODELS.has(model) && !isPdf) {
         const useUltraHigh = (model === 'gemini-3.8-flash' || model === 'gemini-4-argon') && (docType === 'birth_certificate' || docType === 'auto' || isEscalation);
         const imageResolution = useUltraHigh ? 'ultra_high' : 'high';
         const body = {
@@ -3608,11 +3716,14 @@ Return ONLY a single valid JSON object with keys: doc_type, detected_language, d
   }
 
   function buildBilingualCompletionPrompt(partialData) {
-    return `Complete and verify ALL missing or wrong-script fields in this Bangladeshi Birth Certificate / NID JSON:
-1. BANGLA -> ENGLISH (*_bn to *_en): If any Bengali field (*_bn) is readable and its English counterpart (*_en) is blank or contains Bengali, accurately transliterate into standard Bangladeshi ALL-CAPS English (e.g. "মোঃ" -> "MD.", "মোছাঃ" -> "MST.", "রফিকুল ইসলাম" -> "RAFIQUL ISLAM", "বেগম" -> "BEGUM", "আক্তার" -> "AKTER", "রানী" -> "RANI", "দেবী" -> "DEVI").
-2. ENGLISH -> BANGLA (*_en to *_bn): If any English field (*_en) is present and its Bengali counterpart (*_bn) is blank or contains Latin letters, provide accurate standard Bangladeshi Bengali Unicode spelling (e.g. "MD." -> "মোঃ", "MST."/"MOSAMMAT" -> "মোছাঃ", "MOHAMMAD" -> "মোহাম্মদ", "ABDUL" -> "আব্দুল", "BEGUM" -> "বেগম", "KHATUN" -> "খাতুন", "RAHMAN" -> "রহমান", "UDDIN" -> "উদ্দিন", "HOSSAIN" -> "হোসেন").
-3. Do NOT copy spouse/husband into father fields.
-4. Ensure "dob" is strict ASCII "DD/MM/YYYY", infer "gender" ("পুরুষ", "নারী", or "হিজড়া") if missing, and provide "marital_status_suggestion", "relation_suggestion", and "doc_type".
+    return `Fill strictly MISSING fields in this Bangladeshi Birth Certificate / NID JSON:
+1. BANGLA -> ENGLISH (*_bn to *_en): Only if *_bn is readable and *_en is blank or contains Bengali, accurately transliterate into standard Bangladeshi ALL-CAPS English:
+   - If Bengali name begins with "মোছাঃ" (or "মোছা:"), the English prefix MUST BE "MST." (e.g. "মোছাঃ রহিমা খাতুন" -> "MST. ROHIMA KHATUN").
+   - If Bengali name begins with "মোঃ" (or "মো:"), the English prefix MUST BE "MD." (e.g. "মোঃ আঃ ছালাম" -> "MD. A. SALAM").
+   - If Bengali name begins with "মোসাঃ", keep "মোসাঃ" and English prefix is "MOSA." or "MST.".
+2. PRESERVE ORIGINAL BENGALI TEXT: NEVER change, correct, or normalize existing Bengali spellings (e.g. keep "মন্ডল", "মোসাঃ", "আঃ", "নুর" unchanged).
+3. ENGLISH -> BANGLA (*_en to *_bn): Only if *_en is present and *_bn is blank or contains Latin letters, provide accurate standard Bangladeshi Bengali Unicode spelling.
+4. Do NOT copy spouse/husband into father fields. Ensure "dob" is strict ASCII "DD/MM/YYYY", infer "gender" ("পুরুষ", "নারী", or "হিজড়া") if missing, and provide "marital_status_suggestion", "relation_suggestion", and "doc_type".
 5. NEVER return "null", "N/A", label prefixes like "পিতার নাম:", Bengali letters inside *_en, or English letters inside *_bn.
 Return ONLY one valid JSON object with keys: doc_type, name_bn, name_en, father_name_bn, father_name_en, mother_name_bn, mother_name_en, spouse_name_bn, spouse_name_en, dob, gender, marital_status_suggestion, relation_suggestion.
 Input JSON:
@@ -3650,7 +3761,7 @@ ${JSON.stringify({
           body: JSON.stringify({
             model,
             messages: [
-              { role: 'system', content: 'You are an expert Bangladeshi identity document specialist. Output ONLY one valid JSON object completing both Bengali (*_bn) and ALL-CAPS English (*_en) fields cleanly.' },
+              { role: 'system', content: 'You are an expert Bangladeshi identity document specialist. Fill only missing fields faithfully without changing or altering any existing Bengali spelling. Output strictly one valid JSON object.' },
               { role: 'user', content: compPrompt }
             ],
             response_format: { type: 'json_object' },
@@ -3707,8 +3818,17 @@ ${JSON.stringify({
   }
 
   async function callDeepSeekVisionOCR(deepseekKey, rawBase64, detectedMime, promptText, deepseekModel = 'deepseek-flash') {
-    const prefModel = normalizeModelId(deepseekModel) === 'deepseek-flash' ? 'deepseek-flash' : 'deepseek-chat';
-    const modelCandidates = Array.from(new Set([prefModel, 'deepseek-chat', 'deepseek-flash']));
+    if (/pdf/i.test(String(detectedMime || ''))) {
+      const err = new Error('DeepSeek Vision সরাসরি PDF ফাইল সাপোর্ট করে না (JPEG/PNG প্রয়োজন)।');
+      err.isVisionUnsupported = true;
+      throw err;
+    }
+    const normalizedPref = normalizeModelId(deepseekModel);
+    const rawReq = String(deepseekModel || '').trim();
+    const modelCandidates = ['deepseek-flash'];
+    if (rawReq && normalizedPref !== 'deepseek-flash' && !/^deepseek-chat$/i.test(rawReq) && !modelCandidates.includes(rawReq)) {
+      modelCandidates.push(rawReq);
+    }
     let lastErr = 'DeepSeek থেকে কোনো উত্তর পাওয়া যায়নি।';
 
     for (const targetModel of modelCandidates) {
@@ -3721,7 +3841,7 @@ ${JSON.stringify({
             messages: [
               {
                 role: 'system',
-                content: 'You are an expert Bangladeshi NID and Birth Certificate OCR engine. Even when a Birth Certificate is printed ONLY in Bengali, ALWAYS output BOTH *_bn AND ALL-CAPS transliterated English *_en fields in one single valid JSON object.'
+                content: 'You are an ultra-precise OCR engine for Bangladeshi identity documents (NID and Birth Certificates). Extract text EXACTLY as printed on the document without modifying, rewriting, or correcting spellings. If a Bengali name begins with "মোছাঃ" (or "মোছা:"), its English prefix is "MST.". If it begins with "মোঃ", its English prefix is "MD.". NEVER invent, guess, or synthesize digits or fields. Output strictly one valid JSON object.'
               },
               {
                 role: 'user',
@@ -3783,7 +3903,9 @@ ${JSON.stringify({
                   deepseekApiKey: deepseekKey
                 })
               });
-              const ej = await edgeRes.json().catch(() => ({}));
+              const ej = (edgeRes && edgeRes.ok && /application\/json/i.test(edgeRes.headers.get('content-type') || ''))
+                ? await edgeRes.json().catch(() => ({}))
+                : {};
               if (ej && ej.success && ej.data) {
                 if (!ej.data.ocr_usage) ej.data.ocr_usage = computeScanUsageAndCost(targetModel, {});
                 return ej.data;
@@ -3913,7 +4035,7 @@ ${JSON.stringify({
           const isFlagship = prefGemModel === 'gemini-3.8-flash' || prefGemModel === 'gemini-4-argon';
           const firstProfile = isFlagship ? 'preferred' : 'lite_only';
           const primaryRes = await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, firstProfile, prefGemModel, { docType });
-          if (!needsAccurateEscalation(primaryRes, docType) || prefGemModel === 'gemini-3.8-flash') return await finalizeWithDeepSeekIfNeeded(primaryRes);
+          if (!needsAccurateEscalation(primaryRes, docType) || isFlagship) return await finalizeWithDeepSeekIfNeeded(primaryRes);
           try {
             emit(70, 'তথ্য আরও নিখুঁত করতে Gemini 3.8 Flash দিয়ে যাচাই চলছে...');
             const escRes = await callGeminiResilientOCR(gKey, rawBase64, detectedMime, promptText, 'flash38_only', prefGemModel, { docType, isEscalation: true });
@@ -4007,27 +4129,30 @@ ${JSON.stringify({
     const dobDigits = extractDigitCandidate(data.dob);
     const fatherNid = extractDigitCandidate(data.father_nid);
     const motherNid = extractDigitCandidate(data.mother_nid);
+    data.father_nid = fatherNid;
+    data.mother_nid = motherNid;
     const parentExclude = new Set([fatherNid, motherNid, dobDigits].filter(Boolean));
 
     const rawAiNid = extractDigitCandidate(data.nid_number);
     const rawAiBrc = extractDigitCandidate(data.birth_reg_no);
     const cleanNidNotParent = rawAiNid && !parentExclude.has(rawAiNid) ? rawAiNid : '';
+    const hasStrongBrcMetadata = Boolean(fatherNid || motherNid || data.registration_date);
     const hasBrcEvidence =
       data.doc_type === 'birth_certificate' ||
-      Boolean(fatherNid || motherNid || data.registration_date) ||
+      hasStrongBrcMetadata ||
       (!cleanNidNotParent && rawAiBrc.length === 17);
 
     if (docTypeChoice === 'birth_certificate') {
       data.doc_type = 'birth_certificate';
     } else if (docTypeChoice === 'nid') {
-      if (data.doc_type === 'birth_certificate' && rawAiBrc.length === 17 && !cleanNidNotParent) {
+      if (data.doc_type === 'birth_certificate' && rawAiBrc.length === 17 && (!cleanNidNotParent || hasStrongBrcMetadata)) {
         data.doc_type = 'birth_certificate';
         warnings.push('ডকুমেন্ট ধরন NID থাকলেও ছবিটি জন্ম নিবন্ধন (১৭ ডিজিট BRC) হিসেবে শনাক্ত হয়েছে।');
       } else {
         data.doc_type = 'nid';
       }
     } else {
-      if (data.doc_type === 'birth_certificate' || (hasBrcEvidence && !cleanNidNotParent)) {
+      if (data.doc_type === 'birth_certificate' || (hasBrcEvidence && (!cleanNidNotParent || (rawAiBrc.length === 17 && hasStrongBrcMetadata)))) {
         data.doc_type = 'birth_certificate';
       } else {
         data.doc_type = data.doc_type || 'nid';
@@ -4154,10 +4279,14 @@ ${JSON.stringify({
       warnings.push('ছবিটি কিছুটা ঝাপসা/অস্পষ্ট মনে হচ্ছে — সাবমিটের আগে সব তথ্য যাচাই করুন।');
     }
 
-    if (data.name_en) data.name_en = String(data.name_en).toUpperCase().trim();
-    if (data.father_name_en) data.father_name_en = String(data.father_name_en).toUpperCase().trim();
-    if (data.mother_name_en) data.mother_name_en = String(data.mother_name_en).toUpperCase().trim();
-    if (data.spouse_name_en) data.spouse_name_en = String(data.spouse_name_en).toUpperCase().trim();
+    for (const [bnK, enK] of [
+      ['name_bn', 'name_en'],
+      ['father_name_bn', 'father_name_en'],
+      ['mother_name_bn', 'mother_name_en'],
+      ['spouse_name_bn', 'spouse_name_en']
+    ]) {
+      if (data[enK]) data[enK] = normalizeEnglishHonorificPrefix(data[enK], data[bnK]);
+    }
 
     const missingFields = [];
     if (!String(data.name_bn || '').trim() || !hasBengaliScript(data.name_bn)) missingFields.push('name_bn');
@@ -4332,6 +4461,7 @@ ${JSON.stringify({
 
         lastExtractedData = data;
         cacheFamilyScan(data);
+        adoptOrStartPortalTimerForScan(data, { startReason: 'bm_ocr_scan' });
         renderLastScanPreview(data);
         window.__fcStep1FilledKey = '';
         modal.style.display = 'none';
@@ -6361,7 +6491,12 @@ ${JSON.stringify({
       const lng = lastCapturedHouseGps?.lng || 89.644;
       const accuracy = lastCapturedHouseGps?.accuracy || 15;
       const plusCode = lastCapturedHouseGps?.plusCode || encodePlusCode(lat, lng);
-      const nowIso = new Date().toISOString();
+      const nowMs = Date.now();
+      const nowIso = new Date(nowMs).toISOString();
+      const curTimer = getPortalSurveyTimerState() || startPortalSurveyTimer({ docId: rawId, applicantName: lady, startReason: 'house_note_save' });
+      const timerStartMs = curTimer?.startedAtMs || nowMs;
+      const timerDurationSec = Math.max(0, Math.round((nowMs - timerStartMs) / 1000));
+      const timerDurationLabel = formatPortalTimerDurationLabel(timerDurationSec);
 
       const houseObj = {
         docId: rawId,
@@ -6372,6 +6507,12 @@ ${JSON.stringify({
         notes,
         issues,
         survey_status: surveyStatus,
+        survey_session_id: curTimer?.sessionId || '',
+        survey_started_at: new Date(timerStartMs).toISOString(),
+        survey_ended_at: nowIso,
+        survey_duration_sec: timerDurationSec,
+        survey_duration_label: timerDurationLabel,
+        survey_timer_status: 'ended',
         lat,
         lng,
         accuracy,
@@ -6388,6 +6529,12 @@ ${JSON.stringify({
           mobile_number: { stringValue: phone },
           notes: { stringValue: notes },
           survey_status: { stringValue: surveyStatus },
+          survey_session_id: { stringValue: curTimer?.sessionId || '' },
+          survey_started_at: { timestampValue: new Date(timerStartMs).toISOString() },
+          survey_ended_at: { timestampValue: nowIso },
+          survey_duration_sec: { integerValue: String(timerDurationSec) },
+          survey_duration_label: { stringValue: timerDurationLabel },
+          survey_timer_status: { stringValue: 'ended' },
           lat: { doubleValue: lat },
           lng: { doubleValue: lng },
           accuracy: { integerValue: String(accuracy) },
@@ -6409,13 +6556,20 @@ ${JSON.stringify({
 
         sendRoomMessage({
           type: 'survey_house_saved',
-          text: `📍 বাড়ি সেভ করা হয়েছে: ${lady} (${isBlocked ? '🔴 ব্লকড' : '🟠 সমস্যাযুক্ত'})`,
+          text: `📍 বাড়ি সেভ করা হয়েছে: ${lady} (${isBlocked ? '🔴 ব্লকড' : '🟠 সমস্যাযুক্ত'}) • ⏱️ ${timerDurationLabel}`,
           payload: houseObj
+        });
+        endPortalSurveyTimer('house_note_saved', {
+          endedAtMs: nowMs,
+          docId: rawId,
+          applicantName: lady,
+          surveyStatus,
+          skipDocPatch: true
         });
       } catch (_) {}
 
       closeModal();
-      showToast(`📍 ${lady}-এর বাড়ি সমস্যাযুক্ত হিসেবে ম্যাপে সংরক্ষিত!`);
+      showToast(`📍 ${lady}-এর বাড়ি সমস্যাযুক্ত হিসেবে ম্যাপে সংরক্ষিত! (⏱️ ${timerDurationLabel})`);
     };
   }
 
@@ -10816,12 +10970,15 @@ ${JSON.stringify({
     const s = collectFullFamilyCardSummary();
 
     const headerColor = s.readinessPct >= 85 && s.blockers.length === 0 ? '#15803d' : (s.readinessPct >= 50 ? '#b45309' : '#b91c1c');
+    const curTimerSnap = getPortalSurveyTimerState();
+    const curTimerSec = getPortalTimerElapsedSec(curTimerSnap);
+    const curTimerLabel = curTimerSnap ? `${curTimerSnap.status === 'ended' ? '✅ শেষ সময়' : '⏱️ চলমান সময়'}: ${formatPortalTimerDurationLabel(curTimerSec)}` : '⏱️ সময়: ০০:০০';
     let html = `
       <div class="fc-sum-card" style="border-color: ${headerColor}; background: #f8fafc;">
         <div class="fc-sum-row">
           <div>
             <div style="font-weight: 800; font-size: 13.5px; color: #0f172a;">🆔 পরিবার আইডি: ${escapeHtml(s.familyId || 'নেই')}</div>
-            <div style="font-size: 11.5px; color: #475569; margin-top: 2px;">👤 ${escapeHtml(s.applicant.nameBn || 'আবেদনকারী অজানা')} • 📱 ${escapeHtml(s.applicant.mobile || 'নেই')}</div>
+            <div style="font-size: 11.5px; color: #475569; margin-top: 2px;">👤 ${escapeHtml(s.applicant.nameBn || 'আবেদনকারী অজানা')} • 📱 ${escapeHtml(s.applicant.mobile || 'নেই')} • <b>${escapeHtml(curTimerLabel)}</b></div>
           </div>
           <div style="text-align: right;">
             <span style="background: ${headerColor}; color: #fff; padding: 4px 10px; border-radius: 20px; font-weight: 800; font-size: 12px;">প্রস্তুতি ${toBnDigits(s.readinessPct)}%</span>
@@ -11345,6 +11502,11 @@ ${JSON.stringify({
         });
         lastExtractedData = norm;
         cacheFamilyScan(norm);
+        adoptOrStartPortalTimerForScan(norm, {
+          startReason: 'bm_room_fill_applicant',
+          remoteStartedAtMs: Number(msg.payload?.survey_started_at_ms || 0),
+          remoteSessionId: String(msg.payload?.survey_session_id || '')
+        });
         renderLastScanPreview(norm);
         window.__fcStep1FilledKey = '';
         cm.style.display = 'none';
@@ -11486,6 +11648,11 @@ ${JSON.stringify({
         });
         lastExtractedData = norm;
         cacheFamilyScan(norm);
+        adoptOrStartPortalTimerForScan(norm, {
+          startReason: 'bm_room_fill_applicant',
+          remoteStartedAtMs: Number(msg.payload?.survey_started_at_ms || 0),
+          remoteSessionId: String(msg.payload?.survey_session_id || '')
+        });
         renderLastScanPreview(norm);
         window.__fcStep1FilledKey = '';
         fillPortalFields(norm, { overwriteExisting: false });
@@ -11802,7 +11969,633 @@ ${JSON.stringify({
     if (summaryBtn.className !== cls) summaryBtn.className = cls;
   }
 
+  // ==========================================================================
+  // ⏱️ SINGLE-SURVEY AUTOMATIC TIMER & FIRESTORE DB PERSISTENCE ENGINE
+  // ==========================================================================
+  const PORTAL_TIMER_STORAGE_KEY = 'fc_portal_active_survey_timer_v1';
+  const PORTAL_TIMER_PENDING_KEY = 'fc_portal_pending_survey_timers_v1';
+  const PORTAL_TIMER_HISTORY_KEY = 'fc_portal_survey_timer_history_v1';
+  const FIRESTORE_SURVEY_TIMERS_LOG_BASE = 'https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/SURVEY_TIMERS/logs';
+  const FIRESTORE_SURVEY_TIMERS_COLLECTION_BASE = 'https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/survey_timers';
+  const EDGE_SURVEY_TIMER_API = 'https://familycard-10n.pages.dev/api/survey-timer';
+
+  let activePortalTimer = null;
+  let portalTimerTickInterval = null;
+  let portalTimerHooksAttached = false;
+  let pendingPortalSubmitAt = 0;
+
+  function formatPortalTimerClock(totalSec = 0) {
+    const sec = Math.max(0, Math.round(Number(totalSec) || 0));
+    const hrs = Math.floor(sec / 3600);
+    const mins = Math.floor((sec % 3600) / 60);
+    const rem = sec % 60;
+    const pad = (n) => toBnDigits(String(n).padStart(2, '0'));
+    return hrs > 0 ? `${pad(hrs)}:${pad(mins)}:${pad(rem)}` : `${pad(mins)}:${pad(rem)}`;
+  }
+
+  function formatPortalTimerDurationLabel(totalSec = 0) {
+    const sec = Math.max(0, Math.round(Number(totalSec) || 0));
+    const hrs = Math.floor(sec / 3600);
+    const mins = Math.floor((sec % 3600) / 60);
+    const rem = sec % 60;
+    if (hrs > 0) return `${toBnDigits(hrs)} ঘঃ ${toBnDigits(mins)} মিঃ ${toBnDigits(rem)} সেঃ`;
+    if (mins > 0) return `${toBnDigits(mins)} মিঃ ${toBnDigits(rem)} সেঃ`;
+    return `${toBnDigits(sec)} সেঃ`;
+  }
+
+  function getPortalTimerElapsedSec(state = activePortalTimer, nowMs = Date.now()) {
+    if (!state || !state.startedAtMs) return 0;
+    if (state.status === 'ended') {
+      if (typeof state.durationSec === 'number') return Math.max(0, state.durationSec);
+      if (state.endedAtMs) return Math.max(0, Math.round((state.endedAtMs - state.startedAtMs) / 1000));
+    }
+    return Math.max(0, Math.round((nowMs - state.startedAtMs) / 1000));
+  }
+
+  function getPortalSurveyTimerState() {
+    if (activePortalTimer) return activePortalTimer;
+    try {
+      const raw = localStorage.getItem(PORTAL_TIMER_STORAGE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.sessionId) activePortalTimer = parsed;
+    } catch (_) {}
+    return activePortalTimer;
+  }
+
+  function savePortalSurveyTimerState(state) {
+    activePortalTimer = state;
+    try {
+      if (state) localStorage.setItem(PORTAL_TIMER_STORAGE_KEY, JSON.stringify(state));
+      else localStorage.removeItem(PORTAL_TIMER_STORAGE_KEY);
+    } catch (_) {}
+  }
+
+  function pushPortalTimerLocalHistory(entry) {
+    if (!entry || !entry.sessionId) return;
+    try {
+      const arr = JSON.parse(localStorage.getItem(PORTAL_TIMER_HISTORY_KEY) || '[]');
+      const next = Array.isArray(arr) ? arr.filter((x) => x && x.sessionId !== entry.sessionId) : [];
+      next.unshift(entry);
+      localStorage.setItem(PORTAL_TIMER_HISTORY_KEY, JSON.stringify(next.slice(0, 60)));
+    } catch (_) {}
+  }
+
+  function updateBmTimerBadgeUI() {
+    const btn = document.getElementById('fc-bm-timer-btn') || timerDockBtn;
+    const st = getPortalSurveyTimerState();
+    const sec = getPortalTimerElapsedSec(st);
+    const clock = formatPortalTimerClock(sec);
+    if (btn) {
+      btn.classList.remove('running', 'ended');
+      let label = `⏱️ ${clock}`;
+      if (st && st.status === 'running') {
+        btn.classList.add('running');
+        label = `⏱️ ${clock}`;
+      } else if (st && st.status === 'ended') {
+        btn.classList.add('ended');
+        label = `✅ ${clock}`;
+      }
+      if (btn.dataset.lastLabel !== label) {
+        btn.dataset.lastLabel = label;
+        btn.innerHTML = `<span>${label}</span>`;
+      }
+    }
+    const mClock = document.getElementById('fc-bm-tm-clock');
+    const mStatus = document.getElementById('fc-bm-tm-status');
+    if (mClock) mClock.textContent = clock;
+    if (mStatus) {
+      mStatus.textContent = st && st.status === 'running'
+        ? `চলমান (${formatPortalTimerDurationLabel(sec)})`
+        : (st && st.status === 'ended' ? `সম্পন্ন: ${formatPortalTimerDurationLabel(sec)}` : 'প্রস্তুত');
+    }
+  }
+
+  function startPortalTimerTicker() {
+    if (portalTimerTickInterval) clearInterval(portalTimerTickInterval);
+    portalTimerTickInterval = setInterval(() => {
+      const st = getPortalSurveyTimerState();
+      if (st && st.status === 'running') updateBmTimerBadgeUI();
+    }, 1000);
+  }
+
+  function startPortalSurveyTimer(meta = {}) {
+    const prev = getPortalSurveyTimerState();
+    if (meta.archivePreviousIfMeaningful && prev && prev.status === 'running') {
+      const prevSec = getPortalTimerElapsedSec(prev);
+      if (prevSec >= 3 && (prev.familyId || prev.docId || prev.docNumber || prev.applicantName)) {
+        endPortalSurveyTimer('new_survey_rollover', { skipBroadcast: true });
+      }
+    }
+    const now = Date.now();
+    const curUrlKey = (window.location?.pathname || '') + (window.location?.search || '');
+    const state = {
+      sessionId: meta.sessionId || `srv_${now}_${Math.random().toString(36).slice(2, 7)}`,
+      status: 'running',
+      startedAtMs: Number(meta.startedAtMs) > 0 ? Number(meta.startedAtMs) : now,
+      endedAtMs: null,
+      durationSec: 0,
+      durationMs: 0,
+      durationLabel: '০ সেঃ',
+      familyId: String(meta.familyId || '').trim(),
+      docId: String(meta.docId || meta.familyId || '').trim(),
+      docNumber: String(meta.docNumber || '').trim(),
+      applicantName: String(meta.applicantName || '').trim(),
+      docType: String(meta.docType || '').trim(),
+      portalUrlKey: String(meta.portalUrlKey || curUrlKey),
+      startReason: String(meta.startReason || 'portal_new_survey'),
+      endReason: '',
+      readinessPct: 0,
+      pendingSubmitAt: 0,
+      syncedToDb: false
+    };
+    pendingPortalSubmitAt = 0;
+    savePortalSurveyTimerState(state);
+    startPortalTimerTicker();
+    updateBmTimerBadgeUI();
+    return state;
+  }
+
+  function adoptOrStartPortalTimerForScan(data, meta = {}) {
+    if (!data) return getPortalSurveyTimerState();
+    const curFid = scrapeFamilyId() || data.family_id || '';
+    const docNumber = String(data.doc_number || data.nid_number || data.birth_reg_no || '').trim();
+    const applicantName = String(data.name_bn || data.name_en || '').trim();
+    const docType = String(data.doc_type || 'nid').trim();
+    const st = getPortalSurveyTimerState();
+    const now = Date.now();
+    const validRemoteStart = Number(meta.remoteStartedAtMs) > 0 && (now - Number(meta.remoteStartedAtMs)) < 6 * 3600 * 1000
+      ? Number(meta.remoteStartedAtMs)
+      : 0;
+
+    if (!st || st.status === 'ended') {
+      return startPortalSurveyTimer({
+        sessionId: validRemoteStart && meta.remoteSessionId ? meta.remoteSessionId : undefined,
+        startedAtMs: validRemoteStart || now,
+        familyId: curFid,
+        docId: curFid || docNumber,
+        docNumber,
+        applicantName,
+        docType,
+        startReason: meta.startReason || 'ocr_scan'
+      });
+    }
+
+    if (curFid && st.familyId && curFid !== st.familyId) {
+      return startPortalSurveyTimer({
+        archivePreviousIfMeaningful: true,
+        sessionId: validRemoteStart && meta.remoteSessionId ? meta.remoteSessionId : undefined,
+        startedAtMs: validRemoteStart || now,
+        familyId: curFid,
+        docId: curFid || docNumber,
+        docNumber,
+        applicantName,
+        docType,
+        startReason: meta.startReason || 'new_family_scan'
+      });
+    }
+
+    if (validRemoteStart && validRemoteStart < st.startedAtMs && (st.startedAtMs - validRemoteStart) < 3600000) {
+      st.startedAtMs = validRemoteStart;
+      if (meta.remoteSessionId) st.sessionId = meta.remoteSessionId;
+    }
+    if (curFid && !st.familyId) st.familyId = curFid;
+    if (docNumber) st.docNumber = docNumber;
+    if (!st.docId && (curFid || docNumber)) st.docId = curFid || docNumber;
+    if (applicantName) st.applicantName = applicantName;
+    if (docType) st.docType = docType;
+    savePortalSurveyTimerState(st);
+    updateBmTimerBadgeUI();
+    return st;
+  }
+
+  async function persistPortalSurveyTimerToDb(entry, opts = {}) {
+    if (!entry || !entry.sessionId) return false;
+    const payload = {
+      sessionId: entry.sessionId,
+      familyId: entry.familyId || '',
+      docId: entry.docId || entry.familyId || entry.docNumber || '',
+      applicantName: entry.applicantName || '',
+      docType: entry.docType || '',
+      source: 'bookmarklet',
+      roomCode: typeof roomCode === 'string' ? roomCode : '',
+      deviceName: typeof myDeviceName === 'string' ? myDeviceName : '',
+      surveyStatus: entry.surveyStatus || 'COMPLETED',
+      status: 'ended',
+      readinessPct: Number(entry.readinessPct || 0),
+      startReason: entry.startReason || 'portal_survey',
+      endReason: entry.endReason || 'portal_submit',
+      startedAtMs: entry.startedAtMs,
+      endedAtMs: entry.endedAtMs,
+      durationMs: entry.durationMs,
+      durationSec: entry.durationSec,
+      durationLabel: entry.durationLabel
+    };
+
+    try {
+      const q = JSON.parse(localStorage.getItem(PORTAL_TIMER_PENDING_KEY) || '[]');
+      const next = q.filter((x) => x && x.sessionId !== payload.sessionId);
+      next.push(payload);
+      localStorage.setItem(PORTAL_TIMER_PENDING_KEY, JSON.stringify(next.slice(-30)));
+    } catch (_) {}
+
+    const fields = {
+      session_id: { stringValue: payload.sessionId },
+      family_id: { stringValue: payload.familyId },
+      doc_id: { stringValue: payload.docId },
+      applicant_name: { stringValue: payload.applicantName },
+      doc_type: { stringValue: payload.docType },
+      source: { stringValue: payload.source },
+      room_code: { stringValue: payload.roomCode },
+      device_name: { stringValue: payload.deviceName },
+      survey_status: { stringValue: payload.surveyStatus },
+      timer_status: { stringValue: 'ended' },
+      readiness_pct: { integerValue: String(payload.readinessPct) },
+      start_reason: { stringValue: payload.startReason },
+      end_reason: { stringValue: payload.endReason },
+      started_at_ms: { integerValue: String(payload.startedAtMs) },
+      ended_at_ms: { integerValue: String(payload.endedAtMs) },
+      started_at: { timestampValue: new Date(payload.startedAtMs).toISOString() },
+      ended_at: { timestampValue: new Date(payload.endedAtMs).toISOString() },
+      duration_ms: { integerValue: String(payload.durationMs) },
+      duration_sec: { integerValue: String(payload.durationSec) },
+      duration_label: { stringValue: payload.durationLabel }
+    };
+    const mask = Object.keys(fields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
+    let synced = false;
+    try {
+      const bodyStr = JSON.stringify({ fields });
+      const [fsRes] = await Promise.all([
+        fetch(`${FIRESTORE_SURVEY_TIMERS_LOG_BASE}/${encodeURIComponent(payload.sessionId)}?${mask}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: bodyStr,
+          keepalive: true
+        }).catch(() => null),
+        fetch(`${FIRESTORE_SURVEY_TIMERS_COLLECTION_BASE}/${encodeURIComponent(payload.sessionId)}?${mask}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: bodyStr,
+          keepalive: true
+        }).catch(() => null)
+      ]);
+      if (fsRes && fsRes.ok) synced = true;
+
+      const targetDocIds = !opts.skipDocPatch
+        ? Array.from(new Set([payload.familyId, payload.docId].filter((id) => id && id !== 'SURVEY_TIMERS')))
+        : [];
+      if (targetDocIds.length > 0) {
+        const docFields = {
+          survey_session_id: { stringValue: payload.sessionId },
+          survey_started_at: { timestampValue: new Date(payload.startedAtMs).toISOString() },
+          survey_ended_at: { timestampValue: new Date(payload.endedAtMs).toISOString() },
+          survey_duration_sec: { integerValue: String(payload.durationSec) },
+          survey_duration_label: { stringValue: payload.durationLabel },
+          survey_timer_status: { stringValue: 'ended' }
+        };
+        const docMask = Object.keys(docFields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
+        for (const targetId of targetDocIds) {
+          fetch(`https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(targetId)}?${docMask}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fields: docFields }),
+            keepalive: true
+          }).catch(() => {});
+          fetch(`https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(targetId)}/logs/${encodeURIComponent(`timer_${payload.sessionId}`)}?${mask}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: bodyStr,
+            keepalive: true
+          }).catch(() => {});
+        }
+      }
+
+      const edgeRes = await fetch(EDGE_SURVEY_TIMER_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        keepalive: true
+      }).catch(() => null);
+      if (edgeRes && edgeRes.ok) synced = true;
+    } catch (_) {}
+
+    if (synced) {
+      try {
+        const q = JSON.parse(localStorage.getItem(PORTAL_TIMER_PENDING_KEY) || '[]');
+        localStorage.setItem(PORTAL_TIMER_PENDING_KEY, JSON.stringify(q.filter((x) => x && x.sessionId !== payload.sessionId)));
+      } catch (_) {}
+    }
+    return synced;
+  }
+
+  async function flushPendingPortalTimers() {
+    try {
+      const q = JSON.parse(localStorage.getItem(PORTAL_TIMER_PENDING_KEY) || '[]');
+      if (!Array.isArray(q) || q.length === 0) return;
+      for (const item of q.slice(0, 10)) {
+        await persistPortalSurveyTimerToDb(item, { skipDocPatch: true });
+      }
+    } catch (_) {}
+  }
+
+  async function endPortalSurveyTimer(endReason = 'portal_submit', opts = {}) {
+    const st = getPortalSurveyTimerState();
+    if (!st) return null;
+    if (st.status === 'ended' && !opts.forceUpdate) return st;
+
+    const now = Number(opts.endedAtMs) > 0 ? Number(opts.endedAtMs) : Date.now();
+    const endedAtMs = Math.max(st.startedAtMs, now);
+    const durationMs = Math.max(0, endedAtMs - st.startedAtMs);
+    const durationSec = Math.round(durationMs / 1000);
+    const durationLabel = formatPortalTimerDurationLabel(durationSec);
+    const summarySnap = typeof collectFullFamilyCardSummary === 'function' ? collectFullFamilyCardSummary() : null;
+
+    const finalState = {
+      ...st,
+      status: 'ended',
+      endedAtMs,
+      durationMs,
+      durationSec,
+      durationLabel,
+      familyId: String(opts.familyId || st.familyId || summarySnap?.familyId || '').trim(),
+      docId: String(opts.docId || st.docId || opts.familyId || st.familyId || summarySnap?.familyId || summarySnap?.applicant?.nid || st.docNumber || '').trim(),
+      applicantName: String(opts.applicantName || st.applicantName || summarySnap?.applicant?.nameBn || '').trim(),
+      readinessPct: Number(opts.readinessPct ?? summarySnap?.readinessPct ?? st.readinessPct ?? 0),
+      surveyStatus: String(opts.surveyStatus || ((summarySnap?.readinessPct || 0) >= 85 && (summarySnap?.blockers?.length || 0) === 0 ? 'COMPLETED' : 'ENDED')),
+      endReason: String(endReason || 'portal_submit'),
+      syncedToDb: false
+    };
+    savePortalSurveyTimerState(finalState);
+    pushPortalTimerLocalHistory(finalState);
+    updateBmTimerBadgeUI();
+
+    if (!opts.skipBroadcast && typeof sendRoomMessage === 'function') {
+      Promise.resolve(sendRoomMessage({
+        type: 'survey_timer_ended',
+        text: `⏱️ জরিপ সম্পন্ন (${finalState.applicantName || finalState.familyId || finalState.docId || 'সার্ভে'}): ${durationLabel}`,
+        payload: {
+          sessionId: finalState.sessionId,
+          familyId: finalState.familyId,
+          docId: finalState.docId,
+          applicantName: finalState.applicantName,
+          endedAtMs: finalState.endedAtMs,
+          durationSec: finalState.durationSec,
+          durationLabel: finalState.durationLabel,
+          endReason: finalState.endReason
+        }
+      })).catch(() => {});
+    }
+
+    const synced = await persistPortalSurveyTimerToDb(finalState, { skipDocPatch: Boolean(opts.skipDocPatch) });
+    if (activePortalTimer && activePortalTimer.sessionId === finalState.sessionId) {
+      activePortalTimer.syncedToDb = synced;
+      savePortalSurveyTimerState(activePortalTimer);
+      updateBmTimerBadgeUI();
+    }
+    return finalState;
+  }
+
+  function isPortalSurveyFormVisible() {
+    return Boolean(document.querySelector('[data-family-card-tab], .family-card-form-step, .family-card-form-footer__btn--submit, #tab0, #tab1'));
+  }
+
+  function isStep0BlankForNewSurvey() {
+    const tab0 = document.querySelector('[data-family-card-tab="0"]');
+    if (!tab0 || !isPanelActiveVisible(tab0)) return false;
+    const inputs = Array.from(tab0.querySelectorAll('input')).filter(i => !/hidden|checkbox|radio|button|submit|file/i.test(i.type || ''));
+    if (inputs.length === 0) return false;
+    return inputs.every(i => !String(i.value || '').trim());
+  }
+
+  function syncPortalSurveyLifecycle() {
+    const formOpen = isPortalSurveyFormVisible();
+    const curFid = scrapeFamilyId() || '';
+    const curUrlKey = (window.location?.pathname || '') + (window.location?.search || '');
+    const st = getPortalSurveyTimerState();
+    const now = Date.now();
+
+    if (formOpen) {
+      if (!st) {
+        startPortalSurveyTimer({ familyId: curFid, portalUrlKey: curUrlKey, startReason: 'portal_form_open' });
+        return;
+      }
+      if (st.status === 'running') {
+        if (st.familyId && curFid && curFid !== st.familyId) {
+          startPortalSurveyTimer({
+            archivePreviousIfMeaningful: true,
+            familyId: curFid,
+            portalUrlKey: curUrlKey,
+            startReason: 'new_family_id'
+          });
+          return;
+        }
+        let updated = false;
+        if (!st.familyId && curFid) {
+          st.familyId = curFid;
+          if (!st.docId) st.docId = curFid;
+          updated = true;
+        }
+        if (lastExtractedData?.name_bn && !st.applicantName) {
+          st.applicantName = lastExtractedData.name_bn;
+          updated = true;
+        }
+        if (updated) savePortalSurveyTimerState(st);
+
+        const activeDialogText = document.querySelector('.v-snack--active, .swal2-popup')?.textContent || '';
+        if (/সফলভাবে\s*(?:জমা|দাখিল|সংরক্ষণ)|আবেদন\s*সফল|submitted\s*successfully/i.test(activeDialogText)) {
+          endPortalSurveyTimer('portal_success_toast');
+        }
+        return;
+      }
+      const msSinceEnd = now - Number(st.endedAtMs || 0);
+      if (msSinceEnd > 2200) {
+        if (curFid && curFid !== st.familyId) {
+          startPortalSurveyTimer({ familyId: curFid, portalUrlKey: curUrlKey, startReason: 'new_family_id_after_end' });
+          return;
+        }
+        if (curUrlKey !== st.portalUrlKey) {
+          startPortalSurveyTimer({ familyId: curFid, portalUrlKey: curUrlKey, startReason: 'new_route_after_end' });
+          return;
+        }
+        if (!curFid && (st.familyId || st.docNumber) && msSinceEnd > 3200 && isStep0BlankForNewSurvey()) {
+          startPortalSurveyTimer({ familyId: '', portalUrlKey: curUrlKey, startReason: 'step0_reset_after_end' });
+        }
+      }
+    } else if (st && st.status === 'running' && pendingPortalSubmitAt > 0 && now - pendingPortalSubmitAt < 120000) {
+      endPortalSurveyTimer('portal_submit_navigated');
+    }
+  }
+
+  function attachPortalSubmitTimerHooks() {
+    if (portalTimerHooksAttached) return;
+    portalTimerHooksAttached = true;
+
+    document.addEventListener('click', (e) => {
+      const btn = e.target?.closest?.('button, [role="button"], .v-btn');
+      if (!btn) return;
+      if (btn.closest('[id^="fc-"], #fc-bm-dock')) return;
+
+      const isDisabled = Boolean(btn.disabled || btn.classList.contains('v-btn--disabled'));
+      const txt = normalizeBn(btn.textContent || '');
+      const isSubmitBtn = btn.matches('.family-card-form-footer__btn--submit')
+        || (btn.closest('.family-card-form-footer') && /দাখিল|সাবমিট|জমা|Submit/i.test(txt));
+
+      if (isSubmitBtn && !isDisabled) {
+        pendingPortalSubmitAt = Date.now();
+        const st = getPortalSurveyTimerState();
+        if (st && st.status === 'running') {
+          st.pendingSubmitAt = pendingPortalSubmitAt;
+          savePortalSurveyTimerState(st);
+          endPortalSurveyTimer('portal_submit', { endedAtMs: pendingPortalSubmitAt }).then((done) => {
+            if (done) showToast(`⏱️ জরিপ সম্পন্ন: ${done.durationLabel} (ডাটাবেসে সংরক্ষিত)`);
+          });
+        }
+        return;
+      }
+
+      const inDialog = btn.closest('.v-dialog--active, .swal2-popup');
+      if (inDialog && pendingPortalSubmitAt > 0 && Date.now() - pendingPortalSubmitAt < 60000) {
+        if (/না|বাতিল|বন্ধ|cancel|close/i.test(txt)) {
+          const st = getPortalSurveyTimerState();
+          if (st && st.status === 'ended' && st.endReason === 'portal_submit') {
+            st.status = 'running';
+            st.endedAtMs = null;
+            st.endReason = '';
+            pendingPortalSubmitAt = 0;
+            savePortalSurveyTimerState(st);
+            startPortalTimerTicker();
+            updateBmTimerBadgeUI();
+          }
+        } else if (/হ্যাঁ|নিশ্চিত|দাখিল|জমা|সাবমিট|ok|confirm|yes/i.test(txt)) {
+          endPortalSurveyTimer('portal_submit_confirmed', { forceUpdate: true });
+        }
+      }
+    }, true);
+
+    const wrapHistory = (fnName) => {
+      const orig = history[fnName];
+      if (typeof orig === 'function' && !orig.__fcTimerWrapped) {
+        history[fnName] = function (...args) {
+          const ret = orig.apply(this, args);
+          setTimeout(syncPortalSurveyLifecycle, 120);
+          return ret;
+        };
+        history[fnName].__fcTimerWrapped = true;
+      }
+    };
+    wrapHistory('pushState');
+    wrapHistory('replaceState');
+    window.addEventListener('popstate', () => setTimeout(syncPortalSurveyLifecycle, 120));
+    window.addEventListener('hashchange', () => setTimeout(syncPortalSurveyLifecycle, 120));
+    window.addEventListener('pagehide', () => { flushPendingPortalTimers(); });
+  }
+
+  async function openBmTimerModal() {
+    let tm = document.getElementById('fc-bm-timer-modal');
+    if (!tm) {
+      tm = document.createElement('div');
+      tm.id = 'fc-bm-timer-modal';
+      tm.className = 'fc-bm-overlay';
+      tm.style.display = 'none';
+      tm.innerHTML = `
+        <div class="fc-bm-card" style="max-width:460px;">
+          <div class="fc-bm-hdr" style="background:linear-gradient(135deg,#0f172a,#1e3a8a);">
+            <h3>⏱️ সার্ভে সময় ও ডাটাবেস হিসাব</h3>
+            <button type="button" id="fc-bm-tm-close" class="fc-bm-hdr-btn">✕</button>
+          </div>
+          <div class="fc-bm-body" style="display:flex; flex-direction:column; gap:10px; max-height:78vh; overflow-y:auto;">
+            <div style="background:#f8fafc; border:1.5px solid #cbd5e1; border-radius:10px; padding:10px 12px; display:flex; justify-content:space-between; align-items:center; gap:8px;">
+              <div>
+                <div style="font-size:11.5px; color:#475569; font-weight:700;">বর্তমান সার্ভে অবস্থা</div>
+                <div id="fc-bm-tm-status" style="font-size:13px; font-weight:800; color:#0f172a;">প্রস্তুত</div>
+              </div>
+              <div id="fc-bm-tm-clock" style="font-family:monospace; font-size:20px; font-weight:800; color:#0f766e; background:#f0fdf4; border:1px solid #86efac; padding:4px 10px; border-radius:8px;">০০:০০</div>
+            </div>
+            <div style="display:flex; gap:6px;">
+              <button type="button" id="fc-bm-tm-start" style="flex:1; background:#16a34a; color:#fff; border:none; border-radius:8px; padding:9px; font-weight:700; font-size:12px; cursor:pointer;">▶️ নতুন সার্ভে শুরু</button>
+              <button type="button" id="fc-bm-tm-end" style="flex:1; background:#dc2626; color:#fff; border:none; border-radius:8px; padding:9px; font-weight:700; font-size:12px; cursor:pointer;">⏹️ শেষ ও সেভ</button>
+            </div>
+            <div id="fc-bm-tm-stats" style="font-size:11.5px; font-weight:700; color:#1e3a8a;">⏳ ডাটাবেস হিসাব লোড হচ্ছে...</div>
+            <div id="fc-bm-tm-list" style="display:flex; flex-direction:column; gap:5px;"></div>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(tm);
+      tm.querySelector('#fc-bm-tm-close').onclick = () => { tm.style.display = 'none'; };
+      tm.onclick = (e) => { if (e.target === tm) tm.style.display = 'none'; };
+      tm.querySelector('#fc-bm-tm-start').onclick = () => {
+        startPortalSurveyTimer({ familyId: scrapeFamilyId() || '', startReason: 'manual_start' });
+        showToast('⏱️ নতুন সার্ভে টাইমার শুরু হয়েছে!');
+        updateBmTimerBadgeUI();
+      };
+      tm.querySelector('#fc-bm-tm-end').onclick = async () => {
+        const done = await endPortalSurveyTimer('manual_end');
+        if (done) {
+          showToast(`✅ জরিপ শেষ: ${done.durationLabel} (ডাটাবেসে সেভ)`);
+          loadBmTimerModalList();
+        }
+      };
+    }
+    tm.style.display = 'flex';
+    updateBmTimerBadgeUI();
+    loadBmTimerModalList();
+  }
+
+  async function loadBmTimerModalList() {
+    const statsEl = document.getElementById('fc-bm-tm-stats');
+    const listEl = document.getElementById('fc-bm-tm-list');
+    if (!statsEl || !listEl) return;
+    let localArr = [];
+    try {
+      const r = JSON.parse(localStorage.getItem(PORTAL_TIMER_HISTORY_KEY) || '[]');
+      if (Array.isArray(r)) localArr = r;
+    } catch (_) {}
+    let remoteArr = [];
+    try {
+      const resp = await fetch(`${FIRESTORE_SURVEY_TIMERS_LOG_BASE}?pageSize=25&t=${Date.now()}`, { cache: 'no-store' }).catch(() => null);
+      if (resp && resp.ok) {
+        const j = await resp.json().catch(() => ({}));
+        remoteArr = (Array.isArray(j.documents) ? j.documents : []).map((d) => {
+          const f = d.fields || {};
+          return {
+            sessionId: f.session_id?.stringValue || d.name?.split('/').pop() || '',
+            familyId: f.family_id?.stringValue || '',
+            docId: f.doc_id?.stringValue || '',
+            applicantName: f.applicant_name?.stringValue || '',
+            source: f.source?.stringValue || '',
+            endedAtMs: Number(f.ended_at_ms?.integerValue || f.ended_at_ms?.doubleValue || 0),
+            durationSec: Number(f.duration_sec?.integerValue || 0),
+            durationLabel: f.duration_label?.stringValue || ''
+          };
+        });
+      }
+    } catch (_) {}
+    const merged = new Map();
+    for (const x of [...localArr, ...remoteArr]) {
+      if (x && x.sessionId) merged.set(x.sessionId, x);
+    }
+    const items = Array.from(merged.values()).sort((a, b) => (b.endedAtMs || 0) - (a.endedAtMs || 0));
+    if (items.length === 0) {
+      statsEl.textContent = '📊 এখনো কোনো সার্ভের সময় ডাটাবেসে নেই';
+      listEl.innerHTML = '';
+      return;
+    }
+    const avg = Math.round(items.reduce((a, b) => a + (Number(b.durationSec) || 0), 0) / items.length);
+    statsEl.textContent = `📊 মোট ${toBnDigits(items.length)}টি সার্ভে • গড় সময়: ${formatPortalTimerDurationLabel(avg)}`;
+    listEl.innerHTML = items.slice(0, 15).map((t) => {
+      const who = t.applicantName || t.familyId || t.docId || 'সার্ভে';
+      const dur = t.durationLabel || formatPortalTimerDurationLabel(t.durationSec || 0);
+      return `<div style="display:flex; justify-content:space-between; align-items:center; padding:6px 8px; border-radius:7px; background:#f8fafc; border:1px solid #e2e8f0; font-size:11.5px;"><span>👤 <b>${escapeHtml(who)}</b> <small style="color:#64748b;">(${escapeHtml(t.source || '')})</small></span><b style="color:#0369a1;">⏱️ ${escapeHtml(dur)}</b></div>`;
+    }).join('');
+  }
+
+  attachPortalSubmitTimerHooks();
+  flushPendingPortalTimers();
+  startPortalTimerTicker();
+  updateBmTimerBadgeUI();
+
   function runPortalAutomations() {
+    syncPortalSurveyLifecycle();
     if (document.hidden || activeMediaStream) return;
 
     const curFid = scrapeFamilyId() || '';

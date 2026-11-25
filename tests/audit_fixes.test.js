@@ -1248,3 +1248,189 @@ test('extension/content.js & bookmarklet/bookmarklet.js: portal survey timer aut
     assert.equal(s2.familyId, '987999');
   }
 });
+
+// ============================================================================
+// 8. OCR DeepSeek Failover, Browser CORS, Undefined Elements & Step-8 Backup
+// ============================================================================
+
+test('bookmarklet: DeepSeek OCR failure does not throw prefModel ReferenceError and falls back to Gemini cleanly', async () => {
+  const telemetry = [];
+  const calls = [];
+  const mockFetch = async (url, init = {}) => {
+    const u = String(url);
+    calls.push({ url: u, headers: init.headers || {}, body: init.body ? JSON.parse(init.body) : null });
+    if (u.includes('fc_error_logs') || u.includes('FC_SYSTEM_LOGS')) {
+      telemetry.push(init.body ? JSON.parse(init.body) : null);
+      return { ok: true, status: 200, json: async () => ({}) };
+    }
+    if (u.includes('api.deepseek.com/chat/completions')) {
+      const body = JSON.parse(init.body);
+      // Fail on vision request; succeed on text bilingual completion
+      const hasImg = Array.isArray(body.messages?.[1]?.content);
+      if (hasImg) {
+        return {
+          ok: false,
+          status: 400,
+          json: async () => ({ error: { message: 'Failed to deserialize: unknown variant `image_url`' } }),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          choices: [{ message: { content: JSON.stringify({ name_bn: 'মোছাঃ সালমা', name_en: 'MST. SALMA', doc_type: 'nid' }) } }],
+          usage: { prompt_tokens: 15, completion_tokens: 20 },
+        }),
+      };
+    }
+    if (u.includes('generativelanguage.googleapis.com')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          candidates: [{ content: { parts: [{ text: JSON.stringify({ doc_type: 'nid', name_bn: 'মোছাঃ সালমা', nid_number: '5551234567', dob: '01/02/1990', confidence: 0.98 }) }] } }],
+          usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 30 },
+        }),
+      };
+    }
+    return { ok: false, status: 405, headers: { get: () => 'text/html' }, json: async () => ({}) };
+  };
+
+  const bmSrc = readRepoFile('bookmarklet/bookmarklet.js');
+  const code = extractDeclCode(bmSrc, [
+    'safeJsonParse', 'normalizeDigits', 'hasBengaliScript', 'BN_NAME_WORD_MAP', 'EN_NAME_WORD_MAP',
+    'transliterateBnWordToEn', 'normalizeEnglishHonorificPrefix', 'transliterateBnToEn',
+    'transliterateEnWordToBn', 'transliterateEnToBn', 'stripPersonPrefixes',
+    'isValidCalendarDate', 'standardizeDate', 'GENDER_ALIAS_MAP', 'normalizeGenderValue',
+    'inferBangladeshiGender', 'cleanOcrFieldText', 'normalizeOcrKeyAliases',
+    'needsIntelligentCompletion', 'needsEnglishCompletion', 'OCR_RESPONSE_SCHEMA',
+    'buildGeminiPrompt', 'parseOcrJsonText', 'extractDigitCandidate', 'pickBestDocDigits',
+    'getDobYear', 'isDocDigitsValidForType', 'validateAndNormalizeOcrData',
+    'BDT_PER_USD', 'DEFAULT_GEMINI_MODEL', 'INTERACTIONS_API_MODELS', 'AI_MODEL_CATALOG',
+    'isDeepSeekPeakUtc', 'normalizeModelId', 'computeScanUsageAndCost',
+    'FIRESTORE_ERROR_LOGS_BASE', 'FIRESTORE_LOG_CHANNEL_BASE', 'FC_ERROR_LOGS_KEY',
+    '__fcRecentLogDedup', '__fcLogFallbackChannelOnly', 'getLocalErrorLogs', 'fcLogTelemetry',
+    'extractTextFromGeminiResponse', 'applyBilingualCompletionResult', 'buildBilingualCompletionPrompt',
+    'completeBanglaOnlyOcrWithDeepSeek', 'completeBilingualWithGemini', 'callDeepSeekVisionOCR',
+    'needsAccurateEscalation', 'mergeOcrResults', 'getOrderedGeminiModels',
+    'buildGeminiAttemptsForModels', 'callGeminiResilientOCR', 'runMultiProviderOCR',
+  ], 'script');
+
+  const ctx = createSandbox({
+    fetch: mockFetch,
+    window: { location: { origin: 'https://fc.bhata.gov.bd' } },
+    localStorage: { getItem: () => null, setItem: () => {} },
+  });
+  vm.runInContext(code, ctx, { filename: 'bookmarklet/bookmarklet.js' });
+
+  // 1) Browser attempts must never send Api-Revision header on /interactions (avoids HTTP 403 CORS preflight)
+  const gemAttempts = ctx.buildGeminiAttemptsForModels(['gemini-3.8-flash', 'gemini-3.5-flash-lite'], 'AIza-t', '/9j/4AAQ', 'image/jpeg', 'OCR');
+  assert.ok(gemAttempts.every((a) => !a.url.includes('/interactions') && !a.headers['Api-Revision']), 'bookmarklet must avoid CORS-blocked /interactions Api-Revision header');
+
+  // 2) callDeepSeekVisionOCR rejects with isVisionUnsupported (not ReferenceError: prefModel is not defined)
+  await assert.rejects(
+    () => ctx.callDeepSeekVisionOCR('sk-t', '/9j/4AAQ', 'image/jpeg', 'OCR', 'deepseek-flash'),
+    (err) => err && err.isVisionUnsupported === true && !/prefModel/.test(err.message)
+  );
+  await new Promise((r) => setTimeout(r, 15));
+  assert.ok(telemetry.length > 0 && telemetry[0].fields?.model?.stringValue === 'deepseek-flash', 'Logs exact DeepSeek model without prefModel ReferenceError');
+
+  // 3) runMultiProviderOCR in deepseek mode seamlessly falls back to Gemini Vision + DeepSeek JSON when Gemini key exists
+  const multiRes = await ctx.runMultiProviderOCR({
+    aiProvider: 'deepseek',
+    geminiKey: 'AIza-t',
+    deepseekKey: 'sk-t',
+    rawBase64: '/9j/4AAQ',
+    detectedMime: 'image/jpeg',
+    promptText: 'OCR',
+    docType: 'nid',
+  });
+  assert.equal(multiRes.nid_number, '5551234567');
+  assert.equal(multiRes.name_en, 'MST. SALMA');
+  assert.match(multiRes.ocr_model_used, /gemini.*DeepSeek/i);
+});
+
+test('app.js runDirectWebBrowserOcrFallback handles DeepSeek fallback & JSON extraction cleanly', async () => {
+  const appSrc = readRepoFile('app.js');
+  const code = extractDeclCode(appSrc, [
+    'normalizeDigits', 'DEFAULT_GEMINI_MODEL', 'normalizeDirectWebPrefix',
+    'standardizeWebDate', 'runDirectWebBrowserOcrFallback',
+  ], 'script');
+
+  const calls = [];
+  const ctx = createSandbox({
+    fetch: async (url, init = {}) => {
+      calls.push({ url: String(url), body: JSON.parse(init.body) });
+      if (String(url).includes('api.deepseek.com')) {
+        return {
+          ok: false,
+          status: 400,
+          json: async () => ({ error: { message: 'Model Not Exist' } }),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          candidates: [{ content: { parts: [{ text: 'Here is JSON:\n```json\n{"doc_type":"nid","name_bn":"মোছাঃ রহিমা","name_en":"MOST. RAHIMA","nid_number":"1234567890","dob":"01/02/1990"}\n```' }] } }],
+        }),
+      };
+    },
+  });
+  vm.runInContext(code, ctx, { filename: 'app.js' });
+
+  const out = await ctx.runDirectWebBrowserOcrFallback({
+    imageBase64: 'data:image/jpeg;base64,/9j/4AAQ',
+    apiKey: 'AIza-web',
+    deepseekApiKey: 'sk-web',
+    aiProvider: 'deepseek',
+  });
+  assert.equal(out.success, true);
+  assert.equal(out.data.name_en, 'MST. RAHIMA');
+  assert.equal(out.data.nid_number, '1234567890');
+  assert.match(out.data.ocr_model_used, /Gemini Fallback/i);
+});
+
+test('Zero missing self-defined fc-* DOM IDs and Step-8 object s8Members backup regression fixed in bookmarklet & extension', () => {
+  for (const rel of ['bookmarklet/bookmarklet.js', 'extension/content.js']) {
+    const src = readRepoFile(rel);
+    const defined = new Set([
+      ...[...src.matchAll(/\bid\s*=\s*["']([A-Za-z0-9_-]+)["']/g)].map((m) => m[1]),
+      ...[...src.matchAll(/\.id\s*=\s*["']([A-Za-z0-9_-]+)["']/g)].map((m) => m[1]),
+    ]);
+    const usedFc = new Set([...src.matchAll(/getElementById\(\s*["'](fc-[^"']+)["']\s*\)/g)].map((m) => m[1]));
+    const missing = [...usedFc].filter((id) => !defined.has(id));
+    assert.deepEqual(missing, [], `${rel} must define every self fc-* element ID it queries`);
+
+    // Verify extractFullStepsBackupData safely handles scanFamilyMembers returning an object
+    assert.ok(!/step8_members:\s*\(s8Members\s*\|\|\s*\[\]\)\.map/.test(src), `${rel}: must guard Array.isArray(s8Members) instead of (s8Members || []).map`);
+    const backupCode = extractDeclCode(src, ['extractFullStepsBackupData'], 'script');
+    const stubCtx = createSandbox({
+      document: { querySelector: () => null },
+      scrapeFamilyId: () => '12345',
+      lastExtractedData: null,
+      lastCapturedHouseGps: null,
+      readStep2FieldState: () => ({}),
+      inspectSection3Media: () => ({}),
+      inspectSection4Address: () => ({}),
+      inspectSection5Details: () => ({ data: {} }),
+      inspectSection6Bank: () => ({}),
+      inspectSection7Eligibility: () => ({}),
+      scanFamilyMembers: () => ({ totalMembers: 1, membersDetail: [{ index: 1, relationship: 'স্বামী', gender: 'পুরুষ' }] }),
+      getSection9MoneyElements: () => null,
+      inspectSection10EntryUser: () => ({}),
+      inspectSection11Consent: () => ({}),
+      collectFullFamilyCardSummary: () => ({
+        readinessPct: 50,
+        blockers: [],
+        applicant: {},
+        members: [{ index: 1, title: 'সদস্য - ১', nameBn: 'মোঃ করিম', docType: 'nid', docNum: '1234567890', rel: 'নিজ', age: 35, gender: 'পুরুষ' }],
+      }),
+    });
+    vm.runInContext(backupCode, stubCtx);
+    const snap = stubCtx.extractFullStepsBackupData();
+    assert.equal(snap.step8_members.length, 1);
+    assert.equal(snap.step8_members[0].relation, 'নিজ');
+    assert.equal(snap.step8_members[0].docNum, '1234567890');
+  }
+});

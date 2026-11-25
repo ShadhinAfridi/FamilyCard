@@ -566,11 +566,13 @@
   if (typeof window !== 'undefined' && typeof window.addEventListener === 'function' && !window.__fcExtTelemetryListenersBound) {
     window.__fcExtTelemetryListenersBound = true;
     window.addEventListener('error', (ev) => {
-      fcLogTelemetry('error', 'window.onerror', ev?.message || 'Script error', `${ev?.filename || ''}:${ev?.lineno || ''}`);
+      const stack = (ev?.error && ev.error.stack) ? ` | ${String(ev.error.stack).slice(0, 700)}` : '';
+      fcLogTelemetry('error', 'window.onerror', ev?.message || 'Script error', `${ev?.filename || ''}:${ev?.lineno || ''}:${ev?.colno || ''}${stack}`);
     });
     window.addEventListener('unhandledrejection', (ev) => {
       const reason = ev?.reason;
-      fcLogTelemetry('error', 'unhandledrejection', (reason && reason.message) || String(reason || 'Promise rejection'));
+      const stack = (reason && typeof reason === 'object' && reason.stack) ? String(reason.stack).slice(0, 700) : '';
+      fcLogTelemetry('error', 'unhandledrejection', (reason && reason.message) || String(reason || 'Promise rejection'), stack);
     });
   }
 
@@ -2838,6 +2840,7 @@
       btnCamera.style.display = 'flex';
 
       if (chrome.runtime.lastError) {
+        if (btnSubmit) btnSubmit.style.display = 'flex';
         fcLogTelemetry('error', 'triggerModalOCR-runtime', chrome.runtime.lastError.message, `provider=${modalProvider}`);
         alert('OCR রিকোয়েস্ট এরর: ' + chrome.runtime.lastError.message);
         return;
@@ -2942,6 +2945,7 @@
         }
         updateSummaryBadge(true);
       } else {
+        if (btnSubmit) btnSubmit.style.display = 'flex';
         fcLogTelemetry('error', 'triggerModalOCR-failed', response?.error || 'OCR failed', `provider=${modalProvider}`);
         alert('ডকুমেন্ট বিশ্লেষণ ব্যর্থ: ' + (response?.error || 'সঠিক NID বা জন্ম নিবন্ধন ছবি পাওয়া যায়নি।'));
       }
@@ -4914,7 +4918,10 @@
     const s5Data = inspectSection5Details()?.data || (typeof trackSection5Data === 'function' ? trackSection5Data() : null) || summary?.sec5 || {};
     const s6Bank = typeof inspectSection6Bank === 'function' ? inspectSection6Bank() : {};
     const s7Elig = typeof inspectSection7Eligibility === 'function' ? inspectSection7Eligibility() : {};
-    const s8Members = typeof scanFamilyMembers === 'function' ? scanFamilyMembers() : [];
+    const s8Scan = typeof scanFamilyMembers === 'function' ? scanFamilyMembers() : null;
+    const s8Members = Array.isArray(summary?.members)
+      ? summary.members
+      : (Array.isArray(s8Scan) ? s8Scan : (Array.isArray(s8Scan?.membersDetail) ? s8Scan.membersDetail : []));
     const s9Elems = typeof getSection9MoneyElements === 'function' ? getSection9MoneyElements() : null;
     const s9Money = s9Elems && typeof readCurrentMoneyDistribution === 'function' ? readCurrentMoneyDistribution(s9Elems.fields) : (summary?.s9Dist || {});
     const s10User = typeof inspectSection10EntryUser === 'function' ? inspectSection10EntryUser() : {};
@@ -4998,14 +5005,14 @@
       },
 
       // Step 8: Family Members
-      step8_members: (s8Members || []).map((m, idx) => ({
+      step8_members: (Array.isArray(s8Members) ? s8Members : []).map((m, idx) => ({
         index: idx + 1,
         title: m.title || `সদস্য ${idx + 1}`,
         nameBn: m.nameBn || '',
         docType: m.docType || 'nid',
         docNum: m.docNum || '',
-        relation: m.relation || '',
-        age: m.age || '',
+        relation: m.relation || m.rel || '',
+        age: m.age ?? '',
         gender: m.gender || ''
       })),
 
@@ -5246,7 +5253,7 @@
 
     // 3. Begin restoring across all portal steps:
     let restoredSteps = 0;
-    const fillFn = typeof fillFormFields === 'function' ? fillFormFields : (typeof fillPortalFields === 'function' ? fillPortalFields : null);
+    const fillFn = typeof fillFormFields === 'function' ? fillFormFields : null;
 
     // Step 1: Verification
     if (backupObj.step1 && backupObj.step1.docNumber && fillFn) {

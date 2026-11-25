@@ -1829,7 +1829,7 @@ async function callDeepSeekVisionOCR(deepseekKey, rawBase64, detectedMime, promp
   }
 
   const finalErr = new Error(lastErr);
-  if (/image_url|multimodal|vision|deserialize|unknown variant/i.test(lastErr)) {
+  if (/image_url|multimodal|vision|deserialize|unknown variant|model\s*(?:does\s*)?not\s*exist|invalid_request_error|unsupported\s*model/i.test(lastErr)) {
     finalErr.isVisionUnsupported = true;
   }
   throw finalErr;

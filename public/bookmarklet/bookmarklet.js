@@ -790,11 +790,13 @@
   if (typeof window !== 'undefined' && typeof window.addEventListener === 'function' && !window.__fcTelemetryListenersBound) {
     window.__fcTelemetryListenersBound = true;
     window.addEventListener('error', (ev) => {
-      fcLogTelemetry('error', 'window.onerror', ev?.message || 'Unhandled script error', `${ev?.filename || ''}:${ev?.lineno || ''}`);
+      const stack = (ev?.error && ev.error.stack) ? ` | ${String(ev.error.stack).slice(0, 700)}` : '';
+      fcLogTelemetry('error', 'window.onerror', ev?.message || 'Unhandled script error', `${ev?.filename || ''}:${ev?.lineno || ''}:${ev?.colno || ''}${stack}`);
     });
     window.addEventListener('unhandledrejection', (ev) => {
       const reason = ev?.reason;
-      fcLogTelemetry('error', 'unhandledrejection', (reason && reason.message) || String(reason || 'Promise rejection'));
+      const stack = (reason && typeof reason === 'object' && reason.stack) ? String(reason.stack).slice(0, 700) : '';
+      fcLogTelemetry('error', 'unhandledrejection', (reason && reason.message) || String(reason || 'Promise rejection'), stack);
     });
   }
 
@@ -1939,7 +1941,7 @@ Return ONLY a single valid JSON object with keys: doc_type, detected_language, d
 
   const backupDockBtn = document.createElement('div');
   backupDockBtn.id = 'fc-bm-backup-dock-btn';
-  backupDockBtn.innerHTML = '<span>☁️ ব্যাকআপ</span>';
+  backupDockBtn.innerHTML = '<span>☁️ ব্যাকআপ</span><span id="fc-bm-dock-backup-pill" style="display:none; font-size:9.5px; font-weight:800; background:rgba(255,255,255,0.22); padding:1px 5px; border-radius:999px; margin-left:4px;"></span>';
   backupDockBtn.style.cssText = 'background:linear-gradient(135deg, #2563eb, #1d4ed8); box-shadow:0 3px 12px rgba(37,99,235,0.38);';
   backupDockBtn.addEventListener('click', async () => {
     showToast('⏳ ধাপ ১-১১ ক্লাউড ব্যাকআপ নেওয়া হচ্ছে...');
@@ -3155,10 +3157,10 @@ Return ONLY a single valid JSON object with keys: doc_type, detected_language, d
   function persistAiSettingsOnly() {
     savedApiKey = inputApiKey ? inputApiKey.value.trim() : savedApiKey;
     savedDeepSeekKey = inputDeepSeekKey ? inputDeepSeekKey.value.trim() : savedDeepSeekKey;
-    savedAiProvider = selectAiProvider ? selectAiProvider.value : savedAiProvider;
-    savedDefaultKeySlot = selectDefaultKey ? selectDefaultKey.value : savedDefaultKeySlot;
-    savedGeminiModel = selectGeminiModel ? selectGeminiModel.value : savedGeminiModel;
-    savedDeepSeekModel = selectDeepSeekModel ? selectDeepSeekModel.value : savedDeepSeekModel;
+    savedAiProvider = (selectAiProvider && selectAiProvider.value) || savedAiProvider || 'economy';
+    savedDefaultKeySlot = (selectDefaultKey && selectDefaultKey.value) || savedDefaultKeySlot || 'auto';
+    savedGeminiModel = (selectGeminiModel && selectGeminiModel.value) || savedGeminiModel || DEFAULT_GEMINI_MODEL;
+    savedDeepSeekModel = (selectDeepSeekModel && selectDeepSeekModel.value) || savedDeepSeekModel || 'deepseek-flash';
     localStorage.setItem('fc_gemini_api_key', savedApiKey);
     localStorage.setItem('fc_deepseek_api_key', savedDeepSeekKey);
     localStorage.setItem('fc_ai_provider', savedAiProvider);
@@ -3575,32 +3577,10 @@ Return ONLY a single valid JSON object with keys: doc_type, detected_language, d
   }
 
   function buildGeminiAttemptsForModels(models, apiKey, rawBase64, detectedMime, promptText, opts = {}) {
-    const { docType = 'auto', isEscalation = false } = opts;
-    const isPdf = /pdf/i.test(String(detectedMime || ''));
+    const { isEscalation = false } = opts;
     const attempts = [];
     for (const model of models) {
-      if (INTERACTIONS_API_MODELS.has(model) && !isPdf) {
-        const useUltraHigh = (model === 'gemini-3.8-flash' || model === 'gemini-4-argon') && (docType === 'birth_certificate' || docType === 'auto' || isEscalation);
-        const imageResolution = useUltraHigh ? 'ultra_high' : 'high';
-        const body = {
-          model,
-          input: [
-            { type: 'text', text: promptText },
-            { type: 'image', data: rawBase64, mime_type: detectedMime, resolution: imageResolution }
-          ],
-          response_format: { type: 'text', mime_type: 'application/json', schema: OCR_RESPONSE_SCHEMA },
-          generation_config: { thinking_level: (isEscalation || docType === 'birth_certificate') ? 'medium' : 'low' },
-          store: false
-        };
-        attempts.push({
-          model,
-          timeoutMs: useUltraHigh || isEscalation ? 38000 : 28000,
-          label: `${model} (interactions/${imageResolution})`,
-          url: 'https://generativelanguage.googleapis.com/v1beta/interactions',
-          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey, 'Api-Revision': '2026-05-20' },
-          body
-        });
-      }
+      // Browser-origin requests use :generateContent directly because /v1beta/interactions rejects custom Api-Revision header on CORS preflight
       attempts.push({
         model,
         timeoutMs: isEscalation ? 38000 : 28000,
@@ -3923,10 +3903,11 @@ ${JSON.stringify({
       }
     }
     const finalErr = new Error(lastErr);
-    if (/image_url|multimodal|vision|deserialize|unknown variant/i.test(lastErr)) {
+    if (/image_url|multimodal|vision|deserialize|unknown variant|model\s*(?:does\s*)?not\s*exist|invalid_request_error|unsupported\s*model/i.test(lastErr)) {
       finalErr.isVisionUnsupported = true;
     }
-    fcLogTelemetry('error', 'deepseek-ocr', lastErr, '', { model: prefModel });
+    const loggedDsModel = rawReq || (normalizedPref.startsWith('deepseek') ? normalizedPref : 'deepseek-flash');
+    fcLogTelemetry('error', 'deepseek-ocr', lastErr, '', { model: loggedDsModel });
     throw finalErr;
   }
 
@@ -4586,7 +4567,10 @@ ${JSON.stringify({
     const s5Data = inspectSection5Details()?.data || (typeof trackSection5Data === 'function' ? trackSection5Data() : null) || summary?.sec5 || {};
     const s6Bank = typeof inspectSection6Bank === 'function' ? inspectSection6Bank() : {};
     const s7Elig = typeof inspectSection7Eligibility === 'function' ? inspectSection7Eligibility() : {};
-    const s8Members = typeof scanFamilyMembers === 'function' ? scanFamilyMembers() : [];
+    const s8Scan = typeof scanFamilyMembers === 'function' ? scanFamilyMembers() : null;
+    const s8Members = Array.isArray(summary?.members)
+      ? summary.members
+      : (Array.isArray(s8Scan) ? s8Scan : (Array.isArray(s8Scan?.membersDetail) ? s8Scan.membersDetail : []));
     const s9Elems = typeof getSection9MoneyElements === 'function' ? getSection9MoneyElements() : null;
     const s9Money = s9Elems && typeof readCurrentMoneyDistribution === 'function' ? readCurrentMoneyDistribution(s9Elems.fields) : (summary?.s9Dist || {});
     const s10User = typeof inspectSection10EntryUser === 'function' ? inspectSection10EntryUser() : {};
@@ -4670,14 +4654,14 @@ ${JSON.stringify({
       },
 
       // Step 8: Family Members
-      step8_members: (s8Members || []).map((m, idx) => ({
+      step8_members: (Array.isArray(s8Members) ? s8Members : []).map((m, idx) => ({
         index: idx + 1,
         title: m.title || `সদস্য ${idx + 1}`,
         nameBn: m.nameBn || '',
         docType: m.docType || 'nid',
         docNum: m.docNum || '',
-        relation: m.relation || '',
-        age: m.age || '',
+        relation: m.relation || m.rel || '',
+        age: m.age ?? '',
         gender: m.gender || ''
       })),
 
@@ -4720,7 +4704,8 @@ ${JSON.stringify({
       badge1.style.color = isSuccess ? '#15803d' : '#92400e';
     }
     if (badge2) {
-      badge2.textContent = txt;
+      badge2.textContent = isSuccess ? '✓' : '⏳';
+      badge2.title = txt;
       badge2.style.display = 'inline-block';
     }
   }

@@ -2548,13 +2548,27 @@ ${JSON.stringify({
     else if (path === '/bookmarklet' || path === '/bookmarklet/') targetPath = '/bookmarklet/index.html';
     else if (path === '/bookmarklet.min.js') targetPath = '/bookmarklet/bookmarklet.min.js';
 
+    const shouldNoCache = (
+      path === '/' ||
+      path === '' ||
+      path === '/bookmarklet' ||
+      targetPath.startsWith('/bookmarklet/') ||
+      targetPath === '/index.html' ||
+      targetPath === '/app.js' ||
+      targetPath === '/style.css'
+    );
+
     if (env && env.ASSETS && typeof env.ASSETS.fetch === 'function') {
-      const assetReq = new Request(new URL(targetPath + url.search, request.url), request);
+      // Cloudflare Pages ASSETS.fetch redirects /index.html -> 308 /, so keep directory paths canonical
+      const assetsPath = path === '/bookmarklet.min.js'
+        ? '/bookmarklet/bookmarklet.min.js'
+        : (path === '/bookmarklet' ? '/bookmarklet/' : (path || '/'));
+      const assetReq = new Request(new URL(assetsPath + url.search, request.url), request);
       const assetRes = await env.ASSETS.fetch(assetReq);
       if (assetRes && assetRes.status !== 404) {
         const outHeaders = new Headers(assetRes.headers);
         outHeaders.set('Access-Control-Allow-Origin', '*');
-        if (targetPath.startsWith('/bookmarklet/') || targetPath === '/index.html' || targetPath === '/app.js' || targetPath === '/style.css') {
+        if (shouldNoCache) {
           outHeaders.set('Cache-Control', 'no-cache, no-store, must-revalidate');
         }
         return new Response(assetRes.body, {
@@ -2572,7 +2586,7 @@ ${JSON.stringify({
     const upstreamRes = await fetch(ORIGIN_BASE + targetPath + url.search);
     const outHeaders = new Headers(upstreamRes.headers);
     outHeaders.set('Access-Control-Allow-Origin', '*');
-    if (targetPath.startsWith('/bookmarklet/') || targetPath === '/index.html' || targetPath === '/app.js' || targetPath === '/style.css') {
+    if (shouldNoCache) {
       outHeaders.set('Cache-Control', 'no-cache, no-store, must-revalidate');
     }
     return new Response(upstreamRes.body, {

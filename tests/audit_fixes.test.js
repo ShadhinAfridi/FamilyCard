@@ -1434,3 +1434,41 @@ test('Zero missing self-defined fc-* DOM IDs and Step-8 object s8Members backup 
     assert.equal(snap.step8_members[0].docNum, '1234567890');
   }
 });
+
+test('cloudflare/worker.js keeps Pages ASSETS directory paths canonical without 308 loop', async () => {
+  const workerSrc = readRepoFile('cloudflare/worker.js');
+  const modBody = workerSrc.replace(/export\s+default\s+\{/, 'var __workerExport = {');
+  const seenUrls = [];
+  const ctx = createSandbox({
+    fetch: async () => new Response('upstream', { status: 200 }),
+    Request,
+    Response,
+    Headers,
+  });
+  vm.runInContext(modBody, ctx);
+
+  const assetsEnv = {
+    ASSETS: {
+      fetch: async (req) => {
+        const u = new URL(req.url);
+        seenUrls.push(u.pathname);
+        if (u.pathname === '/index.html' || u.pathname === '/bookmarklet/index.html') {
+          return new Response(null, { status: 308, headers: { Location: u.pathname === '/index.html' ? '/' : '/bookmarklet/' } });
+        }
+        return new Response('<html>ok</html>', { status: 200, headers: { 'Content-Type': 'text/html' } });
+      },
+    },
+  };
+
+  for (const [reqPath, expectedAssetPath] of [
+    ['/', '/'],
+    ['/bookmarklet', '/bookmarklet/'],
+    ['/bookmarklet/', '/bookmarklet/'],
+    ['/bookmarklet.min.js', '/bookmarklet/bookmarklet.min.js'],
+  ]) {
+    const res = await ctx.__workerExport.fetch(new Request(`https://familycard-10n.pages.dev${reqPath}`), assetsEnv, { waitUntil() {} });
+    assert.equal(res.status, 200, `${reqPath} should return 200 instead of 308 redirect loop`);
+    assert.match(res.headers.get('Cache-Control') || '', /no-store/i);
+    assert.equal(seenUrls.at(-1), expectedAssetPath);
+  }
+});

@@ -405,6 +405,7 @@
           <div class="map-btns-row">
             <button type="button" id="btnMapNewHouse" class="btn btn-primary btn-sm">📍 নতুন বাড়ি ট্যাগ</button>
             <button type="button" id="btnCenterMyLocation" class="btn btn-outline btn-sm" title="আমার বর্তমান অবস্থানে যান">🎯 অবস্থান</button>
+            <button type="button" id="btnLiveGpsTrack" class="btn btn-outline btn-sm" title="চলমান লাইভ জিপিএস ট্র্যাকিং চালু/বন্ধ">📡 লাইভ ট্র্যাক</button>
             <button type="button" id="btnToggleSatellite" class="btn btn-outline btn-sm" title="স্যাটেলাইট / সাধারণ ম্যাপ সুইচ">🛰️ স্যাটেলাইট</button>
             <button type="button" id="btnRefreshHouses" class="btn btn-outline btn-sm" title="রিফ্রেশ">🔄</button>
           </div>
@@ -417,6 +418,7 @@
           <button type="button" class="filter-chip chip-sim" data-filter="sim_missing">📱 সিম বাকি (<span id="countFilterSim">0</span>)</button>
           <button type="button" class="filter-chip chip-brc" data-filter="brc_missing">👶 জন্ম সনদ বাকি (<span id="countFilterBrc">0</span>)</button>
           <button type="button" class="filter-chip chip-blocked" data-filter="blocked">🔴 NID নেই/১৮-এর কম (<span id="countFilterBlocked">0</span>)</button>
+          <button type="button" class="filter-chip" data-filter="no_gps">📍 GPS নেই (<span id="countFilterNoGps">0</span>)</button>
         </div>
 
         <!-- Live Map Canvas -->
@@ -430,7 +432,14 @@
       <section class="card house-list-card">
         <div class="house-list-hdr">
           <h3>📋 চিহ্নিত বাড়ি ও নোটের তালিকা</h3>
-          <span id="filteredHouseCount" class="badge-sub">০টি বাড়ি দেখানো হচ্ছে</span>
+          <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+            <select id="houseSortSelect" class="house-sort-select" title="বাড়ির তালিকা সাজান">
+              <option value="newest">🕒 নতুন আগে</option>
+              <option value="nearest">📏 কাছাকাছি আগে</option>
+              <option value="status">🚦 স্ট্যাটাস অনুযায়ী</option>
+            </select>
+            <span id="filteredHouseCount" class="badge-sub">০টি বাড়ি দেখানো হচ্ছে</span>
+          </div>
         </div>
         <div id="houseListFeed" class="house-list-feed">
           <div class="empty-state">ম্যাপের ডাটা লোড হচ্ছে...</div>

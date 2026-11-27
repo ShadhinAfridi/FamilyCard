@@ -2485,7 +2485,7 @@ ${JSON.stringify({
               const docMask = Object.keys(docFields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
               for (const targetId of targetDocIds) {
                 ops.push(
-                  fetch(`${FIRESTORE_CARDS_BASE}/${encodeURIComponent(targetId)}?${docMask}`, {
+                  fetch(`${FIRESTORE_CARDS_BASE}/${encodeURIComponent(targetId)}?${docMask}&currentDocument.exists=true`, {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ fields: docFields })
@@ -2495,7 +2495,7 @@ ${JSON.stringify({
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ fields })
                   }).catch(() => null),
-                  fetch(`${HOUSES_BASE}/${encodeURIComponent(targetId)}?${docMask}`, {
+                  fetch(`${HOUSES_BASE}/${encodeURIComponent(targetId)}?${docMask}&currentDocument.exists=true`, {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ fields: docFields })
@@ -2521,14 +2521,17 @@ ${JSON.stringify({
         try {
           const limit = Math.min(100, Math.max(1, parseInt(url.searchParams.get('limit') || '40', 10)));
           const roomFilter = url.searchParams.get('room') ? normalizeWorkerRoomCode(url.searchParams.get('room')) : '';
-          const fsRes = await fetch(`${TIMERS_LOG_BASE}?pageSize=${limit}&t=${Date.now()}`).catch(() => null);
           let timers = [];
-          if (fsRes && fsRes.ok) {
+          let pageToken = '';
+          for (let page = 0; page < 10; page++) {
+            const pageUrl = `${TIMERS_LOG_BASE}?pageSize=300&t=${Date.now()}${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''}`;
+            const fsRes = await fetch(pageUrl).catch(() => null);
+            if (!fsRes || !fsRes.ok) break;
             const j = await fsRes.json().catch(() => ({}));
             const docs = Array.isArray(j.documents) ? j.documents : [];
-            timers = docs.map((d) => {
+            for (const d of docs) {
               const f = d.fields || {};
-              return {
+              timers.push({
                 sessionId: f.session_id?.stringValue || d.name?.split('/').pop() || '',
                 familyId: f.family_id?.stringValue || '',
                 docId: f.doc_id?.stringValue || '',
@@ -2549,8 +2552,10 @@ ${JSON.stringify({
                 durationMs: Number(f.duration_ms?.integerValue || 0),
                 durationSec: Number(f.duration_sec?.integerValue || 0),
                 durationLabel: f.duration_label?.stringValue || ''
-              };
-            });
+              });
+            }
+            if (!j.nextPageToken) break;
+            pageToken = j.nextPageToken;
           }
           if (roomFilter) {
             timers = timers.filter((t) => !t.roomCode || t.roomCode === roomFilter);

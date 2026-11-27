@@ -203,7 +203,11 @@ function startNewWebSurveyTimer(meta = {}) {
 }
 
 function ensureWebSurveyTimerStarted(meta = {}) {
-  if (!activeWebSurveyTimer || activeWebSurveyTimer.status === 'ended') {
+  const isStaleRunning = activeWebSurveyTimer
+    && activeWebSurveyTimer.status === 'running'
+    && activeWebSurveyTimer.startedAtMs > 1700000000000
+    && (Date.now() - activeWebSurveyTimer.startedAtMs) > 6 * 3600 * 1000;
+  if (!activeWebSurveyTimer || activeWebSurveyTimer.status === 'ended' || isStaleRunning) {
     return startNewWebSurveyTimer(meta);
   }
   let changed = false;
@@ -307,7 +311,7 @@ async function syncWebSurveyTimerToDb(entry, opts = {}) {
       };
       const docMask = Object.keys(docFields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
       for (const targetId of targetDocIds) {
-        fetch(`https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(targetId)}?${docMask}`, {
+        fetch(`https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(targetId)}?${docMask}&currentDocument.exists=true`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ fields: docFields }),
@@ -428,14 +432,17 @@ async function fetchWebSurveyTimerHistory() {
     if (Array.isArray(raw)) localHist = raw;
   } catch (_) {}
   try {
-    const r = await fetch(`${FIRESTORE_SURVEY_TIMERS_LOG_BASE}?pageSize=30&t=${Date.now()}`, { cache: 'no-store' }).catch(() => null);
-    let remote = [];
-    if (r && r.ok) {
+    const remote = [];
+    let pageToken = '';
+    for (let page = 0; page < 10; page++) {
+      const pageUrl = `${FIRESTORE_SURVEY_TIMERS_LOG_BASE}?pageSize=300&t=${Date.now()}${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''}`;
+      const r = await fetch(pageUrl, { cache: 'no-store' }).catch(() => null);
+      if (!r || !r.ok) break;
       const data = await r.json().catch(() => ({}));
       const docs = Array.isArray(data.documents) ? data.documents : [];
-      remote = docs.map((d) => {
+      for (const d of docs) {
         const f = d.fields || {};
-        return {
+        remote.push({
           sessionId: f.session_id?.stringValue || d.name?.split('/').pop() || '',
           familyId: f.family_id?.stringValue || '',
           docId: f.doc_id?.stringValue || '',
@@ -444,8 +451,10 @@ async function fetchWebSurveyTimerHistory() {
           endedAtMs: Number(f.ended_at_ms?.integerValue || f.ended_at_ms?.doubleValue || 0),
           durationSec: Number(f.duration_sec?.integerValue || 0),
           durationLabel: f.duration_label?.stringValue || ''
-        };
-      });
+        });
+      }
+      if (!data.nextPageToken) break;
+      pageToken = data.nextPageToken;
     }
     const merged = new Map();
     for (const item of [...localHist, ...remote]) {
@@ -728,12 +737,22 @@ function renderRoomChat() {
     } else if (m.type === 'summary' && m.payload) {
       const s = m.payload;
       bodyHtml += `<div style="font-weight:700; color:#1e40af;">📊 সারসংক্ষেপ (${escapeHtml(s.familyId || '-')}) • প্রস্তুতি ${escapeHtml(String(s.readinessPct ?? '-'))}%</div><div style="font-size:0.78rem; white-space:pre-wrap; margin-top:2px;">${escapeHtml(m.text)}</div>`;
+    } else if (m.type === 'survey_house_saved' && m.payload) {
+      const h = m.payload;
+      const stTxt = h.survey_status === 'COMPLETED' ? '🟢 সম্পন্ন' : (h.survey_status === 'INCOMPLETE_BLOCKED' ? '🔴 ব্লকড' : (h.survey_status === 'IN_PROGRESS' ? '🔵 চলমান' : '🟠 বাকি সমস্যা'));
+      bodyHtml += `
+        <div style="font-weight:700; color:#0f766e;">📍 ${escapeHtml(h.ladyName || h.primary_lady_name_bn || 'বাড়ি সংরক্ষিত')} <span style="font-size:0.72rem;">(${stTxt})</span></div>
+        <div style="font-size:0.76rem; color:#334155;">${h.village ? `🏠 ${escapeHtml(h.village)} • ` : ''}${h.contactPhone || h.mobile_number ? `📱 ${escapeHtml(h.contactPhone || h.mobile_number)} • ` : ''}${h.plusCode || h.plus_code ? `📍 ${escapeHtml(h.plusCode || h.plus_code)}` : ''}</div>
+      `;
     } else {
       bodyHtml += `<div style="white-space:pre-wrap;">${escapeHtml(m.text)}</div>`;
     }
     const actionBtns = [];
     if (m.type === 'nid_data' && m.payload) {
       actionBtns.push(`<button type="button" class="chat-chip-btn primary" data-act="preview" data-mid="${escapeHtml(m.id)}">👁️ দেখুন</button>`);
+    }
+    if (m.type === 'survey_house_saved' && m.payload && Number.isFinite(Number(m.payload.lat)) && Number.isFinite(Number(m.payload.lng))) {
+      actionBtns.push(`<button type="button" class="chat-chip-btn primary" data-act="view_house" data-mid="${escapeHtml(m.id)}">🗺️ ম্যাপে দেখুন</button>`);
     }
     actionBtns.push(`<button type="button" class="chat-chip-btn" data-act="copy" data-mid="${escapeHtml(m.id)}">📋 কপি</button>`);
     actionBtns.push(`<button type="button" class="chat-chip-btn" data-act="reply" data-mid="${escapeHtml(m.id)}">↩️</button>`);
@@ -755,6 +774,18 @@ function handleIncomingRoomMessage(rawMsg) {
   if (!rawMsg || !rawMsg.id) return;
   const ts = Number(rawMsg.ts || 0);
   if (ts <= lastClearedAtMs) return;
+  const existed = roomMsgMap.has(rawMsg.id);
+  if (rawMsg.type === 'survey_house_saved' && rawMsg.payload && typeof rawMsg.payload === 'object') {
+    const p = rawMsg.payload;
+    const docId = String(p.docId || p.doc_id || p.family_id || p.nid_number || '').trim();
+    if (docId && typeof mergeHouseIntoMap === 'function') {
+      mergeHouseIntoMap({ ...p, docId }, { preferIncoming: true });
+      if (typeof renderMapHouses === 'function') renderMapHouses();
+      if (!existed && rawMsg.senderId !== MY_CLIENT_ID && typeof showMapToast === 'function') {
+        showMapToast(`📍 লাইভ সিঙ্ক: ${p.ladyName || p.primary_lady_name_bn || docId}`);
+      }
+    }
+  }
   if (rawMsg.type === 'survey_timer_ended' && rawMsg.payload && rawMsg.senderId !== MY_CLIENT_ID) {
     const p = rawMsg.payload;
     if (activeWebSurveyTimer && activeWebSurveyTimer.status === 'running') {
@@ -771,7 +802,6 @@ function handleIncomingRoomMessage(rawMsg) {
       }
     }
   }
-  const existed = roomMsgMap.has(rawMsg.id);
   roomMsgMap.set(rawMsg.id, rawMsg);
   if (!existed) {
     renderRoomChat();
@@ -995,7 +1025,7 @@ async function fetchCloudRoomMessages(forceFull = false) {
           try { if (f.payloadJson?.stringValue) payload = JSON.parse(f.payloadJson.stringValue); } catch (_) {}
           let replyTo = null;
           try { if (f.replyToJson?.stringValue) replyTo = JSON.parse(f.replyToJson.stringValue); } catch (_) {}
-          roomMsgMap.set(id, {
+          handleIncomingRoomMessage({
             id,
             room: targetRoom,
             type: f.type?.stringValue || 'text',
@@ -1175,6 +1205,13 @@ function initSocket() {
 
     socket.on('room-message', (msg) => {
       handleIncomingRoomMessage(msg);
+    });
+
+    socket.on('survey-timer-saved', (entry) => {
+      if (!entry || !entry.sessionId) return;
+      recordLocalSurveyTimerHistory(entry);
+      const histPanel = document.getElementById('surveyTimerHistoryPanel');
+      if (histPanel && histPanel.style.display !== 'none') fetchWebSurveyTimerHistory();
     });
 
     socket.on('room-cleared', (info) => {
@@ -1364,6 +1401,13 @@ if (elRoomChatFeed) {
     if (!msg) return;
     if (act === 'preview' && msg.payload) {
       displayResults(msg.payload);
+    } else if (act === 'view_house' && msg.payload) {
+      const lat = Number(msg.payload.lat);
+      const lng = Number(msg.payload.lng);
+      const docId = String(msg.payload.docId || msg.payload.doc_id || '').trim();
+      if (Number.isFinite(lat) && Number.isFinite(lng) && typeof window.__centerMapOnHouse === 'function') {
+        window.__centerMapOnHouse(lat, lng, docId);
+      }
     } else if (act === 'reply') {
       pendingReplyMsg = {
         id: msg.id,
@@ -2727,6 +2771,7 @@ btnDismissResult.addEventListener('click', () => {
 
 const FIRESTORE_HOUSES_BASE = 'https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/surveyed_houses';
 const FIRESTORE_CARDS_BASE = 'https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards';
+const PENDING_HOUSES_STORAGE_KEY = 'fc_pending_survey_houses_v1';
 
 const TAG_CONFIG = {
   no_female_nid: { label: '🪪 প্রধান নারীর NID নেই', cls: 'tag-danger', isBlocked: true },
@@ -2737,13 +2782,21 @@ const TAG_CONFIG = {
 };
 
 let surveyHousesMap = new Map();
-let currentLiveGps = null;
+let houseMarkersById = new Map();
+let currentLiveGps = null; // Actual device GPS position only
+let selectedPinGps = null; // Manual map-tap or edited-house pin coordinates
+let liveGpsWatchId = null;
+let isLiveGpsTracking = false;
 let leafletMap = null;
 let leafletMarkersLayer = null;
 let leafletTileLayer = null;
 let myLocationMarker = null;
+let myLocationAccuracyCircle = null;
+let manualPinMarker = null;
+let mapToastTimer = null;
 let isSatellite = false;
 let activeMapFilter = 'all';
+let activeHouseSort = 'newest';
 let mapSearchQuery = '';
 
 // DOM Elements for Navigation & View
@@ -2760,8 +2813,10 @@ const statCompletedHouses = document.getElementById('statCompletedHouses');
 const statFixableHouses = document.getElementById('statFixableHouses');
 const statBlockedHouses = document.getElementById('statBlockedHouses');
 const houseSearchInput = document.getElementById('houseSearchInput');
+const houseSortSelect = document.getElementById('houseSortSelect');
 const btnMapNewHouse = document.getElementById('btnMapNewHouse');
 const btnCenterMyLocation = document.getElementById('btnCenterMyLocation');
+const btnLiveGpsTrack = document.getElementById('btnLiveGpsTrack');
 const btnToggleSatellite = document.getElementById('btnToggleSatellite');
 const btnRefreshHouses = document.getElementById('btnRefreshHouses');
 const mapLocationToast = document.getElementById('mapLocationToast');
@@ -2792,27 +2847,51 @@ const modalHouseNotes = document.getElementById('modalHouseNotes');
 const btnSaveHouseRecord = document.getElementById('btnSaveHouseRecord');
 const btnLaunchPortalEligible = document.getElementById('btnLaunchPortalEligible');
 
+function isValidLatLng(lat, lng) {
+  const la = Number(lat);
+  const ln = Number(lng);
+  return Number.isFinite(la) && Number.isFinite(ln) && la >= -90 && la <= 90 && ln >= -180 && ln <= 180 && !(la === 0 && ln === 0);
+}
+
+function calculateDistanceMeters(lat1, lng1, lat2, lng2) {
+  if (!isValidLatLng(lat1, lng1) || !isValidLatLng(lat2, lng2)) return null;
+  const R = 6371000;
+  const toRad = (d) => (Number(d) * Math.PI) / 180;
+  const dLat = toRad(Number(lat2) - Number(lat1));
+  const dLng = toRad(Number(lng2) - Number(lng1));
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+}
+
+function formatDistanceBn(meters) {
+  if (!Number.isFinite(meters) || meters < 0) return '';
+  if (meters < 1000) return `${toBnDigits(Math.round(meters))} মিঃ`;
+  return `${toBnDigits((meters / 1000).toFixed(2))} কিমি`;
+}
+
 // Open Location Code (Plus Code) Standalone Encoder
 function encodePlusCode(lat, lng) {
   try {
+    if (!Number.isFinite(Number(lat)) || !Number.isFinite(Number(lng))) return '';
     const CODE_ALPHABET = '23456789CFGHJMPQRVWX';
-    let latitude = Math.min(90, Math.max(-90, Number(lat))) + 90;
-    let longitude = Math.min(180, Math.max(-180, Number(lng))) + 180;
+    const latitude = Math.min(89.999999, Math.max(-90, Number(lat))) + 90;
+    const longitude = Math.min(179.999999, Math.max(-180, Number(lng))) + 180;
     let code = '';
     let latVal = latitude;
     let lngVal = longitude;
-    let latGrid = 20;
-    let lngGrid = 20;
+    const latGrid = 20;
+    const lngGrid = 20;
     for (let i = 0; i < 4; i++) {
-      const latDigit = Math.floor(latVal / latGrid);
-      const lngDigit = Math.floor(lngVal / lngGrid);
+      const latDigit = Math.min(19, Math.floor(latVal / latGrid));
+      const lngDigit = Math.min(19, Math.floor(lngVal / lngGrid));
       code += CODE_ALPHABET.charAt(latDigit) + CODE_ALPHABET.charAt(lngDigit);
       latVal = (latVal % latGrid) * 20;
       lngVal = (lngVal % lngGrid) * 20;
       if (i === 3) code += '+';
     }
-    const latDigit = Math.floor(latVal / latGrid);
-    const lngDigit = Math.floor(lngVal / lngGrid);
+    const latDigit = Math.min(19, Math.floor(latVal / latGrid));
+    const lngDigit = Math.min(19, Math.floor(lngVal / lngGrid));
     code += CODE_ALPHABET.charAt(latDigit) + CODE_ALPHABET.charAt(lngDigit);
     return code;
   } catch (_) {
@@ -2820,30 +2899,38 @@ function encodePlusCode(lat, lng) {
   }
 }
 
-// Multi-sampling High-Accuracy GPS Locator
-function acquireHighAccuracyLocation(maxWaitMs = 6000) {
+// Multi-sampling High-Accuracy GPS Locator (never overwrites real GPS with fallback)
+function acquireHighAccuracyLocation(maxWaitMs = 6000, opts = {}) {
+  const maxStaleMs = Number(opts.maxStaleMs || 120000);
   return new Promise((resolve) => {
+    const freshLive = currentLiveGps && !currentLiveGps.isFallback && (Date.now() - (currentLiveGps.timestamp || 0)) <= maxStaleMs
+      ? currentLiveGps
+      : null;
     if (!navigator.geolocation) {
-      return resolve(currentLiveGps || { lat: 23.757, lng: 89.644, accuracy: 50, isFallback: true });
+      return resolve(freshLive || { lat: 23.757, lng: 89.644, accuracy: 50, plusCode: encodePlusCode(23.757, 89.644), isFallback: true, reason: 'unsupported' });
     }
 
     let bestSample = null;
     let samplesCount = 0;
     let watchId = null;
+    let done = false;
 
-    const finalize = () => {
+    const finalize = (errReason = '') => {
+      if (done) return;
+      done = true;
       if (watchId !== null) {
         try { navigator.geolocation.clearWatch(watchId); } catch (_) {}
+        watchId = null;
       }
       if (bestSample) {
         currentLiveGps = bestSample;
         return resolve(bestSample);
       }
-      if (currentLiveGps) return resolve(currentLiveGps);
-      resolve({ lat: 23.757, lng: 89.644, accuracy: 50, isFallback: true });
+      if (freshLive) return resolve(freshLive);
+      resolve({ lat: 23.757, lng: 89.644, accuracy: 50, plusCode: encodePlusCode(23.757, 89.644), isFallback: true, reason: errReason || 'timeout' });
     };
 
-    const timer = setTimeout(finalize, maxWaitMs);
+    const timer = setTimeout(() => finalize('timeout'), maxWaitMs);
 
     watchId = navigator.geolocation.watchPosition(
       (pos) => {
@@ -2851,17 +2938,18 @@ function acquireHighAccuracyLocation(maxWaitMs = 6000) {
         const sample = {
           lat: Number(pos.coords.latitude.toFixed(6)),
           lng: Number(pos.coords.longitude.toFixed(6)),
-          accuracy: Math.round(pos.coords.accuracy || 15),
+          accuracy: Math.max(1, Math.round(pos.coords.accuracy || 15)),
           plusCode: encodePlusCode(pos.coords.latitude, pos.coords.longitude),
-          timestamp: pos.timestamp || Date.now()
+          timestamp: Date.now(),
+          isFallback: false
         };
 
         if (!bestSample || sample.accuracy < bestSample.accuracy) {
           bestSample = sample;
         }
 
-        // If high precision attained (<= 5 meters), resolve early
-        if (sample.accuracy <= 6 || samplesCount >= 4) {
+        // If high precision attained (<= 8 meters) or enough samples collected, resolve early
+        if (sample.accuracy <= 8 || samplesCount >= 4) {
           clearTimeout(timer);
           finalize();
         }
@@ -2869,24 +2957,112 @@ function acquireHighAccuracyLocation(maxWaitMs = 6000) {
       (err) => {
         console.warn('[Geolocation] notice:', err.message);
         clearTimeout(timer);
-        finalize();
+        finalize(err.code === 1 ? 'denied' : (err.code === 2 ? 'unavailable' : 'timeout'));
       },
       {
         enableHighAccuracy: true,
         timeout: maxWaitMs,
-        maximumAge: 1000
+        maximumAge: opts.forceFresh ? 0 : 2000
       }
     );
   });
 }
 
+function startLiveGpsTracking() {
+  if (!navigator.geolocation) {
+    showMapToast('⚠️ এই ব্রাউজারে লাইভ জিপিএস সাপোর্ট নেই');
+    return false;
+  }
+  if (liveGpsWatchId !== null) return true;
+  isLiveGpsTracking = true;
+  if (btnLiveGpsTrack) {
+    btnLiveGpsTrack.classList.add('tracking-active');
+    btnLiveGpsTrack.textContent = '📡 ট্র্যাকিং চালু';
+  }
+  showMapToast('📡 লাইভ জিপিএস ট্র্যাকিং চালু হয়েছে...');
+  liveGpsWatchId = navigator.geolocation.watchPosition(
+    (pos) => {
+      const sample = {
+        lat: Number(pos.coords.latitude.toFixed(6)),
+        lng: Number(pos.coords.longitude.toFixed(6)),
+        accuracy: Math.max(1, Math.round(pos.coords.accuracy || 15)),
+        plusCode: encodePlusCode(pos.coords.latitude, pos.coords.longitude),
+        timestamp: Date.now(),
+        isFallback: false
+      };
+      currentLiveGps = sample;
+      renderMyLocationMarker(sample);
+      if (leafletMap && viewMap && viewMap.style.display !== 'none') {
+        if (activeHouseSort === 'nearest') renderMapHouses();
+      }
+    },
+    (err) => {
+      console.warn('[LiveTrack] notice:', err.message);
+      if (err.code === 1) {
+        stopLiveGpsTracking();
+        showMapToast('⚠️ লোকেশন পারমিশন দেওয়া হয়নি — ব্রাউজার সেটিংস থেকে Allow করুন');
+      }
+    },
+    { enableHighAccuracy: true, timeout: 15000, maximumAge: 2000 }
+  );
+  return true;
+}
+
+function stopLiveGpsTracking() {
+  if (liveGpsWatchId !== null) {
+    try { navigator.geolocation.clearWatch(liveGpsWatchId); } catch (_) {}
+    liveGpsWatchId = null;
+  }
+  isLiveGpsTracking = false;
+  if (btnLiveGpsTrack) {
+    btnLiveGpsTrack.classList.remove('tracking-active');
+    btnLiveGpsTrack.textContent = '📡 লাইভ ট্র্যাক';
+  }
+}
+
+function toggleLiveGpsTracking() {
+  if (isLiveGpsTracking) {
+    stopLiveGpsTracking();
+    showMapToast('⏹️ লাইভ জিপিএস ট্র্যাকিং বন্ধ হয়েছে');
+  } else {
+    startLiveGpsTracking();
+    if (currentLiveGps && !currentLiveGps.isFallback && leafletMap) {
+      leafletMap.setView([currentLiveGps.lat, currentLiveGps.lng], Math.max(leafletMap.getZoom(), 17));
+    }
+  }
+}
+
 function showMapToast(msg, durationMs = 2800) {
   if (!mapLocationToast) return;
+  if (mapToastTimer) {
+    clearTimeout(mapToastTimer);
+    mapToastTimer = null;
+  }
   mapLocationToast.textContent = msg;
   mapLocationToast.style.display = 'block';
-  setTimeout(() => {
+  mapToastTimer = setTimeout(() => {
     mapLocationToast.style.display = 'none';
+    mapToastTimer = null;
   }, durationMs);
+}
+
+function isGhostTimerOnlyDoc(out) {
+  if (!out || typeof out !== 'object') return true;
+  if (out.docId === 'SURVEY_TIMERS') return true;
+  const hasRealName = Boolean(
+    (out.primary_lady_name_bn && String(out.primary_lady_name_bn).trim())
+    || (out.name_bn && String(out.name_bn).trim())
+    || (out.name_en && String(out.name_en).trim())
+    || (out.lady_name && String(out.lady_name).trim())
+  );
+  const hasCoords = isValidLatLng(out.lat, out.lng);
+  const hasIssues = Array.isArray(out.issues) && out.issues.length > 0;
+  const hasMeta = Boolean(
+    out.nid_number || out.birth_reg_no || out.mobile_number || out.contact_phone
+    || out.village || out.notes || out.survey_status
+    || Number(out.summary_readiness_pct) > 0 || Number(out.section3_completed_count) > 0
+  );
+  return !hasRealName && !hasCoords && !hasIssues && !hasMeta;
 }
 
 // Convert Firestore REST document structure to plain JS Object
@@ -2919,14 +3095,25 @@ function parseFirestoreDoc(doc) {
     out[k] = parseVal(f[k]);
   }
 
-  // Normalize location
-  if (out.location && typeof out.location.lat === 'number' && typeof out.location.lng === 'number') {
-    out.lat = out.location.lat;
-    out.lng = out.location.lng;
-    out.accuracy = out.location.accuracy || 10;
-  } else if (typeof out.lat === 'number' && typeof out.lng === 'number') {
-    out.location = { lat: out.lat, lng: out.lng, accuracy: out.accuracy || 10 };
+  // Normalize location (strict coordinate bounds check)
+  if (out.location && isValidLatLng(out.location.lat, out.location.lng)) {
+    out.lat = Number(out.location.lat);
+    out.lng = Number(out.location.lng);
+    out.accuracy = Number(out.location.accuracy) || 10;
+  } else if (isValidLatLng(out.lat, out.lng)) {
+    out.lat = Number(out.lat);
+    out.lng = Number(out.lng);
+    out.location = { lat: out.lat, lng: out.lng, accuracy: Number(out.accuracy) || 10 };
+  } else {
+    delete out.lat;
+    delete out.lng;
   }
+
+  // Filter out ghost timer-only stub documents (created by legacy timer PATCH without exists=true)
+  if (isGhostTimerOnlyDoc(out)) return null;
+
+  // Map snake_case plus_code -> plusCode (and compute if coords exist)
+  out.plusCode = out.plusCode || out.plus_code || (isValidLatLng(out.lat, out.lng) ? encodePlusCode(out.lat, out.lng) : '');
 
   // Derive unified status
   if (out.survey_status) {
@@ -2940,12 +3127,112 @@ function parseFirestoreDoc(doc) {
     out.survey_status = 'INCOMPLETE_ACTIONABLE';
   }
 
-  // Normalized lady name
-  out.ladyName = out.primary_lady_name_bn || out.name_bn || out.lady_name || out.docId;
+  // Normalized lady name & contact
+  out.ladyName = out.primary_lady_name_bn || out.name_bn || out.lady_name || out.name_en || out.docId;
   out.contactPhone = out.mobile_number || out.contact_phone || '';
   out.issues = Array.isArray(out.issues) ? out.issues : [];
+  out.updated_at = out.updated_at || out.summary_synced_at || out.synced_at || out.geo_recorded_at || out.survey_ended_at || doc.updateTime || '';
 
   return out;
+}
+
+function mergeHouseIntoMap(incoming, opts = {}) {
+  if (!incoming || !incoming.docId) return null;
+  if (isGhostTimerOnlyDoc(incoming)) return null;
+  const docId = String(incoming.docId).trim();
+  const existing = surveyHousesMap.get(docId);
+  const preferIncoming = Boolean(opts.preferIncoming);
+
+  const pickStr = (a, b) => (preferIncoming ? (a || b || '') : (b || a || ''));
+  const hasInCoords = isValidLatLng(incoming.lat, incoming.lng);
+  const hasExCoords = existing && isValidLatLng(existing.lat, existing.lng);
+
+  let lat;
+  let lng;
+  let accuracy;
+  if (preferIncoming && hasInCoords) {
+    lat = Number(incoming.lat);
+    lng = Number(incoming.lng);
+    accuracy = Number(incoming.accuracy) || existing?.accuracy || 15;
+  } else if (hasExCoords && !hasInCoords) {
+    lat = Number(existing.lat);
+    lng = Number(existing.lng);
+    accuracy = Number(existing.accuracy) || 15;
+  } else if (hasInCoords) {
+    lat = Number(incoming.lat);
+    lng = Number(incoming.lng);
+    accuracy = Number(incoming.accuracy) || existing?.accuracy || 15;
+  }
+
+  const merged = {
+    ...(existing || {}),
+    ...incoming,
+    docId,
+    ladyName: pickStr(incoming.ladyName || incoming.primary_lady_name_bn || incoming.name_bn || incoming.lady_name, existing?.ladyName),
+    primary_lady_name_bn: pickStr(incoming.primary_lady_name_bn || incoming.ladyName || incoming.name_bn, existing?.primary_lady_name_bn),
+    nid_number: pickStr(incoming.nid_number, existing?.nid_number),
+    contactPhone: pickStr(incoming.contactPhone || incoming.mobile_number, existing?.contactPhone || existing?.mobile_number),
+    mobile_number: pickStr(incoming.mobile_number || incoming.contactPhone, existing?.mobile_number || existing?.contactPhone),
+    village: pickStr(incoming.village, existing?.village),
+    notes: pickStr(incoming.notes, existing?.notes),
+    surveyor_name: pickStr(incoming.surveyor_name, existing?.surveyor_name),
+    survey_duration_sec: Number(incoming.survey_duration_sec) > 0 ? Number(incoming.survey_duration_sec) : (Number(existing?.survey_duration_sec) || 0),
+    survey_duration_label: pickStr(incoming.survey_duration_label, existing?.survey_duration_label),
+    issues: Array.isArray(incoming.issues) && incoming.issues.length > 0
+      ? incoming.issues
+      : (Array.isArray(existing?.issues) ? existing.issues : []),
+    updated_at: pickStr(incoming.updated_at, existing?.updated_at)
+  };
+
+  if (isValidLatLng(lat, lng)) {
+    merged.lat = lat;
+    merged.lng = lng;
+    merged.accuracy = accuracy;
+    merged.plusCode = incoming.plusCode || incoming.plus_code || existing?.plusCode || existing?.plus_code || encodePlusCode(lat, lng);
+  } else {
+    delete merged.lat;
+    delete merged.lng;
+    merged.plusCode = incoming.plusCode || incoming.plus_code || existing?.plusCode || existing?.plus_code || '';
+  }
+
+  if (Number(merged.summary_readiness_pct) >= 90 || Number(merged.section3_completed_count) >= 3) {
+    merged.survey_status = 'COMPLETED';
+  } else if (!merged.survey_status) {
+    const hasBlocked = merged.issues.some(i => i === 'no_female_nid' || i === 'female_under_18');
+    merged.survey_status = hasBlocked ? 'INCOMPLETE_BLOCKED' : 'INCOMPLETE_ACTIONABLE';
+  }
+
+  surveyHousesMap.set(docId, merged);
+  return merged;
+}
+
+function renderManualPinMarker(pos) {
+  if (!leafletMap || !pos || !isValidLatLng(pos.lat, pos.lng)) return;
+  if (manualPinMarker) {
+    manualPinMarker.setLatLng([pos.lat, pos.lng]);
+  } else {
+    const pinIcon = L.divIcon({
+      html: `<div style="filter:drop-shadow(0 3px 6px rgba(0,0,0,0.4));">${getMarkerPinSvg('#7c3aed', '📌')}</div>`,
+      className: '',
+      iconSize: [32, 42],
+      iconAnchor: [16, 42]
+    });
+    manualPinMarker = L.marker([pos.lat, pos.lng], { icon: pinIcon, draggable: true }).addTo(leafletMap);
+    manualPinMarker.bindTooltip('📌 নির্বাচিত বাড়ির পিন (ড্র্যাগ করে সরানো যাবে)', { direction: 'top', offset: [0, -38] });
+    manualPinMarker.on('dragend', () => {
+      const ll = manualPinMarker.getLatLng();
+      selectedPinGps = {
+        lat: Number(ll.lat.toFixed(6)),
+        lng: Number(ll.lng.toFixed(6)),
+        accuracy: 3,
+        plusCode: encodePlusCode(ll.lat, ll.lng),
+        timestamp: Date.now(),
+        isManualPin: true,
+        isFallback: false
+      };
+      showMapToast(`📌 পিন সরানো হয়েছে (${selectedPinGps.plusCode})`);
+    });
+  }
 }
 
 // Leaflet Map Initialization
@@ -2956,8 +3243,8 @@ function initLeafletMap() {
   if (!mapEl) return;
 
   // Default coordinate (Rajbari, Bangladesh)
-  const defaultLat = currentLiveGps?.lat || 23.757;
-  const defaultLng = currentLiveGps?.lng || 89.644;
+  const defaultLat = (currentLiveGps && isValidLatLng(currentLiveGps.lat, currentLiveGps.lng)) ? currentLiveGps.lat : 23.757;
+  const defaultLng = (currentLiveGps && isValidLatLng(currentLiveGps.lat, currentLiveGps.lng)) ? currentLiveGps.lng : 89.644;
 
   leafletMap = L.map(mapEl, {
     zoomControl: true,
@@ -2965,8 +3252,6 @@ function initLeafletMap() {
   }).setView([defaultLat, defaultLng], 15);
 
   const osmUrl = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
-  const googleSatUrl = 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}';
-
   leafletTileLayer = L.tileLayer(osmUrl, { maxZoom: 19 }).addTo(leafletMap);
   leafletMarkersLayer = L.layerGroup().addTo(leafletMap);
 
@@ -2981,17 +3266,28 @@ function initLeafletMap() {
     });
   });
 
+  // Tapping the map sets a manual house-pin marker WITHOUT overwriting real device GPS
   leafletMap.on('click', (e) => {
-    // Update live GPS when map clicked
-    currentLiveGps = {
+    selectedPinGps = {
       lat: Number(e.latlng.lat.toFixed(6)),
       lng: Number(e.latlng.lng.toFixed(6)),
       accuracy: 5,
       plusCode: encodePlusCode(e.latlng.lat, e.latlng.lng),
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      isManualPin: true,
+      isFallback: false
     };
-    renderMyLocationMarker(currentLiveGps);
+    renderManualPinMarker(selectedPinGps);
+    showMapToast(`📌 ম্যাপ পিন সেট হয়েছে (${selectedPinGps.plusCode}) — "📍 নতুন বাড়ি ট্যাগ" চাপুন`);
   });
+
+  const handleResize = () => {
+    if (leafletMap && viewMap && viewMap.style.display !== 'none') {
+      leafletMap.invalidateSize();
+    }
+  };
+  window.addEventListener('resize', handleResize);
+  window.addEventListener('orientationchange', () => setTimeout(handleResize, 250));
 }
 
 function toggleMapSatelliteLayer() {
@@ -3000,9 +3296,20 @@ function toggleMapSatelliteLayer() {
   leafletMap.removeLayer(leafletTileLayer);
 
   if (isSatellite) {
-    leafletTileLayer = L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
+    let fellBackToEsri = false;
+    const satLayer = L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
       maxZoom: 20
-    }).addTo(leafletMap);
+    });
+    satLayer.on('tileerror', () => {
+      if (fellBackToEsri || !isSatellite || !leafletMap) return;
+      fellBackToEsri = true;
+      try { leafletMap.removeLayer(satLayer); } catch (_) {}
+      leafletTileLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 19
+      }).addTo(leafletMap);
+      showMapToast('🛰️ Esri স্যাটেলাইট ব্যাকআপ লেয়ার সক্রিয়');
+    });
+    leafletTileLayer = satLayer.addTo(leafletMap);
     if (btnToggleSatellite) btnToggleSatellite.textContent = '🗺️ সাধারণ ভিউ';
     showMapToast('🛰️ গুগল স্যাটেলাইট হাইব্রিড ম্যাপ সক্রিয়');
   } else {
@@ -3015,7 +3322,7 @@ function toggleMapSatelliteLayer() {
 }
 
 function renderMyLocationMarker(pos) {
-  if (!leafletMap || !pos || typeof pos.lat !== 'number') return;
+  if (!leafletMap || !pos || !isValidLatLng(pos.lat, pos.lng)) return;
   if (myLocationMarker) {
     myLocationMarker.setLatLng([pos.lat, pos.lng]);
   } else {
@@ -3031,7 +3338,23 @@ function renderMyLocationMarker(pos) {
       iconSize: [22, 22],
       iconAnchor: [11, 11]
     });
-    myLocationMarker = L.marker([pos.lat, pos.lng], { icon: pulseIcon }).addTo(leafletMap);
+    myLocationMarker = L.marker([pos.lat, pos.lng], { icon: pulseIcon, zIndexOffset: 500 }).addTo(leafletMap);
+  }
+  const accRadius = Math.max(5, Math.min(250, Number(pos.accuracy) || 15));
+  if (typeof L.circle === 'function') {
+    if (myLocationAccuracyCircle) {
+      myLocationAccuracyCircle.setLatLng([pos.lat, pos.lng]);
+      myLocationAccuracyCircle.setRadius(accRadius);
+    } else {
+      myLocationAccuracyCircle = L.circle([pos.lat, pos.lng], {
+        radius: accRadius,
+        color: '#0284c7',
+        weight: 1,
+        fillColor: '#38bdf8',
+        fillOpacity: 0.14,
+        interactive: false
+      }).addTo(leafletMap);
+    }
   }
 }
 
@@ -3055,6 +3378,9 @@ function createHouseMarkerIcon(house) {
   } else if (house.survey_status === 'INCOMPLETE_BLOCKED') {
     color = '#dc2626';
     symbol = '✕';
+  } else if (house.survey_status === 'IN_PROGRESS') {
+    color = '#2563eb';
+    symbol = '⏳';
   } else if (house.issues?.includes('sim_not_own_nid')) {
     color = '#d97706';
     symbol = '📱';
@@ -3075,8 +3401,10 @@ function createHouseMarkerIcon(house) {
 
 function buildHousePopupHtml(h) {
   const isDone = h.survey_status === 'COMPLETED';
-  const badgeCls = isDone ? 'badge-green' : (h.survey_status === 'INCOMPLETE_BLOCKED' ? 'badge-red' : 'badge-orange');
-  const badgeText = isDone ? '🟢 সম্পন্ন' : (h.survey_status === 'INCOMPLETE_BLOCKED' ? '🔴 ব্লকড' : '🟠 বাকি সমস্যা');
+  const isBlocked = h.survey_status === 'INCOMPLETE_BLOCKED';
+  const isInProgress = h.survey_status === 'IN_PROGRESS';
+  const badgeCls = isDone ? 'badge-green' : (isBlocked ? 'badge-red' : 'badge-orange');
+  const badgeText = isDone ? '🟢 সম্পন্ন' : (isBlocked ? '🔴 ব্লকড' : (isInProgress ? '🔵 পোর্টালে চলমান' : '🟠 বাকি সমস্যা'));
 
   let tagsHtml = '';
   if (Array.isArray(h.issues) && h.issues.length > 0) {
@@ -3088,12 +3416,13 @@ function buildHousePopupHtml(h) {
     tagsHtml = '<span class="tag-badge tag-info">✅ ফ্যামিলি কার্ড সম্পূর্ণ</span>';
   }
 
-  const hasCoords = Number.isFinite(Number(h.lat)) && Number.isFinite(Number(h.lng));
+  const hasCoords = Number.isFinite(Number(h.lat)) && Number.isFinite(Number(h.lng)) && !(Number(h.lat) === 0 && Number(h.lng) === 0);
   const latNum = hasCoords ? Number(h.lat) : null;
   const lngNum = hasCoords ? Number(h.lng) : null;
   const navUrl = hasCoords ? `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(latNum)},${encodeURIComponent(lngNum)}` : '';
   const hasDuration = Number(h.survey_duration_sec) > 0;
   const durationLabel = h.survey_duration_label || (hasDuration ? `${toBnDigits(h.survey_duration_sec)} সেঃ` : '');
+  const plusCodeVal = h.plusCode || h.plus_code || '';
 
   return `
     <div class="fc-popup-content">
@@ -3107,6 +3436,7 @@ function buildHousePopupHtml(h) {
         ${hasDuration ? ` • ⏱️ সময়: <b>${escapeHtml(durationLabel)}</b>` : ''}
       </div>
       ${h.village ? `<div style="font-size:0.74rem; color:#64748b; margin-bottom:4px;">🏠 ${escapeHtml(h.village)}</div>` : ''}
+      ${plusCodeVal ? `<div style="font-size:0.72rem; color:#0369a1; margin-bottom:4px;">📍 Plus Code: <code>${escapeHtml(plusCodeVal)}</code></div>` : ''}
       ${tagsHtml ? `<div class="fc-popup-tags">${tagsHtml}</div>` : ''}
       ${h.notes ? `<div class="fc-popup-notes">📝 ${escapeHtml(h.notes)}</div>` : ''}
       <div style="display:flex; gap:5px; margin-top:8px;">
@@ -3123,11 +3453,14 @@ function renderMapHouses() {
   if (mapHouseCountBadge) mapHouseCountBadge.textContent = toBnDigits(allHouses.length);
   if (!leafletMap || !leafletMarkersLayer) return;
   leafletMarkersLayer.clearLayers();
+  if (typeof houseMarkersById !== 'undefined' && houseMarkersById) houseMarkersById.clear();
+
   let countDone = 0;
   let countFixable = 0;
   let countBlocked = 0;
   let countSim = 0;
   let countBrc = 0;
+  let countNoGps = 0;
 
   allHouses.forEach(h => {
     if (h.survey_status === 'COMPLETED') countDone++;
@@ -3136,6 +3469,7 @@ function renderMapHouses() {
 
     if (h.issues?.includes('sim_not_own_nid')) countSim++;
     if (h.issues?.includes('child_brc_missing')) countBrc++;
+    if (!isValidLatLng(h.lat, h.lng)) countNoGps++;
   });
 
   // Update Stats Box
@@ -3151,11 +3485,13 @@ function renderMapHouses() {
   const fSim = document.getElementById('countFilterSim');
   const fBrc = document.getElementById('countFilterBrc');
   const fBlocked = document.getElementById('countFilterBlocked');
+  const fNoGps = document.getElementById('countFilterNoGps');
   if (fAll) fAll.textContent = toBnDigits(allHouses.length);
   if (fDone) fDone.textContent = toBnDigits(countDone);
   if (fSim) fSim.textContent = toBnDigits(countSim);
   if (fBrc) fBrc.textContent = toBnDigits(countBrc);
   if (fBlocked) fBlocked.textContent = toBnDigits(countBlocked);
+  if (fNoGps) fNoGps.textContent = toBnDigits(countNoGps);
 
   // Filter & Search Logic
   const query = (mapSearchQuery || '').trim().toLowerCase();
@@ -3165,6 +3501,7 @@ function renderMapHouses() {
     if (activeMapFilter === 'blocked' && h.survey_status !== 'INCOMPLETE_BLOCKED') return false;
     if (activeMapFilter === 'sim_missing' && !h.issues?.includes('sim_not_own_nid')) return false;
     if (activeMapFilter === 'brc_missing' && !h.issues?.includes('child_brc_missing')) return false;
+    if (activeMapFilter === 'no_gps' && isValidLatLng(h.lat, h.lng)) return false;
 
     // 2. Search query match
     if (query) {
@@ -3173,11 +3510,35 @@ function renderMapHouses() {
       const doc = (h.docId || '').toLowerCase();
       const notes = (h.notes || '').toLowerCase();
       const village = (h.village || '').toLowerCase();
-      if (!lady.includes(query) && !phone.includes(query) && !doc.includes(query) && !notes.includes(query) && !village.includes(query)) {
+      const plus = (h.plusCode || h.plus_code || '').toLowerCase();
+      if (!lady.includes(query) && !phone.includes(query) && !doc.includes(query) && !notes.includes(query) && !village.includes(query) && !plus.includes(query)) {
         return false;
       }
     }
     return true;
+  });
+
+  // Sort houses (newest / nearest / status)
+  const sortMode = typeof activeHouseSort === 'string' ? activeHouseSort : 'newest';
+  const refGps = (typeof currentLiveGps !== 'undefined' && currentLiveGps && !currentLiveGps.isFallback && isValidLatLng(currentLiveGps.lat, currentLiveGps.lng))
+    ? currentLiveGps
+    : null;
+  filtered.sort((a, b) => {
+    if (sortMode === 'nearest' && refGps) {
+      const da = calculateDistanceMeters(refGps.lat, refGps.lng, a.lat, a.lng);
+      const db = calculateDistanceMeters(refGps.lat, refGps.lng, b.lat, b.lng);
+      const va = da === null ? Number.MAX_SAFE_INTEGER : da;
+      const vb = db === null ? Number.MAX_SAFE_INTEGER : db;
+      if (va !== vb) return va - vb;
+    }
+    if (sortMode === 'status') {
+      const rank = (s) => (s === 'INCOMPLETE_BLOCKED' ? 0 : (s === 'INCOMPLETE_ACTIONABLE' ? 1 : (s === 'IN_PROGRESS' ? 2 : 3)));
+      const rDiff = rank(a.survey_status) - rank(b.survey_status);
+      if (rDiff !== 0) return rDiff;
+    }
+    const ta = Date.parse(a.updated_at || '') || 0;
+    const tb = Date.parse(b.updated_at || '') || 0;
+    return tb - ta;
   });
 
   if (filteredHouseCount) {
@@ -3188,20 +3549,23 @@ function renderMapHouses() {
 
   // Add markers to map
   filtered.forEach(h => {
-    if (typeof h.lat === 'number' && typeof h.lng === 'number' && !isNaN(h.lat) && !isNaN(h.lng)) {
+    if (isValidLatLng(h.lat, h.lng)) {
       validGeoHouses.push(h);
       const icon = createHouseMarkerIcon(h);
       const marker = L.marker([h.lat, h.lng], { icon });
       marker.bindPopup(buildHousePopupHtml(h));
       leafletMarkersLayer.addLayer(marker);
+      if (typeof houseMarkersById !== 'undefined' && houseMarkersById && h.docId) {
+        houseMarkersById.set(h.docId, marker);
+      }
     }
   });
 
   // Render list feed
   renderHouseListFeed(filtered);
 
-  // Auto-center bounds if markers exist
-  if (validGeoHouses.length > 0 && !currentLiveGps) {
+  // Auto-center bounds only on initial render when no live GPS yet
+  if (validGeoHouses.length > 0 && !currentLiveGps && !selectedPinGps) {
     const group = L.featureGroup(validGeoHouses.map(h => L.marker([h.lat, h.lng])));
     try { leafletMap.fitBounds(group.getBounds().pad(0.12)); } catch (_) {}
   }
@@ -3214,13 +3578,19 @@ function renderHouseListFeed(houses) {
     return;
   }
 
+  const refGps = (typeof currentLiveGps !== 'undefined' && currentLiveGps && !currentLiveGps.isFallback && Number.isFinite(Number(currentLiveGps.lat)) && Number.isFinite(Number(currentLiveGps.lng)))
+    ? currentLiveGps
+    : null;
+
   houseListFeed.innerHTML = '';
   houses.forEach(h => {
     const card = document.createElement('div');
     const isDone = h.survey_status === 'COMPLETED';
-    const statusCls = isDone ? 'status-completed' : (h.survey_status === 'INCOMPLETE_BLOCKED' ? 'status-blocked' : 'status-fixable');
-    const badgeCls = isDone ? 'badge-green' : (h.survey_status === 'INCOMPLETE_BLOCKED' ? 'badge-red' : 'badge-orange');
-    const badgeText = isDone ? '🟢 সম্পন্ন' : (h.survey_status === 'INCOMPLETE_BLOCKED' ? '🔴 ব্লকড' : '🟠 বাকি সমস্যা');
+    const isBlocked = h.survey_status === 'INCOMPLETE_BLOCKED';
+    const isInProgress = h.survey_status === 'IN_PROGRESS';
+    const statusCls = isDone ? 'status-completed' : (isBlocked ? 'status-blocked' : 'status-fixable');
+    const badgeCls = isDone ? 'badge-green' : (isBlocked ? 'badge-red' : 'badge-orange');
+    const badgeText = isDone ? '🟢 সম্পন্ন' : (isBlocked ? '🔴 ব্লকড' : (isInProgress ? '🔵 চলমান' : '🟠 বাকি সমস্যা'));
 
     card.className = `house-item-card ${statusCls}`;
 
@@ -3232,30 +3602,38 @@ function renderHouseListFeed(houses) {
       }).join(' ');
     }
 
-    const hasCoords = Number.isFinite(Number(h.lat)) && Number.isFinite(Number(h.lng));
+    const hasCoords = Number.isFinite(Number(h.lat)) && Number.isFinite(Number(h.lng)) && !(Number(h.lat) === 0 && Number(h.lng) === 0);
     const latNum = hasCoords ? Number(h.lat) : '';
     const lngNum = hasCoords ? Number(h.lng) : '';
     const navUrl = hasCoords ? `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(latNum)},${encodeURIComponent(lngNum)}` : '';
     const hasDuration = Number(h.survey_duration_sec) > 0;
     const durationLabel = h.survey_duration_label || (hasDuration ? `${toBnDigits(h.survey_duration_sec)} সেঃ` : '');
+    const plusCodeVal = h.plusCode || h.plus_code || '';
+    let distText = '';
+    if (hasCoords && refGps && typeof calculateDistanceMeters === 'function' && typeof formatDistanceBn === 'function') {
+      const dm = calculateDistanceMeters(refGps.lat, refGps.lng, latNum, lngNum);
+      if (dm !== null) distText = formatDistanceBn(dm);
+    }
 
     card.innerHTML = `
       <div class="house-item-top">
         <span class="house-lady-name">👩 ${escapeHtml(h.ladyName || 'নামবিহীন বাড়ি')}</span>
-        <span class="status-badge ${badgeCls}">${badgeText}</span>
+        <span class="status-badge ${badgeCls}">${badgeText}${h._pendingOffline ? ' ☁️⏳' : ''}</span>
       </div>
       <div class="house-meta-line">
         ${h.docId ? `<span>🆔 ${escapeHtml(h.docId)}</span>` : ''}
         ${h.contactPhone ? `<span>📱 ${escapeHtml(h.contactPhone)}</span>` : ''}
         ${h.village ? `<span>🏠 ${escapeHtml(h.village)}</span>` : ''}
-        ${h.plusCode ? `<span>📍 Plus Code: <code>${escapeHtml(h.plusCode)}</code></span>` : ''}
+        ${plusCodeVal ? `<span>📍 Plus Code: <code>${escapeHtml(plusCodeVal)}</code></span>` : ''}
+        ${distText ? `<span>📏 দূরত্ব: <b>${escapeHtml(distText)}</b></span>` : ''}
+        ${!hasCoords ? `<span style="color:#b45309;">⚠️ GPS পিন নেই</span>` : ''}
         ${hasDuration ? `<span>⏱️ সময়: <b>${escapeHtml(durationLabel)}</b></span>` : ''}
       </div>
       ${tagsHtml ? `<div class="house-tags-line">${tagsHtml}</div>` : ''}
       ${h.notes ? `<div class="house-notes-text">📝 ${escapeHtml(h.notes)}</div>` : ''}
       <div class="house-actions-row">
         ${navUrl ? `<a href="${navUrl}" target="_blank" rel="noopener" class="btn-gnav">🧭 গুগল ম্যাপ দিকনির্দেশনা</a>` : ''}
-        ${hasCoords ? `<button type="button" class="btn btn-outline btn-sm fc-house-center-btn" data-lat="${latNum}" data-lng="${lngNum}">🗺️ ম্যাপে দেখুন</button>` : ''}
+        ${hasCoords ? `<button type="button" class="btn btn-outline btn-sm fc-house-center-btn" data-lat="${latNum}" data-lng="${lngNum}" data-doc-id="${escapeHtml(h.docId)}">🗺️ ম্যাপে দেখুন</button>` : ''}
         <button type="button" class="btn btn-secondary btn-sm fc-house-edit-btn" data-doc-id="${escapeHtml(h.docId)}">✏️ এডিট</button>
       </div>
     `;
@@ -3270,7 +3648,8 @@ if (typeof houseListFeed !== 'undefined' && houseListFeed) {
     if (centerBtn) {
       const lat = Number(centerBtn.getAttribute('data-lat'));
       const lng = Number(centerBtn.getAttribute('data-lng'));
-      window.__centerMapOnHouse(lat, lng);
+      const docId = centerBtn.getAttribute('data-doc-id') || '';
+      window.__centerMapOnHouse(lat, lng, docId);
       return;
     }
     const editBtn = e.target.closest('.fc-house-edit-btn');
@@ -3282,12 +3661,26 @@ if (typeof houseListFeed !== 'undefined' && houseListFeed) {
 }
 
 // Global functions for inline HTML buttons
-window.__centerMapOnHouse = function(lat, lng) {
-  if (!leafletMap || typeof lat !== 'number' || typeof lng !== 'number') return;
-  leafletMap.setView([lat, lng], 18);
+window.__centerMapOnHouse = function(lat, lng, docId = '') {
+  if (!isValidLatLng(lat, lng)) return;
   if (viewScanner && viewScanner.style.display !== 'none') {
     switchView('map');
+  } else {
+    initLeafletMap();
   }
+  const focusMarker = () => {
+    if (!leafletMap) return;
+    leafletMap.invalidateSize();
+    leafletMap.setView([Number(lat), Number(lng)], 18);
+    const mapEl = document.getElementById('surveyMap');
+    if (mapEl && typeof mapEl.scrollIntoView === 'function') {
+      mapEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    if (docId && houseMarkersById && houseMarkersById.has(docId)) {
+      try { houseMarkersById.get(docId).openPopup(); } catch (_) {}
+    }
+  };
+  setTimeout(focusMarker, 180);
 };
 
 window.__editHouseRecord = function(docId) {
@@ -3295,48 +3688,147 @@ window.__editHouseRecord = function(docId) {
   if (h) openQuickHouseModal(h);
 };
 
-// Fetch all surveyed houses & family cards from Firestore
+// Paginated Firestore collection reader (never truncates at 100 docs)
+async function fetchFirestoreCollectionAll(baseUrl, maxPages = 15) {
+  const allDocs = [];
+  let pageToken = '';
+  for (let page = 0; page < maxPages; page++) {
+    const url = `${baseUrl}?pageSize=300&t=${Date.now()}${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''}`;
+    const res = await fetch(url, { cache: 'no-store' }).catch(() => null);
+    if (!res || !res.ok) break;
+    const json = await res.json().catch(() => ({}));
+    const docs = Array.isArray(json.documents) ? json.documents : [];
+    for (const d of docs) allDocs.push(d);
+    if (!json.nextPageToken) break;
+    pageToken = json.nextPageToken;
+  }
+  return allDocs;
+}
+
+function loadPendingOfflineHouses() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(PENDING_HOUSES_STORAGE_KEY) || '[]');
+    return Array.isArray(raw) ? raw : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function savePendingOfflineHouses(list) {
+  try {
+    localStorage.setItem(PENDING_HOUSES_STORAGE_KEY, JSON.stringify((list || []).slice(-50)));
+  } catch (_) {}
+}
+
+function buildHouseFirestoreFields(houseObj) {
+  const issues = Array.isArray(houseObj.issues) ? houseObj.issues : [];
+  const fields = {
+    lady_name: { stringValue: String(houseObj.ladyName || houseObj.primary_lady_name_bn || '') },
+    primary_lady_name_bn: { stringValue: String(houseObj.primary_lady_name_bn || houseObj.ladyName || '') },
+    nid_number: { stringValue: String(houseObj.nid_number || '') },
+    mobile_number: { stringValue: String(houseObj.mobile_number || houseObj.contactPhone || '') },
+    village: { stringValue: String(houseObj.village || '') },
+    notes: { stringValue: String(houseObj.notes || '') },
+    survey_status: { stringValue: String(houseObj.survey_status || 'INCOMPLETE_ACTIONABLE') },
+    survey_session_id: { stringValue: String(houseObj.survey_session_id || '') },
+    survey_started_at: { timestampValue: houseObj.survey_started_at || new Date().toISOString() },
+    survey_ended_at: { timestampValue: houseObj.survey_ended_at || houseObj.updated_at || new Date().toISOString() },
+    survey_duration_sec: { integerValue: String(Math.max(0, Math.round(Number(houseObj.survey_duration_sec) || 0))) },
+    survey_duration_label: { stringValue: String(houseObj.survey_duration_label || '') },
+    survey_timer_status: { stringValue: String(houseObj.survey_timer_status || 'ended') },
+    surveyor_id: { stringValue: String(houseObj.surveyor_id || MY_CLIENT_ID) },
+    surveyor_name: { stringValue: String(houseObj.surveyor_name || 'সার্ভেয়ার') },
+    updated_at: { timestampValue: houseObj.updated_at || new Date().toISOString() },
+    issues: {
+      arrayValue: {
+        values: issues.map(iss => ({ stringValue: String(iss) }))
+      }
+    }
+  };
+  if (isValidLatLng(houseObj.lat, houseObj.lng)) {
+    fields.lat = { doubleValue: Number(houseObj.lat) };
+    fields.lng = { doubleValue: Number(houseObj.lng) };
+    fields.accuracy = { integerValue: String(Math.max(1, Math.round(Number(houseObj.accuracy) || 15))) };
+    fields.plus_code = { stringValue: String(houseObj.plusCode || houseObj.plus_code || encodePlusCode(houseObj.lat, houseObj.lng)) };
+  }
+  return fields;
+}
+
+async function syncHouseRecordToFirestore(houseObj) {
+  if (!houseObj || !houseObj.docId) return false;
+  const fields = buildHouseFirestoreFields(houseObj);
+  const updateMask = Object.keys(fields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
+  const docIdEnc = encodeURIComponent(houseObj.docId);
+  const bodyStr = JSON.stringify({ fields });
+  const [cardRes, houseRes] = await Promise.all([
+    fetch(`${FIRESTORE_CARDS_BASE}/${docIdEnc}?${updateMask}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: bodyStr
+    }).catch(() => null),
+    fetch(`${FIRESTORE_HOUSES_BASE}/${docIdEnc}?${updateMask}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: bodyStr
+    }).catch(() => null)
+  ]);
+  return Boolean((cardRes && cardRes.ok) || (houseRes && houseRes.ok));
+}
+
+async function flushPendingSurveyHouses() {
+  const pending = loadPendingOfflineHouses();
+  if (pending.length === 0) return 0;
+  const remaining = [];
+  let syncedCount = 0;
+  for (const item of pending) {
+    const ok = await syncHouseRecordToFirestore(item);
+    if (ok) {
+      syncedCount++;
+      const clean = { ...item };
+      delete clean._pendingOffline;
+      mergeHouseIntoMap(clean, { preferIncoming: true });
+    } else {
+      remaining.push(item);
+    }
+  }
+  savePendingOfflineHouses(remaining);
+  if (syncedCount > 0) {
+    renderMapHouses();
+    showMapToast(`☁️ অফলাইনে থাকা ${toBnDigits(syncedCount)}টি বাড়ি ক্লাউডে সিঙ্ক হয়েছে!`);
+  }
+  return syncedCount;
+}
+
+// Fetch all surveyed houses & family cards from Firestore (paginated, lossless merge, ghost-filtered)
 async function fetchAllSurveyHouses() {
   try {
-    // 1. Fetch from surveyed_houses
-    const resHouses = await fetch(`${FIRESTORE_HOUSES_BASE}?pageSize=100`, { cache: 'no-store' });
-    if (resHouses.ok) {
-      const dataHouses = await resHouses.json().catch(() => ({}));
-      if (Array.isArray(dataHouses.documents)) {
-        dataHouses.documents.forEach(d => {
-          const parsed = parseFirestoreDoc(d);
-          if (parsed && parsed.docId) surveyHousesMap.set(parsed.docId, parsed);
-        });
-      }
-    }
+    // Hydrate any locally queued offline houses first so they never vanish
+    const pendingOffline = loadPendingOfflineHouses();
+    pendingOffline.forEach(item => {
+      if (item && item.docId) mergeHouseIntoMap({ ...item, _pendingOffline: true }, { preferIncoming: true });
+    });
 
-    // 2. Fetch from family_cards (completed cards synced from portal)
-    const resCards = await fetch(`${FIRESTORE_CARDS_BASE}?pageSize=100`, { cache: 'no-store' });
-    if (resCards.ok) {
-      const dataCards = await resCards.json().catch(() => ({}));
-      if (Array.isArray(dataCards.documents)) {
-        dataCards.documents.forEach(d => {
-          const parsed = parseFirestoreDoc(d);
-          if (parsed && parsed.docId) {
-            // If already exists in surveyed_houses, merge coordinates and tags
-            const existing = surveyHousesMap.get(parsed.docId);
-            if (existing) {
-              parsed.lat = parsed.lat || existing.lat;
-              parsed.lng = parsed.lng || existing.lng;
-              parsed.plusCode = parsed.plusCode || existing.plusCode;
-              parsed.issues = parsed.issues?.length ? parsed.issues : existing.issues;
-            }
-            // If completed in family_cards
-            if (parsed.summary_readiness_pct >= 90 || parsed.section3_completed_count >= 3) {
-              parsed.survey_status = 'COMPLETED';
-            }
-            surveyHousesMap.set(parsed.docId, parsed);
-          }
-        });
-      }
-    }
+    const [houseDocs, cardDocs] = await Promise.all([
+      fetchFirestoreCollectionAll(FIRESTORE_HOUSES_BASE, 15),
+      fetchFirestoreCollectionAll(FIRESTORE_CARDS_BASE, 15)
+    ]);
+
+    // 1. Load surveyed_houses first
+    houseDocs.forEach(d => {
+      const parsed = parseFirestoreDoc(d);
+      if (parsed && parsed.docId) mergeHouseIntoMap(parsed, { preferIncoming: true });
+    });
+
+    // 2. Merge family_cards WITHOUT clobbering village, notes, coordinates, or issues from surveyed_houses
+    cardDocs.forEach(d => {
+      const parsed = parseFirestoreDoc(d);
+      if (parsed && parsed.docId) mergeHouseIntoMap(parsed, { preferIncoming: false });
+    });
 
     renderMapHouses();
+    if (pendingOffline.length > 0 && navigator.onLine !== false) {
+      flushPendingSurveyHouses();
+    }
   } catch (err) {
     console.warn('[SurveyMap] Fetch notice:', err.message);
   }
@@ -3380,10 +3872,12 @@ async function openQuickHouseModal(existingHouse = null) {
   }
   renderWebSurveyTimerUI();
 
-  // Reset fields
+  // Reset fields (NEVER copy house_<timestamp> docId into the NID input!)
+  const existingNid = existingHouse?.nid_number
+    || (/^\d{10,17}$/.test(String(existingHouse?.docId || '')) ? String(existingHouse.docId) : '');
   modalHouseDocId.value = existingHouse?.docId || '';
   modalLadyName.value = existingHouse?.ladyName || existingHouse?.name_bn || '';
-  modalLadyNid.value = existingHouse?.docId || existingHouse?.nid_number || '';
+  modalLadyNid.value = existingNid;
   modalContactPhone.value = existingHouse?.contactPhone || existingHouse?.mobile_number || '';
   modalVillage.value = existingHouse?.village || '';
   modalHouseNotes.value = existingHouse?.notes || '';
@@ -3399,27 +3893,33 @@ async function openQuickHouseModal(existingHouse = null) {
     // Defaults: assuming lady has NID & 18+, but SIM or BRC might be unchecked
     chkLadyNid.checked = true;
     chkLadyAge.checked = true;
-    chkLadySim.checked = false; // common pain point
-    chkChildBrc.checked = false; // common pain point
+    chkLadySim.checked = false;
+    chkChildBrc.checked = false;
     chkMembersDoc.checked = true;
   }
 
   updateModalChecklistPreview();
   quickHouseModal.style.display = 'flex';
 
-  // Acquire or refresh GPS
+  // Acquire or display pin GPS WITHOUT overwriting real currentLiveGps
   modalGpsStatusText.textContent = 'জিপিএস অবস্থান যাচাই হচ্ছে...';
-  if (existingHouse && typeof existingHouse.lat === 'number') {
-    currentLiveGps = {
-      lat: existingHouse.lat,
-      lng: existingHouse.lng,
-      accuracy: existingHouse.accuracy || 8,
-      plusCode: existingHouse.plusCode || encodePlusCode(existingHouse.lat, existingHouse.lng),
-      timestamp: Date.now()
+  if (existingHouse && isValidLatLng(existingHouse.lat, existingHouse.lng)) {
+    selectedPinGps = {
+      lat: Number(existingHouse.lat),
+      lng: Number(existingHouse.lng),
+      accuracy: Number(existingHouse.accuracy) || 8,
+      plusCode: existingHouse.plusCode || existingHouse.plus_code || encodePlusCode(existingHouse.lat, existingHouse.lng),
+      timestamp: Date.now(),
+      isExistingHousePin: true,
+      isFallback: false
     };
-    renderGpsInModal(currentLiveGps);
+    renderGpsInModal(selectedPinGps);
+  } else if (!existingHouse && selectedPinGps && selectedPinGps.isManualPin && (Date.now() - (selectedPinGps.timestamp || 0)) < 180000) {
+    renderGpsInModal(selectedPinGps);
   } else {
-    const loc = await acquireHighAccuracyLocation(4500);
+    selectedPinGps = null;
+    const loc = await acquireHighAccuracyLocation(5500, { forceFresh: !existingHouse });
+    selectedPinGps = loc;
     renderGpsInModal(loc);
   }
 }
@@ -3427,8 +3927,13 @@ async function openQuickHouseModal(existingHouse = null) {
 function renderGpsInModal(loc) {
   if (!loc) return;
   if (loc.isFallback) {
-    modalGpsStatusText.textContent = '⚠️ জিপিএস আনলকড (ম্যাপে ক্লিক করে চিহ্নিত করুন)';
+    modalGpsStatusText.textContent = loc.reason === 'denied'
+      ? '⚠️ জিপিএস পারমিশন বন্ধ (ম্যাপে ট্যাপ করে পিন বসান বা Allow দিন)'
+      : '⚠️ জিপিএস আনলকড (ম্যাপে ক্লিক করে চিহ্নিত করুন)';
     modalGpsStatusText.style.color = '#d97706';
+  } else if (loc.isManualPin) {
+    modalGpsStatusText.textContent = '📌 ম্যাপে নির্বাচিত পিন সক্রিয়';
+    modalGpsStatusText.style.color = '#6d28d9';
   } else {
     modalGpsStatusText.textContent = '✅ জিপিএস অবস্থান সফলভাবে লকড';
     modalGpsStatusText.style.color = '#15803d';
@@ -3438,20 +3943,21 @@ function renderGpsInModal(loc) {
   modalPlusCodeBadge.textContent = `প্লাস কোড: ${loc.plusCode || encodePlusCode(loc.lat, loc.lng)}`;
 }
 
-// Save House Record to Firestore & Sync with Tablet
+// Save House Record to Firestore & Sync with Tablet (returns true if saved, false if cancelled/invalid)
 async function saveHouseSurveyRecord(forceEligible = false) {
   const ladyName = (modalLadyName.value || '').trim();
   if (!ladyName) {
     alert('দয়া করে প্রধান নারীর নাম অথবা পরিবারের নাম লিখুন!');
     modalLadyName.focus();
-    return;
+    return false;
   }
 
-  if (!currentLiveGps || currentLiveGps.isFallback) {
+  const activePin = selectedPinGps || currentLiveGps;
+  if (!activePin || activePin.isFallback || !isValidLatLng(activePin.lat, activePin.lng)) {
     const okFallback = confirm(
       '⚠️ লাইভ জিপিএস সিগন্যাল পাওয়া যায়নি (ডিফল্ট কোঅর্ডিনেট সক্রিয়)!\n\nআপনি কি নিশ্চিত যে এই অবস্থানে বাড়িটি সেভ করবেন?\n\nটিপ: বাতিল করে ম্যাপে আপনার কাঙ্ক্ষিত বাড়ির ছাদে/উঠানে ট্যাপ করে সঠিক অবস্থান চিহ্নিত করতে পারেন।'
     );
-    if (!okFallback) return;
+    if (!okFallback) return false;
   }
 
   const rawNid = normalizeDigits(modalLadyNid.value || '').replace(/[^0-9]/g, '');
@@ -3466,8 +3972,13 @@ async function saveHouseSurveyRecord(forceEligible = false) {
   if (!chkChildBrc.checked) issues.push('child_brc_missing');
   if (!chkMembersDoc.checked) issues.push('member_doc_missing');
 
+  const existingId = modalHouseDocId.value;
+  const existingRecord = existingId ? surveyHousesMap.get(existingId) : null;
   let surveyStatus = 'COMPLETED';
-  if (forceEligible || issues.length === 0) {
+  if (forceEligible) {
+    // Keep IN_PROGRESS until portal submission completes (don't prematurely mark COMPLETED)
+    surveyStatus = existingRecord?.survey_status === 'COMPLETED' ? 'COMPLETED' : 'IN_PROGRESS';
+  } else if (issues.length === 0) {
     surveyStatus = 'COMPLETED';
   } else if (issues.includes('no_female_nid') || issues.includes('female_under_18')) {
     surveyStatus = 'INCOMPLETE_BLOCKED';
@@ -3475,7 +3986,6 @@ async function saveHouseSurveyRecord(forceEligible = false) {
     surveyStatus = 'INCOMPLETE_ACTIONABLE';
   }
 
-  const existingId = modalHouseDocId.value;
   const docId = existingId || rawNid || `house_${Date.now()}`;
   const nowMs = Date.now();
   const nowIso = new Date(nowMs).toISOString();
@@ -3490,10 +4000,11 @@ async function saveHouseSurveyRecord(forceEligible = false) {
   const timerDurationLabel = formatWebSurveyDurationLabel(timerDurationSec);
   const timerStatusValue = forceEligible ? (timerSnapshot?.status || 'running') : 'ended';
 
-  const lat = currentLiveGps?.lat || 23.757;
-  const lng = currentLiveGps?.lng || 89.644;
-  const accuracy = currentLiveGps?.accuracy || 15;
-  const plusCode = currentLiveGps?.plusCode || encodePlusCode(lat, lng);
+  const useFallbackCoords = !activePin || activePin.isFallback || !isValidLatLng(activePin.lat, activePin.lng);
+  const lat = useFallbackCoords ? 23.757 : Number(activePin.lat);
+  const lng = useFallbackCoords ? 89.644 : Number(activePin.lng);
+  const accuracy = useFallbackCoords ? 50 : (Number(activePin.accuracy) || 15);
+  const plusCode = (!useFallbackCoords && activePin.plusCode) ? activePin.plusCode : encodePlusCode(lat, lng);
 
   const houseObj = {
     docId,
@@ -3522,77 +4033,59 @@ async function saveHouseSurveyRecord(forceEligible = false) {
   };
 
   // 1. Optimistic local update
-  surveyHousesMap.set(docId, houseObj);
+  mergeHouseIntoMap(houseObj, { preferIncoming: true });
   renderMapHouses();
   quickHouseModal.style.display = 'none';
+  if (manualPinMarker && leafletMap) {
+    try { leafletMap.removeLayer(manualPinMarker); } catch (_) {}
+    manualPinMarker = null;
+  }
+  selectedPinGps = null;
 
-  // 2. Prepare Firestore fields
-  const fields = {
-    lady_name: { stringValue: ladyName },
-    primary_lady_name_bn: { stringValue: ladyName },
-    nid_number: { stringValue: rawNid },
-    mobile_number: { stringValue: rawPhone },
-    village: { stringValue: village },
-    notes: { stringValue: notes },
-    survey_status: { stringValue: surveyStatus },
-    survey_session_id: { stringValue: timerSnapshot?.sessionId || '' },
-    survey_started_at: { timestampValue: new Date(timerStartMs).toISOString() },
-    survey_ended_at: { timestampValue: nowIso },
-    survey_duration_sec: { integerValue: String(timerDurationSec) },
-    survey_duration_label: { stringValue: timerDurationLabel },
-    survey_timer_status: { stringValue: timerStatusValue },
-    surveyor_id: { stringValue: MY_CLIENT_ID },
-    surveyor_name: { stringValue: elDeviceName?.value || 'সার্ভেয়ার' },
-    lat: { doubleValue: lat },
-    lng: { doubleValue: lng },
-    accuracy: { integerValue: String(accuracy) },
-    plus_code: { stringValue: plusCode },
-    updated_at: { timestampValue: nowIso },
-    issues: {
-      arrayValue: {
-        values: issues.map(iss => ({ stringValue: iss }))
-      }
-    }
-  };
-
-  const updateMask = Object.keys(fields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
-  const firestoreUrl = `${FIRESTORE_CARDS_BASE}/${encodeURIComponent(docId)}?${updateMask}`;
-
+  // 2. Await Firestore persistence; queue offline in localStorage if network/server fails
+  let synced = false;
   try {
-    fetch(firestoreUrl, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fields })
-    }).catch(e => console.warn('[Firestore] House save notice:', e.message));
+    synced = await syncHouseRecordToFirestore(houseObj);
+  } catch (err) {
+    console.warn('[Firestore] House save error:', err.message);
+  }
 
-    // Also try surveyed_houses in background if deployed
-    fetch(`${FIRESTORE_HOUSES_BASE}/${encodeURIComponent(docId)}?${updateMask}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fields })
-    }).catch(() => {});
+  if (!synced) {
+    const pending = loadPendingOfflineHouses().filter(x => x && x.docId !== docId);
+    pending.push({ ...houseObj, _pendingOffline: true });
+    savePendingOfflineHouses(pending);
+    mergeHouseIntoMap({ ...houseObj, _pendingOffline: true }, { preferIncoming: true });
+    renderMapHouses();
+  } else {
+    const pending = loadPendingOfflineHouses().filter(x => x && x.docId !== docId);
+    savePendingOfflineHouses(pending);
+  }
 
-    // 3. Broadcast to room channel for tablets
+  // 3. Broadcast to room channel for tablets
+  try {
     sendRoomMessage({
       type: 'survey_house_saved',
-      text: `📍 বাড়ি সংরক্ষিত: ${ladyName} (${surveyStatus === 'COMPLETED' ? '🟢 সম্পন্ন' : '⚠️ সমস্যাযুক্ত'}) • ⏱️ ${timerDurationLabel}`,
+      text: `📍 বাড়ি সংরক্ষিত: ${ladyName} (${surveyStatus === 'COMPLETED' ? '🟢 সম্পন্ন' : (surveyStatus === 'IN_PROGRESS' ? '🔵 পোর্টালে চলমান' : '⚠️ সমস্যাযুক্ত')}) • ⏱️ ${timerDurationLabel}`,
       payload: houseObj
     });
+  } catch (_) {}
 
-    if (!forceEligible) {
-      await endWebSurveyTimer('house_saved', {
-        endedAtMs: nowMs,
-        docId,
-        applicantName: ladyName,
-        surveyStatus,
-        skipDocPatch: true
-      });
-    }
-
-    showMapToast(`✅ ${ladyName}-এর বাড়ি ম্যাপে সংরক্ষিত হয়েছে! (⏱️ ${timerDurationLabel})`);
-  } catch (err) {
-    showMapToast('⚠️ অফলাইনে সেভ হয়েছে, পরবর্তীতে সিঙ্ক হবে');
+  if (!forceEligible) {
+    await endWebSurveyTimer('house_saved', {
+      endedAtMs: nowMs,
+      docId,
+      applicantName: ladyName,
+      surveyStatus,
+      skipDocPatch: true
+    });
   }
+
+  if (synced) {
+    showMapToast(`✅ ${ladyName}-এর বাড়ি ম্যাপে সংরক্ষিত হয়েছে! (⏱️ ${timerDurationLabel})`);
+  } else {
+    showMapToast(`⚠️ অফলাইনে সংরক্ষিত (${ladyName}) — ইন্টারনেট এলেই অটো-সিঙ্ক হবে`);
+  }
+  return true;
 }
 
 // View Switching Logic
@@ -3605,12 +4098,19 @@ function switchView(target) {
 
     initLeafletMap();
     setTimeout(() => {
-      if (leafletMap) leafletMap.invalidateSize();
-      if (!currentLiveGps) {
-        acquireHighAccuracyLocation().then(pos => {
-          renderMyLocationMarker(pos);
-          if (leafletMap) leafletMap.setView([pos.lat, pos.lng], 16);
+      if (leafletMap) {
+        leafletMap.invalidateSize();
+        renderMapHouses();
+      }
+      if (!currentLiveGps || currentLiveGps.isFallback) {
+        acquireHighAccuracyLocation(5000).then(pos => {
+          if (!pos.isFallback) {
+            renderMyLocationMarker(pos);
+            if (leafletMap) leafletMap.setView([pos.lat, pos.lng], 16);
+          }
         });
+      } else {
+        renderMyLocationMarker(currentLiveGps);
       }
     }, 150);
   } else {
@@ -3631,11 +4131,21 @@ function setupSurveyMapEventListeners() {
   if (btnCenterMyLocation) {
     btnCenterMyLocation.addEventListener('click', async () => {
       showMapToast('🎯 জিপিএস অবস্থান যাচাই হচ্ছে...');
-      const pos = await acquireHighAccuracyLocation(3500);
+      const pos = await acquireHighAccuracyLocation(5000, { forceFresh: true });
+      if (pos.isFallback) {
+        showMapToast(pos.reason === 'denied'
+          ? '⚠️ লোকেশন পারমিশন বন্ধ — ব্রাউজার সেটিংস থেকে Allow দিন'
+          : '⚠️ লাইভ জিপিএস সিগন্যাল পাওয়া যায়নি (খোলা জায়গায় আবার চেষ্টা করুন)');
+        return;
+      }
       renderMyLocationMarker(pos);
       if (leafletMap) leafletMap.setView([pos.lat, pos.lng], 17);
-      showMapToast(`✅ অবস্থান পাওয়া গেছে (±${pos.accuracy}m)`);
+      showMapToast(`✅ অবস্থান পাওয়া গেছে (±${pos.accuracy}m • ${pos.plusCode})`);
     });
+  }
+
+  if (btnLiveGpsTrack) {
+    btnLiveGpsTrack.addEventListener('click', toggleLiveGpsTracking);
   }
 
   if (btnToggleSatellite) {
@@ -3643,9 +4153,22 @@ function setupSurveyMapEventListeners() {
   }
 
   if (btnRefreshHouses) {
-    btnRefreshHouses.addEventListener('click', () => {
+    btnRefreshHouses.addEventListener('click', async () => {
       showMapToast('🔄 ক্লাউড থেকে তথ্য রিফ্রেশ হচ্ছে...');
-      fetchAllSurveyHouses();
+      await flushPendingSurveyHouses();
+      await fetchAllSurveyHouses();
+      showMapToast(`✅ মোট ${toBnDigits(surveyHousesMap.size)}টি বাড়ি আপডেট হয়েছে`);
+    });
+  }
+
+  if (houseSortSelect) {
+    houseSortSelect.addEventListener('change', () => {
+      activeHouseSort = houseSortSelect.value || 'newest';
+      if (activeHouseSort === 'nearest' && (!currentLiveGps || currentLiveGps.isFallback)) {
+        acquireHighAccuracyLocation(4000).then(() => renderMapHouses());
+      } else {
+        renderMapHouses();
+      }
     });
   }
 
@@ -3679,7 +4202,8 @@ function setupSurveyMapEventListeners() {
   if (btnModalRefreshGps) {
     btnModalRefreshGps.addEventListener('click', async () => {
       modalGpsStatusText.textContent = '🔄 পুনরায় জিপিএস লক হচ্ছে...';
-      const loc = await acquireHighAccuracyLocation(4000);
+      const loc = await acquireHighAccuracyLocation(6000, { forceFresh: true });
+      selectedPinGps = loc;
       renderGpsInModal(loc);
     });
   }
@@ -3687,6 +4211,7 @@ function setupSurveyMapEventListeners() {
   if (btnModalCloseHouse) {
     btnModalCloseHouse.addEventListener('click', () => {
       quickHouseModal.style.display = 'none';
+      if (selectedPinGps && selectedPinGps.isExistingHousePin) selectedPinGps = null;
     });
   }
 
@@ -3695,17 +4220,23 @@ function setupSurveyMapEventListeners() {
   }
 
   if (btnLaunchPortalEligible) {
-    btnLaunchPortalEligible.addEventListener('click', () => {
+    btnLaunchPortalEligible.addEventListener('click', async () => {
       chkLadyNid.checked = true;
       chkLadyAge.checked = true;
       chkLadySim.checked = true;
       chkChildBrc.checked = true;
       chkMembersDoc.checked = true;
-      saveHouseSurveyRecord(true);
+      const saved = await saveHouseSurveyRecord(true);
+      if (!saved) return;
       switchView('scanner');
       showMapToast('⚡ যোগ্য পরিবার! এবার NID স্ক্যান বা পোর্টালে কাজ শুরু করুন');
     });
   }
+
+  window.addEventListener('online', () => {
+    flushPendingSurveyHouses();
+    flushPendingWebSurveyTimers();
+  });
 }
 
 // Survey Timer Controls & Initialization

@@ -4620,27 +4620,29 @@
   // --- GPS GEOLOCATION & PRE-SURVEY HOUSE NOTE ENGINE ---
   let lastCapturedHouseGps = null;
   let hasGeoCapturedForFid = '';
+  let geoCaptureInFlightFid = '';
 
   function encodePlusCode(lat, lng) {
     try {
+      if (!Number.isFinite(Number(lat)) || !Number.isFinite(Number(lng))) return '';
       const CODE_ALPHABET = '23456789CFGHJMPQRVWX';
-      let latitude = Math.min(90, Math.max(-90, Number(lat))) + 90;
-      let longitude = Math.min(180, Math.max(-180, Number(lng))) + 180;
+      const latitude = Math.min(89.999999, Math.max(-90, Number(lat))) + 90;
+      const longitude = Math.min(179.999999, Math.max(-180, Number(lng))) + 180;
       let code = '';
       let latVal = latitude;
       let lngVal = longitude;
-      let latGrid = 20;
-      let lngGrid = 20;
+      const latGrid = 20;
+      const lngGrid = 20;
       for (let i = 0; i < 4; i++) {
-        const latDigit = Math.floor(latVal / latGrid);
-        const lngDigit = Math.floor(lngVal / lngGrid);
+        const latDigit = Math.min(19, Math.floor(latVal / latGrid));
+        const lngDigit = Math.min(19, Math.floor(lngVal / lngGrid));
         code += CODE_ALPHABET.charAt(latDigit) + CODE_ALPHABET.charAt(lngDigit);
         latVal = (latVal % latGrid) * 20;
         lngVal = (lngVal % lngGrid) * 20;
         if (i === 3) code += '+';
       }
-      const latDigit = Math.floor(latVal / latGrid);
-      const lngDigit = Math.floor(lngVal / lngGrid);
+      const latDigit = Math.min(19, Math.floor(latVal / latGrid));
+      const lngDigit = Math.min(19, Math.floor(lngVal / lngGrid));
       code += CODE_ALPHABET.charAt(latDigit) + CODE_ALPHABET.charAt(lngDigit);
       return code;
     } catch (_) {
@@ -4648,57 +4650,120 @@
     }
   }
 
-  function acquirePortalGpsLocation(timeoutMs = 5000) {
+  function isFreshPortalGps(loc, maxAgeMs = 180000) {
+    return Boolean(
+      loc && Number.isFinite(Number(loc.lat)) && Number.isFinite(Number(loc.lng))
+      && !(Number(loc.lat) === 0 && Number(loc.lng) === 0)
+      && (Date.now() - Number(loc.timestamp || 0)) <= maxAgeMs
+    );
+  }
+
+  function acquirePortalGpsLocation(timeoutMs = 10000, opts = {}) {
+    const forceFresh = Boolean(opts.forceFresh);
+    const maxAgeMs = Number(opts.maxAgeMs || 180000);
     return new Promise((resolve) => {
-      if (!navigator.geolocation) return resolve(lastCapturedHouseGps);
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          const loc = {
-            lat: Number(pos.coords.latitude.toFixed(6)),
-            lng: Number(pos.coords.longitude.toFixed(6)),
-            accuracy: Math.round(pos.coords.accuracy || 10),
-            plusCode: encodePlusCode(pos.coords.latitude, pos.coords.longitude),
-            timestamp: Date.now()
-          };
-          lastCapturedHouseGps = loc;
-          resolve(loc);
-        },
-        (err) => {
-          console.warn('[Geolocation] notice:', err.message);
-          resolve(lastCapturedHouseGps);
-        },
-        { enableHighAccuracy: true, timeout: timeoutMs, maximumAge: 3000 }
-      );
+      const freshCached = !forceFresh && isFreshPortalGps(lastCapturedHouseGps, maxAgeMs) ? lastCapturedHouseGps : null;
+      if (!navigator.geolocation) return resolve(freshCached);
+
+      let bestSample = null;
+      let samples = 0;
+      let watchId = null;
+      let settled = false;
+
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        if (watchId !== null) {
+          try { navigator.geolocation.clearWatch(watchId); } catch (_) {}
+          watchId = null;
+        }
+        if (bestSample) {
+          lastCapturedHouseGps = bestSample;
+          return resolve(bestSample);
+        }
+        resolve(freshCached);
+      };
+
+      const timer = setTimeout(finish, timeoutMs);
+      const onSuccess = (pos) => {
+        samples++;
+        const loc = {
+          lat: Number(pos.coords.latitude.toFixed(6)),
+          lng: Number(pos.coords.longitude.toFixed(6)),
+          accuracy: Math.max(1, Math.round(pos.coords.accuracy || 10)),
+          plusCode: encodePlusCode(pos.coords.latitude, pos.coords.longitude),
+          timestamp: Date.now()
+        };
+        if (!bestSample || loc.accuracy < bestSample.accuracy) bestSample = loc;
+        if (loc.accuracy <= 12 || samples >= 3) {
+          clearTimeout(timer);
+          finish();
+        }
+      };
+      const onError = (err) => {
+        console.warn('[Geolocation] notice:', err.message);
+        clearTimeout(timer);
+        finish();
+      };
+
+      if (typeof navigator.geolocation.watchPosition === 'function') {
+        watchId = navigator.geolocation.watchPosition(onSuccess, onError, {
+          enableHighAccuracy: true,
+          timeout: timeoutMs,
+          maximumAge: forceFresh ? 0 : 3000
+        });
+      } else {
+        navigator.geolocation.getCurrentPosition(onSuccess, onError, {
+          enableHighAccuracy: true,
+          timeout: timeoutMs,
+          maximumAge: forceFresh ? 0 : 3000
+        });
+      }
     });
   }
 
   async function autoCaptureHouseLocationOnStep2(fid, ladyName = '') {
-    if (!fid || hasGeoCapturedForFid === fid) return;
-    hasGeoCapturedForFid = fid;
-    const loc = await acquirePortalGpsLocation(5000);
-    if (!loc) return;
+    if (!fid || hasGeoCapturedForFid === fid || geoCaptureInFlightFid === fid) return;
+    geoCaptureInFlightFid = fid;
+    let loc = null;
+    try {
+      loc = await acquirePortalGpsLocation(10000, { forceFresh: true });
+    } finally {
+      if (geoCaptureInFlightFid === fid) geoCaptureInFlightFid = '';
+    }
+    if (!loc) {
+      const elGeoText = document.getElementById('fc-s2-geo-text');
+      if (elGeoText) elGeoText.textContent = '⚠️ জিপিএস পাওয়া যায়নি (লোকেশন চালু করুন)';
+      return;
+    }
 
+    hasGeoCapturedForFid = fid;
     const elGeoText = document.getElementById('fc-s2-geo-text');
     if (elGeoText) {
-      elGeoText.textContent = `${loc.lat}, ${loc.lng} (±${loc.accuracy}m) ✅`;
+      elGeoText.textContent = `${loc.lat}, ${loc.lng} (±${loc.accuracy}m • ${loc.plusCode}) ✅`;
     }
 
     try {
       const cardMask = 'updateMask.fieldPaths=lat&updateMask.fieldPaths=lng&updateMask.fieldPaths=accuracy&updateMask.fieldPaths=plus_code&updateMask.fieldPaths=geo_recorded_at';
       const cleanFid = normalizeDigits(fid).replace(/[^0-9A-Za-z_-]/g, '');
-      const url = `https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(cleanFid)}?${cardMask}`;
-      fetch(url, {
+      const bodyStr = JSON.stringify({
+        fields: {
+          lat: { doubleValue: loc.lat },
+          lng: { doubleValue: loc.lng },
+          accuracy: { integerValue: String(loc.accuracy) },
+          plus_code: { stringValue: loc.plusCode },
+          geo_recorded_at: { timestampValue: new Date().toISOString() }
+        }
+      });
+      fetch(`https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(cleanFid)}?${cardMask}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          fields: {
-            lat: { doubleValue: loc.lat },
-            lng: { doubleValue: loc.lng },
-            accuracy: { integerValue: String(loc.accuracy) },
-            plus_code: { stringValue: loc.plusCode },
-            geo_recorded_at: { timestampValue: new Date().toISOString() }
-          }
-        })
+        body: bodyStr
+      }).catch(() => {});
+      fetch(`https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/surveyed_houses/${encodeURIComponent(cleanFid)}?${cardMask}&currentDocument.exists=true`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: bodyStr
       }).catch(() => {});
     } catch (_) {}
   }
@@ -4766,17 +4831,19 @@
     modal.style.display = 'flex';
 
     const coordsEl = modal.querySelector('#fc-xhn-gps-coords');
+    let modalGps = isFreshPortalGps(lastCapturedHouseGps, 180000) ? lastCapturedHouseGps : null;
     const updateCoordsText = (loc) => {
-      if (!loc) coordsEl.textContent = 'লোকেশন পাওয়া যায়নি';
-      else coordsEl.textContent = `${loc.lat}, ${loc.lng} (±${loc.accuracy}m)`;
+      modalGps = loc || null;
+      if (!loc) coordsEl.textContent = '⚠️ লোকেশন পাওয়া যায়নি (🔄 রিলক চাপুন বা Allow দিন)';
+      else coordsEl.textContent = `${loc.lat}, ${loc.lng} (±${loc.accuracy}m • ${loc.plusCode || ''})`;
     };
 
-    if (lastCapturedHouseGps) updateCoordsText(lastCapturedHouseGps);
-    else acquirePortalGpsLocation(4000).then(updateCoordsText);
+    if (modalGps) updateCoordsText(modalGps);
+    else acquirePortalGpsLocation(9000, { forceFresh: true }).then(updateCoordsText);
 
     modal.querySelector('#fc-xhn-relock-gps').onclick = async () => {
       coordsEl.textContent = '🔄 পুনরায় লক হচ্ছে...';
-      const loc = await acquirePortalGpsLocation(4000);
+      const loc = await acquirePortalGpsLocation(9000, { forceFresh: true });
       updateCoordsText(loc);
     };
 
@@ -4790,7 +4857,13 @@
         alert('দয়া করে প্রধান নারীর নাম লিখুন!');
         return;
       }
+      const hasFreshGps = isFreshPortalGps(modalGps, 300000);
+      if (!hasFreshGps) {
+        const proceedNoGps = confirm('⚠️ লাইভ জিপিএস সিগন্যাল পাওয়া যায়নি!\n\nGPS পিন ছাড়াই কি বাড়ির নোট সেভ করবেন? (ভুল জায়গায় পিন না বসাতে চাইলে OK দিন, অথবা বাতিল করে 🔄 রিলক চেষ্টা করুন)');
+        if (!proceedNoGps) return;
+      }
       const rawId = normalizeDigits(modal.querySelector('#fc-xhn-fid').value.trim()).replace(/[^0-9A-Za-z_-]/g, '') || `house_${Date.now()}`;
+      const nidOnly = /^\d{10,17}$/.test(rawId) ? rawId : '';
       const phone = normalizeDigits(modal.querySelector('#fc-xhn-phone').value.trim()).replace(/[^0-9]/g, '');
       const notes = modal.querySelector('#fc-xhn-notes').value.trim();
 
@@ -4802,11 +4875,7 @@
       if (modal.querySelector('#fc-xhn-chk-mem').checked) issues.push('member_doc_missing');
 
       const isBlocked = issues.includes('no_female_nid') || issues.includes('female_under_18');
-      const surveyStatus = isBlocked ? 'INCOMPLETE_BLOCKED' : 'INCOMPLETE_ACTIONABLE';
-      const lat = lastCapturedHouseGps?.lat || 23.757;
-      const lng = lastCapturedHouseGps?.lng || 89.644;
-      const accuracy = lastCapturedHouseGps?.accuracy || 15;
-      const plusCode = lastCapturedHouseGps?.plusCode || encodePlusCode(lat, lng);
+      const surveyStatus = isBlocked ? 'INCOMPLETE_BLOCKED' : (issues.length === 0 ? 'COMPLETED' : 'INCOMPLETE_ACTIONABLE');
       const nowMs = Date.now();
       const nowIso = new Date(nowMs).toISOString();
       const curTimer = getPortalSurveyTimerState() || startPortalSurveyTimer({ docId: rawId, applicantName: lady, startReason: 'house_note_save' });
@@ -4818,8 +4887,9 @@
         docId: rawId,
         ladyName: lady,
         primary_lady_name_bn: lady,
-        nid_number: rawId,
+        nid_number: nidOnly,
         mobile_number: phone,
+        contactPhone: phone,
         notes,
         issues,
         survey_status: surveyStatus,
@@ -4829,19 +4899,22 @@
         survey_duration_sec: timerDurationSec,
         survey_duration_label: timerDurationLabel,
         survey_timer_status: 'ended',
-        lat,
-        lng,
-        accuracy,
-        plusCode,
         surveyor_id: 'extension_client',
         updated_at: nowIso
       };
+      if (hasFreshGps) {
+        houseObj.lat = modalGps.lat;
+        houseObj.lng = modalGps.lng;
+        houseObj.accuracy = modalGps.accuracy || 15;
+        houseObj.plusCode = modalGps.plusCode || encodePlusCode(modalGps.lat, modalGps.lng);
+      }
 
+      let syncedCloud = false;
       try {
         const fields = {
           lady_name: { stringValue: lady },
           primary_lady_name_bn: { stringValue: lady },
-          nid_number: { stringValue: rawId },
+          nid_number: { stringValue: nidOnly },
           mobile_number: { stringValue: phone },
           notes: { stringValue: notes },
           survey_status: { stringValue: surveyStatus },
@@ -4851,28 +4924,34 @@
           survey_duration_sec: { integerValue: String(timerDurationSec) },
           survey_duration_label: { stringValue: timerDurationLabel },
           survey_timer_status: { stringValue: 'ended' },
-          lat: { doubleValue: lat },
-          lng: { doubleValue: lng },
-          accuracy: { integerValue: String(accuracy) },
-          plus_code: { stringValue: plusCode },
           updated_at: { timestampValue: nowIso },
           issues: { arrayValue: { values: issues.map(iss => ({ stringValue: iss })) } }
         };
+        if (hasFreshGps) {
+          fields.lat = { doubleValue: houseObj.lat };
+          fields.lng = { doubleValue: houseObj.lng };
+          fields.accuracy = { integerValue: String(houseObj.accuracy) };
+          fields.plus_code = { stringValue: houseObj.plusCode };
+        }
         const mask = Object.keys(fields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
-        fetch(`https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(rawId)}?${mask}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fields })
-        }).catch(() => {});
-        fetch(`https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/surveyed_houses/${encodeURIComponent(rawId)}?${mask}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fields })
-        }).catch(() => {});
+        const bodyStr = JSON.stringify({ fields });
+        const [r1, r2] = await Promise.all([
+          fetch(`https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(rawId)}?${mask}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: bodyStr
+          }).catch(() => null),
+          fetch(`https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/surveyed_houses/${encodeURIComponent(rawId)}?${mask}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: bodyStr
+          }).catch(() => null)
+        ]);
+        syncedCloud = Boolean((r1 && r1.ok) || (r2 && r2.ok));
 
         sendRoomMessage({
           type: 'survey_house_saved',
-          text: `📍 বাড়ি সেভ করা হয়েছে: ${lady} (${isBlocked ? '🔴 ব্লকড' : '🟠 সমস্যাযুক্ত'}) • ⏱️ ${timerDurationLabel}`,
+          text: `📍 বাড়ি সেভ করা হয়েছে: ${lady} (${isBlocked ? '🔴 ব্লকড' : (issues.length === 0 ? '🟢 সম্পন্ন' : '🟠 সমস্যাযুক্ত')}) • ⏱️ ${timerDurationLabel}`,
           payload: houseObj
         });
         endPortalSurveyTimer('house_note_saved', {
@@ -4885,7 +4964,9 @@
       } catch (_) {}
 
       closeModal();
-      showToast(`📍 ${lady}-এর বাড়ি সমস্যাযুক্ত হিসেবে ম্যাপে সংরক্ষিত! (⏱️ ${timerDurationLabel})`);
+      showToast(syncedCloud
+        ? `📍 ${lady}-এর বাড়ি ম্যাপে সংরক্ষিত হয়েছে! (⏱️ ${timerDurationLabel})`
+        : `⚠️ ${lady}-এর বাড়ি ক্লাউডে সিঙ্ক হয়নি — ইন্টারনেট পরীক্ষা করুন`);
     };
   }
 
@@ -10294,7 +10375,7 @@
         };
         const docMask = Object.keys(docFields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
         for (const targetId of targetDocIds) {
-          fetch(`https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(targetId)}?${docMask}`, {
+          fetch(`https://firestore.googleapis.com/v1/projects/rajbari-city-app-16601/databases/(default)/documents/family_cards/${encodeURIComponent(targetId)}?${docMask}&currentDocument.exists=true`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ fields: docFields }),
@@ -10433,6 +10514,9 @@
           st.familyId = curFid;
           if (!st.docId) st.docId = curFid;
           updated = true;
+        }
+        if (curFid && typeof autoCaptureHouseLocationOnStep2 === 'function') {
+          autoCaptureHouseLocationOnStep2(curFid, st.applicantName || lastExtractedData?.name_bn || '');
         }
         if (lastExtractedData?.name_bn && !st.applicantName) {
           st.applicantName = lastExtractedData.name_bn;
@@ -10592,12 +10676,15 @@
     } catch (_) {}
     let remoteArr = [];
     try {
-      const resp = await fetch(`${FIRESTORE_SURVEY_TIMERS_LOG_BASE}?pageSize=25&t=${Date.now()}`, { cache: 'no-store' }).catch(() => null);
-      if (resp && resp.ok) {
+      let pageToken = '';
+      for (let page = 0; page < 10; page++) {
+        const resp = await fetch(`${FIRESTORE_SURVEY_TIMERS_LOG_BASE}?pageSize=300&t=${Date.now()}${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''}`, { cache: 'no-store' }).catch(() => null);
+        if (!resp || !resp.ok) break;
         const j = await resp.json().catch(() => ({}));
-        remoteArr = (Array.isArray(j.documents) ? j.documents : []).map((d) => {
+        const docs = Array.isArray(j.documents) ? j.documents : [];
+        for (const d of docs) {
           const f = d.fields || {};
-          return {
+          remoteArr.push({
             sessionId: f.session_id?.stringValue || d.name?.split('/').pop() || '',
             familyId: f.family_id?.stringValue || '',
             docId: f.doc_id?.stringValue || '',
@@ -10606,8 +10693,10 @@
             endedAtMs: Number(f.ended_at_ms?.integerValue || f.ended_at_ms?.doubleValue || 0),
             durationSec: Number(f.duration_sec?.integerValue || 0),
             durationLabel: f.duration_label?.stringValue || ''
-          };
-        });
+          });
+        }
+        if (!j.nextPageToken) break;
+        pageToken = j.nextPageToken;
       }
     } catch (_) {}
     const merged = new Map();

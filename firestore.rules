@@ -38,10 +38,24 @@ service cloud.firestore {
 
     // Pre-survey houses, GPS target locations, and missing document note tags
     match /surveyed_houses/{houseId} {
+      function hasValidHouseCoords() {
+        return (!('lat' in request.resource.data) || (request.resource.data.lat is number && request.resource.data.lat >= -90 && request.resource.data.lat <= 90))
+          && (!('lng' in request.resource.data) || (request.resource.data.lng is number && request.resource.data.lng >= -180 && request.resource.data.lng <= 180));
+      }
+      function hasHouseIdentity() {
+        return (('lady_name' in request.resource.data && request.resource.data.lady_name is string && request.resource.data.lady_name.size() > 0)
+          || ('primary_lady_name_bn' in request.resource.data && request.resource.data.primary_lady_name_bn is string && request.resource.data.primary_lady_name_bn.size() > 0));
+      }
       allow read: if true;
-      allow create, update: if isReasonableDoc()
+      allow create: if isReasonableDoc()
         && houseId.size() <= 128
-        && !houseId.matches('.*[<>"\'\\\\].*');
+        && !houseId.matches('.*[<>"\'\\\\].*')
+        && hasHouseIdentity()
+        && hasValidHouseCoords();
+      allow update: if isReasonableDoc()
+        && houseId.size() <= 128
+        && !houseId.matches('.*[<>"\'\\\\].*')
+        && hasValidHouseCoords();
       allow delete: if false;
     }
 

@@ -2452,7 +2452,7 @@ async function syncSurveyTimerToFirestore(entry) {
       const docMask = Object.keys(docFields).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
       for (const targetId of targetDocIds) {
         ops.push(
-          fetch(`${FIRESTORE_CARDS_BASE}/${encodeURIComponent(targetId)}?${docMask}`, {
+          fetch(`${FIRESTORE_CARDS_BASE}/${encodeURIComponent(targetId)}?${docMask}&currentDocument.exists=true`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ fields: docFields })
@@ -2462,7 +2462,7 @@ async function syncSurveyTimerToFirestore(entry) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ fields })
           }).catch(() => null),
-          fetch(`${FIRESTORE_HOUSES_BASE}/${encodeURIComponent(targetId)}?${docMask}`, {
+          fetch(`${FIRESTORE_HOUSES_BASE}/${encodeURIComponent(targetId)}?${docMask}&currentDocument.exists=true`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ fields: docFields })
@@ -2479,35 +2479,45 @@ async function syncSurveyTimerToFirestore(entry) {
 
 async function fetchSurveyTimersFromFirestore(limit = 50) {
   try {
-    const res = await fetch(`${FIRESTORE_SURVEY_TIMERS_LOG_BASE}?pageSize=${Math.min(100, Math.max(1, limit))}`);
-    if (!res || !res.ok) return [];
-    const data = await res.json().catch(() => ({}));
-    const docs = Array.isArray(data.documents) ? data.documents : [];
-    return docs.map((d) => {
-      const f = d.fields || {};
-      return {
-        sessionId: f.session_id?.stringValue || d.name?.split('/').pop() || '',
-        familyId: f.family_id?.stringValue || '',
-        docId: f.doc_id?.stringValue || '',
-        applicantName: f.applicant_name?.stringValue || '',
-        docType: f.doc_type?.stringValue || '',
-        source: f.source?.stringValue || '',
-        roomCode: f.room_code?.stringValue || '',
-        deviceName: f.device_name?.stringValue || '',
-        surveyStatus: f.survey_status?.stringValue || '',
-        status: f.timer_status?.stringValue || 'ended',
-        readinessPct: Number(f.readiness_pct?.integerValue || 0),
-        startReason: f.start_reason?.stringValue || '',
-        endReason: f.end_reason?.stringValue || '',
-        startedAtMs: Number(f.started_at_ms?.integerValue || f.started_at_ms?.doubleValue || 0),
-        endedAtMs: Number(f.ended_at_ms?.integerValue || f.ended_at_ms?.doubleValue || 0),
-        startedAt: f.started_at?.timestampValue || '',
-        endedAt: f.ended_at?.timestampValue || '',
-        durationMs: Number(f.duration_ms?.integerValue || 0),
-        durationSec: Number(f.duration_sec?.integerValue || 0),
-        durationLabel: f.duration_label?.stringValue || ''
-      };
-    }).sort((a, b) => (b.endedAtMs || 0) - (a.endedAtMs || 0));
+    const allTimers = [];
+    let pageToken = '';
+    for (let page = 0; page < 10; page++) {
+      const url = `${FIRESTORE_SURVEY_TIMERS_LOG_BASE}?pageSize=300${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''}`;
+      const res = await fetch(url);
+      if (!res || !res.ok) break;
+      const data = await res.json().catch(() => ({}));
+      const docs = Array.isArray(data.documents) ? data.documents : [];
+      for (const d of docs) {
+        const f = d.fields || {};
+        allTimers.push({
+          sessionId: f.session_id?.stringValue || d.name?.split('/').pop() || '',
+          familyId: f.family_id?.stringValue || '',
+          docId: f.doc_id?.stringValue || '',
+          applicantName: f.applicant_name?.stringValue || '',
+          docType: f.doc_type?.stringValue || '',
+          source: f.source?.stringValue || '',
+          roomCode: f.room_code?.stringValue || '',
+          deviceName: f.device_name?.stringValue || '',
+          surveyStatus: f.survey_status?.stringValue || '',
+          status: f.timer_status?.stringValue || 'ended',
+          readinessPct: Number(f.readiness_pct?.integerValue || 0),
+          startReason: f.start_reason?.stringValue || '',
+          endReason: f.end_reason?.stringValue || '',
+          startedAtMs: Number(f.started_at_ms?.integerValue || f.started_at_ms?.doubleValue || 0),
+          endedAtMs: Number(f.ended_at_ms?.integerValue || f.ended_at_ms?.doubleValue || 0),
+          startedAt: f.started_at?.timestampValue || '',
+          endedAt: f.ended_at?.timestampValue || '',
+          durationMs: Number(f.duration_ms?.integerValue || 0),
+          durationSec: Number(f.duration_sec?.integerValue || 0),
+          durationLabel: f.duration_label?.stringValue || ''
+        });
+      }
+      if (!data.nextPageToken) break;
+      pageToken = data.nextPageToken;
+    }
+    return allTimers
+      .sort((a, b) => (b.endedAtMs || 0) - (a.endedAtMs || 0))
+      .slice(0, Math.min(200, Math.max(1, limit)));
   } catch (_) {
     return [];
   }

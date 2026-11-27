@@ -1735,3 +1735,206 @@ test('Zero-hallucination OCR invariants & Gemini 3.x/4 compliance hold across al
   assert.equal(appOut.data.religion, '', 'app.js must not fabricate religion when omitted');
   assert.ok(Array.isArray(appOut.data.ocr_warnings) && appOut.data.ocr_warnings.length >= 2, 'app.js must attach ocr_warnings');
 });
+
+test('Map system & GPS tracking audit fixes: ghost prevention, pagination, lossless merge, live sync, offline queue & portal GPS safety', async () => {
+  const appSrc = readRepoFile('app.js');
+  const htmlSrc = readRepoFile('index.html');
+  const cssSrc = readRepoFile('style.css');
+  const rulesSrc = readRepoFile('firestore.rules');
+  const workerSrc = readRepoFile('cloudflare/worker.js');
+  const serverSrc = readRepoFile('server/server.js');
+  const bmSrc = readRepoFile('bookmarklet/bookmarklet.js');
+  const extSrc = readRepoFile('extension/content.js');
+
+  // 1. Static invariants: currentDocument.exists=true on timer PATCHes, @keyframes ping, live track button, Esri fallback, Firestore rules bounds
+  assert.match(workerSrc, /HOUSES_BASE\}\/\$\{encodeURIComponent\(targetId\)\}\?\$\{docMask\}&currentDocument\.exists=true/, 'worker.js must use currentDocument.exists=true on surveyed_houses timer PATCH');
+  assert.match(serverSrc, /FIRESTORE_HOUSES_BASE\}\/\$\{encodeURIComponent\(targetId\)\}\?\$\{docMask\}&currentDocument\.exists=true/, 'server.js must use currentDocument.exists=true on surveyed_houses timer PATCH');
+  assert.match(appSrc, /family_cards\/\$\{encodeURIComponent\(targetId\)\}\?\$\{docMask\}&currentDocument\.exists=true/, 'app.js must use currentDocument.exists=true on family_cards timer PATCH');
+  assert.match(bmSrc, /family_cards\/\$\{encodeURIComponent\(targetId\)\}\?\$\{docMask\}&currentDocument\.exists=true/, 'bookmarklet.js must use currentDocument.exists=true on family_cards timer PATCH');
+  assert.match(extSrc, /family_cards\/\$\{encodeURIComponent\(targetId\)\}\?\$\{docMask\}&currentDocument\.exists=true/, 'content.js must use currentDocument.exists=true on family_cards timer PATCH');
+
+  assert.match(cssSrc, /@keyframes\s+ping\s*\{/, 'style.css must define @keyframes ping for pulsing GPS marker');
+  assert.match(htmlSrc, /id="btnLiveGpsTrack"/, 'index.html must include live GPS tracking toggle button');
+  assert.match(htmlSrc, /id="houseSortSelect"/, 'index.html must include house sort selector');
+  assert.match(htmlSrc, /data-filter="no_gps"/, 'index.html must include no_gps filter chip');
+  assert.match(appSrc, /server\.arcgisonline\.com\/ArcGIS\/rest\/services\/World_Imagery/, 'app.js satellite layer must include Esri World Imagery tileerror fallback');
+  assert.match(appSrc, /socket\.on\(['"]survey-timer-saved['"]/, 'app.js must listen for Socket.io survey-timer-saved');
+  assert.match(rulesSrc, /function\s+hasValidHouseCoords\(\)/, 'firestore.rules must validate house coordinate bounds');
+  assert.match(rulesSrc, /function\s+hasHouseIdentity\(\)/, 'firestore.rules must require house identity on create to block ghost stubs');
+
+  // 2. Runtime verification on app.js map parsing, ghost filtering, lossless merge, pagination, Plus Code & distance
+  const mapCode = extractDeclCode(appSrc, [
+    'toBnDigits', 'escapeHtml', 'TAG_CONFIG', 'isValidLatLng', 'calculateDistanceMeters',
+    'formatDistanceBn', 'encodePlusCode', 'isGhostTimerOnlyDoc', 'parseFirestoreDoc',
+    'mergeHouseIntoMap', 'fetchFirestoreCollectionAll', 'fetchAllSurveyHouses',
+  ], 'script');
+
+  const housesMap = new Map();
+  let renderCalled = 0;
+  let pageCalls = 0;
+  const mapCtx = createSandbox({
+    surveyHousesMap: housesMap,
+    FIRESTORE_HOUSES_BASE: 'https://fs.test/surveyed_houses',
+    FIRESTORE_CARDS_BASE: 'https://fs.test/family_cards',
+    PENDING_HOUSES_STORAGE_KEY: 'fc_pending_survey_houses_v1',
+    navigator: { onLine: true },
+    loadPendingOfflineHouses: () => [],
+    flushPendingSurveyHouses: async () => 0,
+    renderMapHouses: () => { renderCalled++; },
+    fetch: async (url) => {
+      const u = String(url);
+      pageCalls++;
+      if (u.includes('/surveyed_houses') && !u.includes('pageToken=')) {
+        return {
+          ok: true,
+          json: async () => ({
+            documents: [
+              // Ghost timer-only stub (must be filtered out!)
+              {
+                name: 'projects/p/databases/(default)/documents/surveyed_houses/ghost_1',
+                fields: {
+                  survey_session_id: { stringValue: 'srv_1' },
+                  survey_duration_sec: { integerValue: '45' },
+                  survey_timer_status: { stringValue: 'ended' },
+                },
+              },
+              // Real house with village, notes, plus_code, coords
+              {
+                name: 'projects/p/databases/(default)/documents/surveyed_houses/5551234567',
+                fields: {
+                  lady_name: { stringValue: 'মোছাঃ রহিমা' },
+                  village: { stringValue: 'ভবানীপুর' },
+                  notes: { stringValue: 'সিম বায়োমেট্রিক বাকি' },
+                  mobile_number: { stringValue: '01711000000' },
+                  lat: { doubleValue: 23.757 },
+                  lng: { doubleValue: 89.644 },
+                  plus_code: { stringValue: '7MMFQJ4V+RJ' },
+                  issues: { arrayValue: { values: [{ stringValue: 'sim_not_own_nid' }] } },
+                },
+              },
+            ],
+            nextPageToken: 'pg2',
+          }),
+        };
+      }
+      if (u.includes('/surveyed_houses') && u.includes('pageToken=pg2')) {
+        return {
+          ok: true,
+          json: async () => ({
+            documents: [{
+              name: 'projects/p/databases/(default)/documents/surveyed_houses/house_pg2',
+              fields: {
+                lady_name: { stringValue: 'সালমা খাতুন' },
+                lat: { doubleValue: 23.758 },
+                lng: { doubleValue: 89.645 },
+              },
+            }],
+          }),
+        };
+      }
+      if (u.includes('/family_cards')) {
+        return {
+          ok: true,
+          json: async () => ({
+            documents: [{
+              name: 'projects/p/databases/(default)/documents/family_cards/5551234567',
+              fields: {
+                name_bn: { stringValue: 'মোছাঃ রহিমা' },
+                summary_readiness_pct: { integerValue: '95' },
+              },
+            }],
+          }),
+        };
+      }
+      return { ok: true, json: async () => ({ documents: [] }) };
+    },
+  });
+  vm.runInContext(mapCode, mapCtx, { filename: 'app.js' });
+
+  // Plus Code boundary safety & accuracy
+  assert.equal(mapCtx.encodePlusCode(23.757, 89.644), '7MMFQJ4V+RJ');
+  assert.equal(mapCtx.encodePlusCode(90, 180).length, 11, 'Extreme pole/antimeridian Plus Code must remain valid 11-char code');
+  assert.ok(mapCtx.calculateDistanceMeters(23.757, 89.644, 23.758, 89.644) > 90);
+  assert.ok(mapCtx.calculateDistanceMeters(23.757, 89.644, 23.758, 89.644) < 130);
+
+  // Paginated fetch filters ghost stub, loads page 2, maps plus_code -> plusCode, and preserves village/notes/coords on merge
+  await mapCtx.fetchAllSurveyHouses();
+  assert.equal(housesMap.has('ghost_1'), false, 'Ghost timer-only stub must be filtered out');
+  assert.equal(housesMap.has('house_pg2'), true, 'Page 2 house via nextPageToken must be loaded');
+  const mergedHouse = housesMap.get('5551234567');
+  assert.ok(mergedHouse, 'Merged house 5551234567 must exist');
+  assert.equal(mergedHouse.village, 'ভবানীপুর', 'family_cards merge must preserve village from surveyed_houses');
+  assert.equal(mergedHouse.notes, 'সিম বায়োমেট্রিক বাকি', 'family_cards merge must preserve notes from surveyed_houses');
+  assert.equal(mergedHouse.plusCode, '7MMFQJ4V+RJ', 'snake_case plus_code must map to plusCode');
+  assert.equal(mergedHouse.lat, 23.757);
+  assert.equal(mergedHouse.survey_status, 'COMPLETED', '95% readiness family_cards record must mark house COMPLETED');
+  assert.ok(renderCalled >= 1 && pageCalls >= 3);
+
+  // 3. Real-time room message handler applies survey_house_saved into surveyHousesMap
+  const roomCode = extractDeclCode(appSrc, ['handleIncomingRoomMessage'], 'script');
+  let mapSyncedHouse = null;
+  let toastText = '';
+  const roomCtx = createSandbox({
+    lastClearedAtMs: 0,
+    roomMsgMap: new Map(),
+    MY_CLIENT_ID: 'me_1',
+    activeWebSurveyTimer: null,
+    elChatUnreadBadge: null,
+    renderRoomChat: () => {},
+    renderMapHouses: () => {},
+    mergeHouseIntoMap: (h) => { mapSyncedHouse = h; },
+    showMapToast: (t) => { toastText = t; },
+  });
+  vm.runInContext(roomCode, roomCtx, { filename: 'app.js' });
+  roomCtx.handleIncomingRoomMessage({
+    id: 'm_house_1',
+    type: 'survey_house_saved',
+    senderId: 'tablet_2',
+    ts: Date.now(),
+    payload: { docId: 'house_live_1', ladyName: 'আয়েশা বেগম', lat: 23.76, lng: 89.65, plus_code: '7MMFQJ6W+22' },
+  });
+  assert.equal(mapSyncedHouse?.docId, 'house_live_1', 'handleIncomingRoomMessage must sync survey_house_saved into map');
+  assert.match(toastText, /আয়েশা বেগম/);
+
+  // 4. Portal & Extension GPS capture rejects stale coordinates and retries after failure
+  for (const [label, src] of [['bookmarklet.js', bmSrc], ['content.js', extSrc]]) {
+    const gpsCode = extractDeclCode(src, [
+      'lastCapturedHouseGps', 'hasGeoCapturedForFid', 'geoCaptureInFlightFid',
+      'encodePlusCode', 'isFreshPortalGps', 'acquirePortalGpsLocation', 'autoCaptureHouseLocationOnStep2',
+    ], 'script');
+    let geoShouldFail = true;
+    const patchUrls = [];
+    const gCtx = createSandbox({
+      normalizeDigits: (s) => String(s || ''),
+      document: { getElementById: () => null },
+      fetch: async (u) => { patchUrls.push(String(u)); return { ok: true }; },
+      navigator: {
+        geolocation: {
+          watchPosition: (ok, err) => {
+            if (geoShouldFail) {
+              setTimeout(() => err({ code: 3, message: 'timeout' }), 5);
+            } else {
+              setTimeout(() => ok({ coords: { latitude: 23.7571, longitude: 89.6441, accuracy: 8 } }), 5);
+            }
+            return 1;
+          },
+          clearWatch: () => {},
+        },
+      },
+    });
+    vm.runInContext(gpsCode, gCtx, { filename: label });
+
+    // Pre-seed stale GPS (10 minutes old) -> must NOT be reused on timeout!
+    gCtx.lastCapturedHouseGps = { lat: 23.1, lng: 89.1, accuracy: 10, timestamp: Date.now() - 600000 };
+    await gCtx.autoCaptureHouseLocationOnStep2('fid_retry_1', 'রহিমা');
+    assert.equal(patchUrls.length, 0, `${label}: must NOT write stale GPS from 10 min ago on timeout`);
+    assert.equal(gCtx.hasGeoCapturedForFid, '', `${label}: must NOT lock hasGeoCapturedForFid when GPS capture failed`);
+
+    // Retry once GPS recovers -> must capture & lock!
+    geoShouldFail = false;
+    await gCtx.autoCaptureHouseLocationOnStep2('fid_retry_1', 'রহিমা');
+    assert.equal(gCtx.hasGeoCapturedForFid, 'fid_retry_1', `${label}: must lock hasGeoCapturedForFid after valid GPS capture`);
+    assert.ok(patchUrls.some(u => u.includes('/family_cards/fid_retry_1?')), `${label}: must PATCH family_cards with GPS`);
+    assert.ok(patchUrls.some(u => u.includes('/surveyed_houses/fid_retry_1?') && u.includes('currentDocument.exists=true')), `${label}: must PATCH surveyed_houses only if exists`);
+  }
+});

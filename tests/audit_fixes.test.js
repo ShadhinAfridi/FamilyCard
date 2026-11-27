@@ -252,6 +252,7 @@ const OCR_PIPELINE_SYMBOLS = [
   'normalizeGenderValue',
   'inferBangladeshiGender',
   'extractDigitCandidate',
+  'isDummyDocNumber',
   'pickBestDocDigits',
   'getDobYear',
   'isDocDigitsValidForType',
@@ -1372,7 +1373,7 @@ test('app.js runDirectWebBrowserOcrFallback handles DeepSeek fallback & JSON ext
         ok: true,
         status: 200,
         json: async () => ({
-          candidates: [{ content: { parts: [{ text: 'Here is JSON:\n```json\n{"doc_type":"nid","name_bn":"মোছাঃ রহিমা","name_en":"MOST. RAHIMA","nid_number":"1234567890","dob":"01/02/1990"}\n```' }] } }],
+          candidates: [{ content: { parts: [{ text: 'Here is JSON:\n```json\n{"doc_type":"nid","name_bn":"মোছাঃ রহিমা","name_en":"MOST. RAHIMA","nid_number":"5551234567","dob":"01/02/1990"}\n```' }] } }],
         }),
       };
     },
@@ -1387,7 +1388,7 @@ test('app.js runDirectWebBrowserOcrFallback handles DeepSeek fallback & JSON ext
   });
   assert.equal(out.success, true);
   assert.equal(out.data.name_en, 'MST. RAHIMA');
-  assert.equal(out.data.nid_number, '1234567890');
+  assert.equal(out.data.nid_number, '5551234567');
   assert.match(out.data.ocr_model_used, /Gemini Fallback/i);
 });
 
@@ -1549,4 +1550,188 @@ test('deepseek-flash OCR disables thinking mode, retries on empty content, and s
   assert.equal(body.data.birth_reg_no, '19782691234567890');
   assert.equal(body.data.name_en, 'MST. MONOWARA');
   assert.equal(body.data.father_name_bn, 'মমিন মন্ডল');
+});
+
+test('Zero-hallucination OCR invariants & Gemini 3.x/4 compliance hold across all 6 OCR files', async () => {
+  const ocrFiles = [
+    'cloudflare/worker.js',
+    'server/server.js',
+    'extension/background.js',
+    'bookmarklet/bookmarklet.js',
+    'app.js',
+  ];
+
+  // 1. Static invariants across all 5 OCR API engines
+  for (const rel of ocrFiles) {
+    const src = readRepoFile(rel);
+    assert.ok(!src.includes('মোছাঃ রহিমা খাতুন'), `${rel} must not contain fake person prompt example "মোছাঃ রহিমা খাতুন"`);
+    assert.ok(!src.includes('সুভাষ মন্ডল'), `${rel} must not contain fake person prompt example "সুভাষ মন্ডল"`);
+    assert.ok(!src.includes('জাহানারা বেগম'), `${rel} must not contain fake person prompt example "জাহানারা বেগম"`);
+    assert.ok(!/generationConfig\s*:\s*\{[^}]*\btemperature\s*:\s*0\b/.test(src), `${rel} must not pass deprecated temperature: 0 to Gemini generationConfig`);
+    assert.ok(/required\s*:\s*\[\s*['"]doc_type['"]\s*\]/.test(src), `${rel} OCR_RESPONSE_SCHEMA must only require doc_type so blank fields are not forced`);
+  }
+
+  // 2. Transparent PNG white-background fill & preprocessing guards
+  for (const rel of ['app.js', 'bookmarklet/bookmarklet.js', 'extension/content.js']) {
+    const src = readRepoFile(rel);
+    assert.match(src, /fillStyle\s*=\s*['"]#FFFFFF['"]/, `${rel} must fill white canvas background before JPEG drawImage`);
+  }
+  const appSrc = readRepoFile('app.js');
+  assert.ok(!/function smartUpscaleIfNeeded[\s\S]{0,600}enhanceDocumentCanvas\(/.test(appSrc), 'app.js smartUpscaleIfNeeded must not double-enhance before downscaleImage');
+  assert.match(readRepoFile('extension/background.js'), /function forwardToServer[\s\S]*\bapiKey\b[\s\S]*\bdeepseekApiKey\b/, 'extension/background.js forwardToServer must forward Gemini apiKey and deepseekApiKey');
+
+  // 3. Runtime behavioral verification on server.js OCR sandbox
+  const srv = loadServerOcrSandbox();
+  assert.equal(srv.cleanOcrFieldText('unknown'), '');
+  assert.equal(srv.cleanOcrFieldText('unreadable'), '');
+  assert.equal(srv.cleanOcrFieldText('not visible'), '');
+  assert.equal(srv.cleanOcrFieldText('অস্পষ্ট'), '');
+  assert.equal(srv.cleanOcrFieldText('পড়া যায়নি'), '');
+  assert.equal(srv.cleanOcrFieldText('XXXX'), '');
+  assert.equal(srv.cleanOcrFieldText('রহিম উদ্দিন'), 'রহিম উদ্দিন');
+
+  // Dummy, excluded parent NID, 8-digit date, and <10-digit garbage MUST return empty string
+  const excl = new srv.Set(['5559876543', '15082015']);
+  assert.equal(srv.pickBestDocDigits(['1234567890'], [10, 17, 13], { excludeSet: excl }), '');
+  assert.equal(srv.pickBestDocDigits(['0000000000'], [10, 17, 13], { excludeSet: excl }), '');
+  assert.equal(srv.pickBestDocDigits(['5559876543'], [10, 17, 13], { excludeSet: excl }), '');
+  assert.equal(srv.pickBestDocDigits(['15082015'], [10, 17, 13], { excludeSet: excl }), '');
+  assert.equal(srv.pickBestDocDigits(['12345'], [10, 17, 13], { excludeSet: excl }), '');
+  assert.equal(srv.pickBestDocDigits(['5551234567'], [10, 17, 13], { excludeSet: excl }), '5551234567');
+
+  // Full printed legal words MOHAMMAD / MOSAMMAT must be preserved verbatim
+  assert.equal(srv.normalizeEnglishHonorificPrefix('MOHAMMAD KARIM UDDIN', 'মোঃ করিম উদ্দিন'), 'MOHAMMAD KARIM UDDIN');
+  assert.equal(srv.normalizeEnglishHonorificPrefix('MOSAMMAT RAHIMA BEGUM', 'মোছাঃ রহিমা বেগম'), 'MOSAMMAT RAHIMA BEGUM');
+  assert.equal(srv.normalizeEnglishHonorificPrefix('MOST RAHIMA', 'মোছাঃ রহিমা'), 'MST. RAHIMA');
+  assert.equal(srv.normalizeEnglishHonorificPrefix('MD KARIM', 'মোঃ করিম'), 'MD. KARIM');
+
+  // Future DOB rejected; English month-first accepted
+  assert.equal(srv.standardizeDate('15/08/2099'), '');
+  assert.equal(srv.standardizeDate('Aug 15, 1990'), '15/08/1990');
+  assert.equal(srv.standardizeDate('August 15, 1990'), '15/08/1990');
+
+  // Fast first OCR: clean classic NID without printed gender must NOT trigger extra completion or escalation calls
+  const cleanClassicNid = {
+    doc_type: 'nid',
+    detected_language: 'bilingual',
+    nid_number: '5551234567',
+    doc_number: '5551234567',
+    name_bn: 'মোঃ করিম উদ্দিন',
+    name_en: 'MD. KARIM UDDIN',
+    father_name_bn: 'আব্দুল জব্বার',
+    father_name_en: 'ABDUL JABBAR',
+    mother_name_bn: 'আয়েশা বেগম',
+    mother_name_en: 'AYESHA BEGUM',
+    dob: '12/05/1988',
+    gender: '',
+    confidence: 0.96,
+  };
+  assert.equal(srv.needsIntelligentCompletion(cleanClassicNid), false, 'clean bilingual NID without printed gender must not trigger extra LLM completion');
+  assert.equal(srv.needsAccurateEscalation(cleanClassicNid, 'nid'), false, 'clean classic NID without printed gender must not trigger 2nd Vision escalation');
+
+  // Text-only bilingual completion MUST NOT accept hallucinated blank fields (parent, dob, gender, marital_status, relation)
+  const partialScan = {
+    doc_type: 'nid',
+    name_bn: 'রহিম উদ্দিন',
+    name_en: '',
+    father_name_bn: '',
+    father_name_en: '',
+    mother_name_bn: '',
+    mother_name_en: '',
+    dob: '',
+    gender: '',
+    marital_status_suggestion: '',
+    relation_suggestion: '',
+  };
+  const completedScan = srv.applyBilingualCompletionResult(partialScan, {
+    name_en: 'RAHIM UDDIN',
+    father_name_bn: 'কাল্পনিক পিতা',
+    father_name_en: 'IMAGINARY FATHER',
+    mother_name_bn: 'কাল্পনিক মাতা',
+    dob: '01/01/1980',
+    gender: 'পুরুষ',
+    marital_status_suggestion: 'বিবাহিত',
+    relation_suggestion: 'স্বামী',
+  });
+  assert.equal(completedScan.name_en, 'RAHIM UDDIN', 'valid transliteration for existing source name must apply');
+  assert.equal(completedScan.father_name_bn, '', 'hallucinated father_name_bn must be rejected');
+  assert.equal(completedScan.father_name_en, '', 'hallucinated father_name_en must be rejected');
+  assert.equal(completedScan.mother_name_bn, '', 'hallucinated mother_name_bn must be rejected');
+  assert.equal(completedScan.dob, '', 'hallucinated dob must be rejected');
+  assert.equal(completedScan.gender, '', 'hallucinated gender must be rejected');
+  assert.equal(completedScan.marital_status_suggestion, '', 'hallucinated marital_status_suggestion must be rejected');
+  assert.equal(completedScan.relation_suggestion, '', 'hallucinated relation_suggestion must be rejected');
+
+  // validateAndNormalizeOcrData must NOT fabricate marital_status or religion when omitted
+  const validated = srv.validateAndNormalizeOcrData({
+    doc_type: 'nid',
+    nid_number: '5551234567',
+    name_bn: 'রহিম উদ্দিন',
+    name_en: 'RAHIM UDDIN',
+    dob: '10/10/2012',
+    father_name_bn: 'unknown',
+    mother_name_bn: 'unreadable',
+  }, 'nid');
+  assert.equal(validated.father_name_bn, '', 'placeholder "unknown" must become empty string, not Bengali transliteration');
+  assert.equal(validated.mother_name_bn, '', 'placeholder "unreadable" must become empty string');
+  assert.equal(validated.marital_status, '', 'marital_status must remain empty when not provided or printed');
+  assert.equal(validated.religion, '', 'religion must remain empty when not provided');
+
+  // 4. Cloudflare worker /api/ocr-nid rejects empty/corrupt base64 with HTTP 400 and never hallucinates on clean mock
+  const workerSrc = readRepoFile('cloudflare/worker.js');
+  const modBody = workerSrc.replace(/export\s+default\s+\{/, 'var __workerExport = {');
+  const wCtx = createSandbox({
+    fetch: async () => new Response('{}', { status: 200 }),
+    Request,
+    Response,
+    Headers,
+  });
+  vm.runInContext(modBody, wCtx);
+  const badReq = new Request('https://familycard-10n.pages.dev/api/ocr-nid', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ imageBase64: 'not-valid!!!', apiKey: 'AIza-test' }),
+  });
+  const badRes = await wCtx.__workerExport.fetch(badReq, {}, { waitUntil() {} });
+  assert.equal(badRes.status, 400, 'corrupt base64 image must return HTTP 400');
+
+  // 5. app.js runDirectWebBrowserOcrFallback rejects dummy NID & placeholders, attaches ocr_warnings, and omits temperature:0
+  const appCode = extractDeclCode(appSrc, [
+    'normalizeDigits', 'DEFAULT_GEMINI_MODEL', 'normalizeDirectWebPrefix',
+    'standardizeWebDate', 'runDirectWebBrowserOcrFallback',
+  ], 'script');
+  let capturedGeminiBody = null;
+  const appCtx = createSandbox({
+    fetch: async (_url, init = {}) => {
+      capturedGeminiBody = JSON.parse(init.body);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          candidates: [{ content: { parts: [{ text: JSON.stringify({
+            doc_type: 'nid',
+            nid_number: '1234567890',
+            name_bn: 'মোঃ করিম উদ্দিন',
+            name_en: 'MOHAMMAD KARIM UDDIN',
+            father_name_bn: 'unreadable',
+            dob: '15/08/2099',
+          }) }] } }],
+        }),
+      };
+    },
+  });
+  vm.runInContext(appCode, appCtx, { filename: 'app.js' });
+  const appOut = await appCtx.runDirectWebBrowserOcrFallback({
+    imageBase64: 'data:image/jpeg;base64,/9j/4AAQSkZJRg==',
+    apiKey: 'AIza-web-test',
+  });
+  assert.equal(capturedGeminiBody.generationConfig.temperature, undefined, 'app.js Gemini payload must omit deprecated temperature: 0');
+  assert.deepEqual(capturedGeminiBody.generationConfig.response_schema.required, ['doc_type']);
+  assert.equal(appOut.data.nid_number, '', 'app.js must reject dummy NID 1234567890');
+  assert.equal(appOut.data.name_en, 'MOHAMMAD KARIM UDDIN', 'app.js must preserve printed MOHAMMAD verbatim');
+  assert.equal(appOut.data.father_name_bn, '', 'app.js must strip placeholder "unreadable"');
+  assert.equal(appOut.data.dob, '', 'app.js must reject future DOB 15/08/2099');
+  assert.equal(appOut.data.marital_status, '', 'app.js must not fabricate marital_status when omitted');
+  assert.equal(appOut.data.religion, '', 'app.js must not fabricate religion when omitted');
+  assert.ok(Array.isArray(appOut.data.ocr_warnings) && appOut.data.ocr_warnings.length >= 2, 'app.js must attach ocr_warnings');
 });

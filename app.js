@@ -1732,7 +1732,7 @@ function switchMode(mode) {
 tabCamera.addEventListener('click', () => switchMode('camera'));
 tabGallery.addEventListener('click', () => switchMode('gallery'));
 
-// Adaptive mid-tone contrast stretch and anti-glare specular suppression
+// Adaptive mid-tone contrast stretch using robust 1%-99% luminance percentiles (no white-paper graying)
 function enhanceDocumentCanvas(canvas, ctx) {
   try {
     const w = canvas.width;
@@ -1742,36 +1742,38 @@ function enhanceDocumentCanvas(canvas, ctx) {
     const d = imgData.data;
     const len = d.length;
 
-    let minLum = 255;
-    let maxLum = 0;
+    const hist = new Uint32Array(256);
+    let sampleCount = 0;
     for (let i = 0; i < len; i += 16) {
       const lum = (d[i] * 77 + d[i + 1] * 150 + d[i + 2] * 29) >> 8;
-      if (lum < minLum) minLum = lum;
-      if (lum > maxLum) maxLum = lum;
+      hist[lum]++;
+      sampleCount++;
+    }
+    if (sampleCount === 0) return;
+
+    const lowTarget = Math.max(1, Math.floor(sampleCount * 0.01));
+    const highTarget = Math.max(1, Math.floor(sampleCount * 0.99));
+    let acc = 0;
+    let minLum = 0;
+    let maxLum = 255;
+    for (let v = 0; v < 256; v++) {
+      acc += hist[v];
+      if (acc >= lowTarget) { minLum = v; break; }
+    }
+    acc = 0;
+    for (let v = 0; v < 256; v++) {
+      acc += hist[v];
+      if (acc >= highTarget) { maxLum = v; break; }
     }
 
     const range = maxLum - minLum;
-    const stretch = range > 45 && range < 225;
+    const stretch = range > 45 && range < 215;
+    if (!stretch) return;
 
     for (let i = 0; i < len; i += 4) {
-      let r = d[i];
-      let g = d[i + 1];
-      let b = d[i + 2];
-
-      // Anti-glare: soften blown-out specular reflections on laminated cards
-      if (r > 248 && g > 248 && b > 248) {
-        r = 242;
-        g = 242;
-        b = 242;
-      } else if (stretch) {
-        r = Math.min(255, Math.max(0, ((r - minLum) * 255) / range));
-        g = Math.min(255, Math.max(0, ((g - minLum) * 255) / range));
-        b = Math.min(255, Math.max(0, ((b - minLum) * 255) / range));
-      }
-
-      d[i] = r;
-      d[i + 1] = g;
-      d[i + 2] = b;
+      d[i] = Math.min(255, Math.max(0, Math.round(((d[i] - minLum) * 255) / range)));
+      d[i + 1] = Math.min(255, Math.max(0, Math.round(((d[i + 1] - minLum) * 255) / range)));
+      d[i + 2] = Math.min(255, Math.max(0, Math.round(((d[i + 2] - minLum) * 255) / range)));
     }
     ctx.putImageData(imgData, 0, 0);
   } catch (err) {
@@ -1779,7 +1781,7 @@ function enhanceDocumentCanvas(canvas, ctx) {
   }
 }
 
-// Smart upscale for low-res inputs (< 1600px width) before sending to OCR
+// Smart upscale for low-res inputs (< 1600px width) before sending to OCR (single clean resample — enhancement runs once in downscaleImage)
 function smartUpscaleIfNeeded(imgOrCanvas, minWidth = 1600) {
   const natW = imgOrCanvas.videoWidth || imgOrCanvas.naturalWidth || imgOrCanvas.width;
   const natH = imgOrCanvas.videoHeight || imgOrCanvas.naturalHeight || imgOrCanvas.height;
@@ -1792,11 +1794,11 @@ function smartUpscaleIfNeeded(imgOrCanvas, minWidth = 1600) {
   upCanvas.width = upW;
   upCanvas.height = upH;
   const upCtx = upCanvas.getContext('2d');
+  upCtx.fillStyle = '#FFFFFF';
+  upCtx.fillRect(0, 0, upW, upH);
   upCtx.imageSmoothingEnabled = true;
   upCtx.imageSmoothingQuality = 'high';
-  if ('filter' in upCtx) upCtx.filter = 'contrast(1.08) brightness(1.02)';
   upCtx.drawImage(imgOrCanvas, 0, 0, upW, upH);
-  enhanceDocumentCanvas(upCanvas, upCtx);
   return upCanvas;
 }
 
@@ -1906,12 +1908,16 @@ function downscaleImage(imgOrVideo, maxDim = 1800, quality = 0.92, targetAspect 
   photoCanvas.width = targetWidth;
   photoCanvas.height = targetHeight;
   const ctx = photoCanvas.getContext('2d');
+  // Fill opaque white background so transparent PNGs never turn black in JPEG
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(0, 0, targetWidth, targetHeight);
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
   if ('filter' in ctx) {
-    ctx.filter = 'contrast(1.08) brightness(1.03)';
+    ctx.filter = 'contrast(1.06) brightness(1.02)';
   }
   ctx.drawImage(processedSource, sx, sy, sw, sh, 0, 0, targetWidth, targetHeight);
+  if ('filter' in ctx) ctx.filter = 'none';
   enhanceDocumentCanvas(photoCanvas, ctx);
 
   return photoCanvas.toDataURL('image/jpeg', quality);
@@ -2121,12 +2127,16 @@ btnCapture.addEventListener('click', async () => {
         religion,
         mobileNumber
       });
-      updateWebScanProgress(32, 'AI সার্ভারে ছবি পাঠানো হচ্ছে...', 'ধাপ: OCR রিকোয়েস্ট প্রসেস হচ্ছে');
-      let resp = await fetch('/api/ocr-nid', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: payload
-      }).catch(() => null);
+      const isStaticHost = /(?:^|\.)(?:binary-ict\.web\.app|binary-ict\.firebaseapp\.com|github\.io|familycard\.afridi\.app)$/i.test(window.location.hostname || '');
+      let resp = null;
+      if (!isStaticHost) {
+        updateWebScanProgress(32, 'AI সার্ভারে ছবি পাঠানো হচ্ছে...', 'ধাপ: OCR রিকোয়েস্ট প্রসেস হচ্ছে');
+        resp = await fetch('/api/ocr-nid', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: payload
+        }).catch(() => null);
+      }
       if (!resp || resp.status === 404 || resp.status === 405 || !/application\/json/i.test(resp.headers.get('content-type') || '')) {
         updateWebScanProgress(48, 'Cloudflare Edge OCR-এ পাঠানো হচ্ছে...', 'ধাপ: Edge রুট প্রসেসিং');
         resp = await fetch('https://familycard-10n.pages.dev/api/ocr-nid', {
@@ -2136,9 +2146,10 @@ btnCapture.addEventListener('click', async () => {
         }).catch(() => null);
       }
       let data = null;
-      if (resp && /application\/json/i.test(resp.headers.get('content-type') || '')) {
+      if (resp && resp.status < 500 && /application\/json/i.test(resp.headers.get('content-type') || '')) {
         data = await resp.json().catch(() => null);
-      } else if (apiKey || deepseekApiKey) {
+      }
+      if ((!data || (resp && resp.status >= 500)) && (apiKey || deepseekApiKey)) {
         updateWebScanProgress(64, 'ডাইরেক্ট ব্রাউজার AI OCR চলছে...', 'ধাপ: Gemini / DeepSeek সরাসরি বিশ্লেষণ');
         data = await runDirectWebBrowserOcrFallback({
           imageBase64: base64Data,
@@ -2153,6 +2164,8 @@ btnCapture.addEventListener('click', async () => {
           religion,
           mobileNumber
         });
+      } else if (!data && resp && /application\/json/i.test(resp.headers.get('content-type') || '')) {
+        data = await resp.json().catch(() => null);
       }
       if (!data) {
         throw new Error(`OCR API সাড়া দেয়নি (HTTP ${resp ? resp.status : 'Network Error'}) — অনুগ্রহ করে Gemini বা DeepSeek API Key সেটিংসে দিন।`);
@@ -2189,32 +2202,73 @@ function normalizeDirectWebPrefix(enName, bnName) {
   if (!enName) return enName;
   let res = String(enName).trim();
   const bn = String(bnName || '').trim();
-  const mstRe = /^(?:(?:MOSAMMAT|MOSAMMOT|MOST|MST|MOSA)\s+|(?:MOST|MST|MOSA)\.(?:\s*|(?=[A-Z])))/i;
-  const mdRe = /^(?:(?:MD|MOHD|MOHAMMAD|MOHAMMED)\s+|(?:MD|MOHD)\.(?:\s*|(?=[A-Z])))/i;
+  const fullFemaleRe = /^(?:MOSAMMAT|MOSAMMOT)\s+/i;
+  const fullMaleRe = /^(?:MOHAMMAD|MOHAMMED|MUHAMMAD)\s+/i;
+  const abbrMstRe = /^(?:(?:MOST|MST|MOSA)\s+|(?:MOST|MST|MOSA)\.(?:\s*|(?=[A-Z])))/i;
+  const abbrMdRe = /^(?:(?:MD|MOHD)\s+|(?:MD|MOHD)\.(?:\s*|(?=[A-Z])))/i;
+  // Preserve full printed legal words verbatim (MOHAMMAD/MOSAMMAT)
+  if (fullFemaleRe.test(res) || fullMaleRe.test(res)) {
+    return res.toUpperCase().replace(/\s+/g, ' ').trim();
+  }
   if (/^(?:মোছাঃ|মোছা:|মোছা\.|মোছা\s+)/.test(bn)) {
-    res = mstRe.test(res) ? res.replace(mstRe, 'MST. ') : 'MST. ' + res;
+    res = abbrMstRe.test(res) ? res.replace(abbrMstRe, 'MST. ') : 'MST. ' + res;
   } else if (/^(?:মোঃ|মো:|মো\.|মো\s+)/.test(bn)) {
-    res = mdRe.test(res) ? res.replace(mdRe, 'MD. ') : 'MD. ' + res;
+    res = abbrMdRe.test(res) ? res.replace(abbrMdRe, 'MD. ') : 'MD. ' + res;
   } else if (/^(?:মোসাঃ|মোসা:|মোসা\.|মোসা\s+)/.test(bn)) {
-    if (/^(?:(?:MOSA|MOSAMMAT|MOSAMMOT)\s+|MOSA\.(?:\s*|(?=[A-Z])))/i.test(res)) {
-      res = res.replace(/^(?:(?:MOSA|MOSAMMAT|MOSAMMOT)\s+|MOSA\.(?:\s*|(?=[A-Z])))/i, 'MOSA. ');
+    if (/^(?:MOSA\s+|MOSA\.(?:\s*|(?=[A-Z])))/i.test(res)) {
+      res = res.replace(/^(?:MOSA\s+|MOSA\.(?:\s*|(?=[A-Z])))/i, 'MOSA. ');
     }
-  } else if (/^(?:(?:MOSAMMAT|MOSAMMOT|MOST)\s+|(?:MOST|MST)\.(?:\s*|(?=[A-Z])))/i.test(res)) {
-    res = res.replace(/^(?:(?:MOSAMMAT|MOSAMMOT|MOST)\s+|(?:MOST|MST)\.(?:\s*|(?=[A-Z])))/i, 'MST. ');
+  } else if (/^(?:MOST\s+|(?:MOST|MST)\.(?:\s*|(?=[A-Z])))/i.test(res)) {
+    res = res.replace(/^(?:MOST\s+|(?:MOST|MST)\.(?:\s*|(?=[A-Z])))/i, 'MST. ');
   } else if (/^(?:MD\s+|MD\.(?:\s*|(?=[A-Z])))/i.test(res)) {
     res = res.replace(/^(?:MD\s+|MD\.(?:\s*|(?=[A-Z])))/i, 'MD. ');
   }
   return res.toUpperCase().replace(/\s+/g, ' ').trim();
 }
 
-function standardizeWebDate(raw) {
+function standardizeWebDate(raw, allowFuture = false) {
   if (!raw) return '';
-  const str = normalizeDigits(raw).normalize('NFC').replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/[-\.]/g, '/').trim();
+  let str = normalizeDigits(raw).normalize('NFC').replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+  const maxYear = allowFuture ? 2100 : new Date().getFullYear();
   const isOk = (d, m, y) => {
-    if (y < 1850 || y > 2100 || m < 1 || m > 12 || d < 1) return false;
+    if (y < 1850 || y > maxYear || m < 1 || m > 12 || d < 1) return false;
     const maxD = [31, (y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0)) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1];
-    return d <= maxD;
+    if (d > maxD) return false;
+    if (!allowFuture) {
+      const dt = new Date(y, m - 1, d);
+      if (dt.getTime() > Date.now() + 86400000) return false;
+    }
+    return true;
   };
+  const enMonths = {
+    jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3, apr: 4, april: 4,
+    may: 5, jun: 6, june: 6, jul: 7, july: 7, aug: 8, august: 8,
+    sep: 9, sept: 9, september: 9, oct: 10, october: 10, nov: 11, november: 11, dec: 12, december: 12
+  };
+  const bnMonths = {
+    'জানুয়ারি': 1, 'জানুয়ারি': 1, 'জানু': 1, 'ফেব্রুয়ারি': 2, 'ফেব্রুয়ারি': 2, 'ফেব্রু': 2,
+    'মার্চ': 3, 'এপ্রিল': 4, 'মে': 5, 'জুন': 6, 'জুলাই': 7, 'আগস্ট': 8, 'আগষ্ট': 8,
+    'সেপ্টেম্বর': 9, 'সেপ্টে': 9, 'অক্টোবর': 10, 'অক্টো': 10, 'নভেম্বর': 11, 'নভে': 11, 'ডিসেম্বর': 12, 'ডিসে': 12
+  };
+  const enDayFirst = str.match(/(\d{1,2})[\s,\-\.\/]+([A-Za-z]{3,9})[\s,\-\.\/]+(\d{4})/);
+  if (enDayFirst) {
+    const m = enMonths[enDayFirst[2].toLowerCase()];
+    const d = +enDayFirst[1], y = +enDayFirst[3];
+    if (m && isOk(d, m, y)) return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`;
+  }
+  const enMonthFirst = str.match(/([A-Za-z]{3,9})[\s,\-\.\/]+(\d{1,2})[\s,\-\.\/]+(\d{4})/);
+  if (enMonthFirst) {
+    const m = enMonths[enMonthFirst[1].toLowerCase()];
+    const d = +enMonthFirst[2], y = +enMonthFirst[3];
+    if (m && isOk(d, m, y)) return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`;
+  }
+  const bnMatch = str.match(/(\d{1,2})[\s,\-\.\/]+([\u0980-\u09FF]+)[\s,\-\.\/]+(\d{4})/);
+  if (bnMatch) {
+    const m = bnMonths[bnMatch[2]];
+    const d = +bnMatch[1], y = +bnMatch[3];
+    if (m && isOk(d, m, y)) return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`;
+  }
+  str = str.replace(/[-\.]/g, '/');
   const iso = str.match(/(?:^|\s)(\d{4})\/(\d{1,2})\/(\d{1,2})(?:\b|$)/);
   if (iso) {
     const y = +iso[1], m = +iso[2], d = +iso[3];
@@ -2239,25 +2293,91 @@ async function runDirectWebBrowserOcrFallback({
   geminiModel = DEFAULT_GEMINI_MODEL,
   deepseekModel = 'deepseek-flash',
   docType = 'auto',
-  maritalStatus = 'বিবাহিত',
-  religion = 'ইসলাম',
+  maritalStatus = '',
+  religion = '',
   mobileNumber = ''
 }) {
   let gKey = String(apiKey || '').trim();
   let dKey = String(deepseekApiKey || '').trim();
   if (!dKey && /^sk-/i.test(gKey)) { dKey = gKey; gKey = ''; }
   let mimeType = 'image/jpeg';
-  let cleanBase64 = String(imageBase64 || '');
+  let cleanBase64 = String(imageBase64 || '').trim();
   const m = cleanBase64.match(/^data:([^;]+);base64,(.+)$/s);
   if (m) { mimeType = m[1] || mimeType; cleanBase64 = m[2]; }
+  cleanBase64 = cleanBase64.replace(/\s+/g, '');
+  if (!cleanBase64 || cleanBase64.length < 8 || !/^[A-Za-z0-9+/=]+$/.test(cleanBase64)) {
+    throw new Error('ছবি বা ডকুমেন্ট ডেটা সঠিক নয়। অনুগ্রহ করে আবার স্পষ্ট ছবি তুলুন।');
+  }
 
   const prompt = `You are an ultra-precise OCR engine for Bangladeshi NID and Birth Registration Certificates.
-STRICT VERBATIM ZERO-CORRECTION:
-- NEVER alter printed Bengali spelling ("মন্ডল" stays "মন্ডল", "মোসাঃ" stays "মোসাঃ", "আঃ" stays "আঃ").
+STRICT ZERO-HALLUCINATION & VERBATIM RULES:
+- Return ONLY text clearly visible in THIS image. NEVER invent, assume, or complete missing/blurry fields.
+- If a field is NOT printed or unreadable, return "" (empty string). NEVER write "unknown", "unreadable", "N/A", or dummy numbers.
+- If the image is blank, unreadable, or NOT an identity document, set doc_type="unknown", confidence=0, and return "" for all fields.
+- NEVER alter printed Bengali or English spelling ("মন্ডল" stays "মন্ডল", "মোসাঃ" stays "মোসাঃ", "আঃ" stays "আঃ", "MOHAMMAD" stays "MOHAMMAD").
 - NEVER invent, guess, or pad digits (10/13/17-digit NID or 17-digit BRC starting with YYYY). Put parent NIDs into father_nid/mother_nid only.
-- If Bengali name starts with "মোছাঃ"/"মোছা:", English prefix MUST be "MST.". If "মোঃ", English prefix MUST be "MD.".
 - Date of Birth "dob" MUST be strict DD/MM/YYYY (ignore registration_date).
 Return strictly ONE JSON object with keys: doc_type, doc_number, nid_number, birth_reg_no, father_nid, mother_nid, registration_date, name_bn, name_en, dob, gender, father_name_bn, father_name_en, mother_name_bn, mother_name_en, spouse_name_bn, spouse_name_en, relation_suggestion, marital_status_suggestion, confidence.`;
+
+  const webOcrSchema = {
+    type: 'OBJECT',
+    properties: {
+      doc_type: { type: 'STRING', enum: ['nid', 'birth_certificate', 'unknown'] },
+      doc_number: { type: 'STRING' },
+      nid_number: { type: 'STRING' },
+      birth_reg_no: { type: 'STRING' },
+      father_nid: { type: 'STRING' },
+      mother_nid: { type: 'STRING' },
+      registration_date: { type: 'STRING' },
+      name_bn: { type: 'STRING' },
+      name_en: { type: 'STRING' },
+      dob: { type: 'STRING' },
+      gender: { type: 'STRING' },
+      father_name_bn: { type: 'STRING' },
+      father_name_en: { type: 'STRING' },
+      mother_name_bn: { type: 'STRING' },
+      mother_name_en: { type: 'STRING' },
+      spouse_name_bn: { type: 'STRING' },
+      spouse_name_en: { type: 'STRING' },
+      relation_suggestion: { type: 'STRING' },
+      marital_status_suggestion: { type: 'STRING' },
+      confidence: { type: 'NUMBER' }
+    },
+    required: ['doc_type']
+  };
+
+  const placeholderRe = /^(?:null|undefined|none|n\/?a|nan|nil|unknown|unreadable|illegible|blurry|unclear|blank|empty|missing|redacted|sample|example|placeholder|dummy|not\s+(?:visible|clear|legible|available|applicable|provided|specified|found|printed|given)|cannot\s+read|can't\s+read|no\s+data|অজানা|অস্পষ্ট|খালি|প্রযোজ্য\s*ন(?:য়|য\u09BC|য)|নেই|নাই|প(?:ড়|ড\u09BC|র)া\s*যা(?:য়|য\u09BC)নি|পা[ওো](?:য়া|য\u09BCা)\s*যা(?:য়|য\u09BC)নি|[-_./\\?؟*#]+|x{3,})$/i;
+  const cleanField = (val) => {
+    if (val == null) return '';
+    let s = String(val).normalize('NFC').replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/\s+/g, ' ').trim();
+    if (!s || placeholderRe.test(s)) return '';
+    s = s.replace(/^(?:নাম|Name|পিতা|Father(?:'s Name)?|মাতা|Mother(?:'s Name)?|স্বামী|স্ত্রী|Spouse(?:'s Name)?|Husband(?:'s Name)?|ID\s*NO|NID\s*NO)\s*[:：\-]?\s*/i, '').trim();
+    if (!s || placeholderRe.test(s)) return '';
+    return s;
+  };
+  const isDummyDoc = (d) => {
+    if (!d) return true;
+    if (/^(\d)\1{7,}$/.test(d)) return true;
+    return /^(?:1234567890|0123456789|9876543210|1234567890123|12345678901234567)$/.test(d);
+  };
+  const pickBestWebDigits = (candidates, expectedType, excludeSet = new Set()) => {
+    const clean = (candidates || [])
+      .map(c => normalizeDigits(c || '').replace(/[^0-9]/g, ''))
+      .filter(Boolean);
+    const filtered = clean.filter(d => !excludeSet.has(d) && !isDummyDoc(d));
+    if (filtered.length === 0) return '';
+    if (expectedType === 'birth_certificate') {
+      const brc17 = filtered.find(d => d.length === 17 && /^(19|20)\d{2}/.test(d));
+      if (brc17) return brc17;
+      const any17 = filtered.find(d => d.length === 17);
+      if (any17) return any17;
+    } else {
+      const exactNid = filtered.find(d => d.length === 10 || d.length === 13 || d.length === 17);
+      if (exactNid) return exactNid;
+    }
+    const longCand = filtered.find(d => d.length >= 10 && d.length <= 17);
+    return longCand || '';
+  };
 
   const extractJsonObj = (rawTxt) => {
     let clean = String(rawTxt || '').replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
@@ -2278,7 +2398,7 @@ Return strictly ONE JSON object with keys: doc_type, doc_number, nid_number, bir
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': gKey },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mimeType, data: cleanBase64 } }] }],
-          generationConfig: { temperature: 0, response_mime_type: 'application/json' }
+          generationConfig: { response_mime_type: 'application/json', response_schema: webOcrSchema }
         })
       });
       const j = await res.json().catch(() => ({}));
@@ -2343,7 +2463,7 @@ Return strictly ONE JSON object with keys: doc_type, doc_number, nid_number, bir
         model: targetModel,
         temperature: 0,
         messages: [
-          { role: 'system', content: 'You are an ultra-precise OCR engine for Bangladeshi identity documents. Extract exact text without spelling changes. মোছাঃ->MST., মোঃ->MD.. Output strictly one valid JSON object.' },
+          { role: 'system', content: 'You are an ultra-precise OCR engine for Bangladeshi identity documents. Extract ONLY text visible in the image without spelling changes or invented values. Leave unreadable/missing fields as "". Output strictly one valid JSON object.' },
           { role: 'user', content: [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url: `data:${mimeType};base64,${cleanBase64}` } }] }
         ],
         max_tokens: cfg.maxTokens
@@ -2420,33 +2540,52 @@ Return strictly ONE JSON object with keys: doc_type, doc_number, nid_number, bir
   }
 
   if (parsed) {
-    if (parsed.dob) parsed.dob = standardizeWebDate(parsed.dob);
+    for (const k of ['name_bn', 'name_en', 'father_name_bn', 'father_name_en', 'mother_name_bn', 'mother_name_en', 'spouse_name_bn', 'spouse_name_en', 'gender', 'relation_suggestion', 'marital_status_suggestion']) {
+      parsed[k] = cleanField(parsed[k]);
+    }
+    parsed.dob = parsed.dob ? standardizeWebDate(parsed.dob) : '';
+    const regDateNorm = parsed.registration_date ? standardizeWebDate(parsed.registration_date, true) : '';
+    const dobDigits = parsed.dob ? parsed.dob.replace(/\D/g, '') : '';
+    const regDigits = regDateNorm ? regDateNorm.replace(/\D/g, '') : '';
     const fNid = normalizeDigits(parsed.father_nid || '').replace(/[^0-9]/g, '');
     const mNid = normalizeDigits(parsed.mother_nid || '').replace(/[^0-9]/g, '');
     parsed.father_nid = fNid;
     parsed.mother_nid = mNid;
+    const excludeSet = new Set([fNid, mNid, dobDigits, regDigits].filter(Boolean));
     const rawNid = normalizeDigits(parsed.nid_number || '').replace(/[^0-9]/g, '');
     const rawBrc = normalizeDigits(parsed.birth_reg_no || '').replace(/[^0-9]/g, '');
     const rawDoc = normalizeDigits(parsed.doc_number || '').replace(/[^0-9]/g, '');
-    const cleanNid = (rawNid && rawNid !== fNid && rawNid !== mNid) ? rawNid : '';
-    const hasBrcMeta = Boolean(fNid || mNid || parsed.registration_date);
-    if (docType === 'birth_certificate' || (parsed.doc_type === 'birth_certificate' && rawBrc.length === 17 && (hasBrcMeta || !cleanNid))) {
+    const cleanNid = pickBestWebDigits([rawNid, rawDoc], 'nid', excludeSet);
+    const cleanBrc = pickBestWebDigits([rawBrc, rawDoc], 'birth_certificate', excludeSet);
+    const hasBrcMeta = Boolean(fNid || mNid || regDateNorm);
+    const warnings = [];
+    if (docType === 'birth_certificate' || (parsed.doc_type === 'birth_certificate' && cleanBrc.length === 17 && (hasBrcMeta || !cleanNid))) {
       parsed.doc_type = 'birth_certificate';
-      parsed.birth_reg_no = rawBrc || rawDoc;
+      parsed.birth_reg_no = cleanBrc;
       parsed.doc_number = parsed.birth_reg_no;
       parsed.nid_number = '';
+      if (!parsed.birth_reg_no || parsed.birth_reg_no.length !== 17) {
+        warnings.push('জন্ম নিবন্ধন নম্বর ১৭ সংখ্যার নয় বা পড়া যায়নি — অনুগ্রহ করে যাচাই করুন।');
+      }
     } else {
-      parsed.doc_type = 'nid';
-      parsed.nid_number = cleanNid || rawDoc || rawBrc;
+      parsed.doc_type = parsed.doc_type === 'unknown' ? 'unknown' : 'nid';
+      parsed.nid_number = cleanNid;
       parsed.doc_number = parsed.nid_number;
       parsed.birth_reg_no = '';
+      if (parsed.doc_type === 'unknown' || (!parsed.name_bn && !parsed.name_en && !parsed.nid_number)) {
+        warnings.push('ছবিটি স্পষ্ট আইডি/জন্ম সনদ হিসেবে পড়া যায়নি — অনুগ্রহ করে স্পষ্ট ছবি দিন।');
+      } else if (!parsed.nid_number || ![10, 13, 17].includes(parsed.nid_number.length)) {
+        warnings.push('NID নম্বরটি ১০, ১৩ বা ১৭ সংখ্যার নয় — অনুগ্রহ করে যাচাই করুন।');
+      }
     }
+    if (!parsed.dob) warnings.push('জন্ম তারিখ সঠিকভাবে পড়া যায়নি (DD/MM/YYYY)।');
     for (const [bk, ek] of [['name_bn', 'name_en'], ['father_name_bn', 'father_name_en'], ['mother_name_bn', 'mother_name_en'], ['spouse_name_bn', 'spouse_name_en']]) {
       if (parsed[ek]) parsed[ek] = normalizeDirectWebPrefix(parsed[ek], parsed[bk]);
     }
-    parsed.marital_status = maritalStatus || parsed.marital_status_suggestion || 'বিবাহিত';
-    parsed.religion = religion || 'ইসলাম';
+    parsed.marital_status = maritalStatus || parsed.marital_status_suggestion || ((parsed.spouse_name_bn || parsed.spouse_name_en) ? 'বিবাহিত' : '');
+    parsed.religion = religion || '';
     parsed.mobile_number = normalizeDigits(mobileNumber || '').replace(/[^0-9]/g, '');
+    parsed.ocr_warnings = warnings;
     return { success: true, data: parsed };
   }
   return null;

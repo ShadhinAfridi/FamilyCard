@@ -256,9 +256,15 @@
   if (!enName) return enName;
   let res = String(enName).trim();
   const bn = String(bnName || '').trim();
-  const mstPrefixRe = /^(?:(?:MOSAMMAT|MOSAMMOT|MOST|MST|MOSA)\s+|(?:MOST|MST|MOSA)\.(?:\s*|(?=[A-Z])))/i;
-  const mdPrefixRe = /^(?:(?:MD|MOHD|MOHAMMAD|MOHAMMED)\s+|(?:MD|MOHD)\.(?:\s*|(?=[A-Z])))/i;
-  const mosaPrefixRe = /^(?:(?:MOSA|MOSAMMAT|MOSAMMOT)\s+|MOSA\.(?:\s*|(?=[A-Z])))/i;
+  const fullFemaleWordRe = /^(?:MOSAMMAT|MOSAMMOT)\b/i;
+  const fullMaleWordRe = /^(?:MOHAMMAD|MOHAMMED|MUHAMMAD|MUHAMMED)\b/i;
+  const mstPrefixRe = /^(?:(?:MOST|MST|MOSA)\s+|(?:MOST|MST|MOSA)\.(?:\s*|(?=[A-Z])))/i;
+  const mdPrefixRe = /^(?:(?:MD|MOHD)\s+|(?:MD|MOHD)\.(?:\s*|(?=[A-Z])))/i;
+  const mosaPrefixRe = /^(?:MOSA\s+|MOSA\.(?:\s*|(?=[A-Z])))/i;
+
+  if (fullFemaleWordRe.test(res) || fullMaleWordRe.test(res)) {
+    return res.toUpperCase().replace(/\s+/g, ' ').trim();
+  }
 
   // 1. If Bengali starts with মোছাঃ / মোছা: / মোছা. / মোছা
   if (/^(?:মোছাঃ|মোছা:|মোছা\.|মোছা\s+)/.test(bn)) {
@@ -284,9 +290,9 @@
       res = 'MOSA. ' + res;
     }
   }
-  // 4. Standalone English prefixes without Bengali match
-  else if (/^(?:(?:MOSAMMAT|MOSAMMOT|MOST)\s+|(?:MOST|MST)\.(?:\s*|(?=[A-Z])))/i.test(res)) {
-    res = res.replace(/^(?:(?:MOSAMMAT|MOSAMMOT|MOST)\s+|(?:MOST|MST)\.(?:\s*|(?=[A-Z])))/i, 'MST. ');
+  // 4. Standalone abbreviated English prefixes without Bengali match
+  else if (/^(?:MOST\s+|(?:MOST|MST)\.(?:\s*|(?=[A-Z])))/i.test(res)) {
+    res = res.replace(/^(?:MOST\s+|(?:MOST|MST)\.(?:\s*|(?=[A-Z])))/i, 'MST. ');
   } else if (/^(?:MD\s+|MD\.(?:\s*|(?=[A-Z])))/i.test(res)) {
     res = res.replace(/^(?:MD\s+|MD\.(?:\s*|(?=[A-Z])))/i, 'MD. ');
   }
@@ -594,7 +600,8 @@
     if (out.dob) out.dob = standardizeDate(out.dob);
     const birthYear = (String(out.dob || '').match(/\b(19\d{2}|20\d{2})\b/) || [])[1] || '';
     const dobDigits = cleanDigits(out.dob);
-    const excludeSet = new Set([fatherNid, motherNid, dobDigits].filter(Boolean));
+    const regDigits = cleanDigits(out.registration_date);
+    const excludeSet = new Set([fatherNid, motherNid, dobDigits, regDigits].filter(Boolean));
     const rawNidAll = cleanDigits(out.nid_number);
     const rawBrc = cleanDigits(out.birth_reg_no || out.brc_number);
     const rawDoc = cleanDigits(out.doc_number);
@@ -603,14 +610,6 @@
     if (out.gender) out.gender = normalizeGenderValue(out.gender);
     if (out.mobile_number) out.mobile_number = normalizeMobileNumber(out.mobile_number);
 
-    for (const [bnK, enK] of [
-      ['name_bn', 'name_en'],
-      ['father_name_bn', 'father_name_en'],
-      ['mother_name_bn', 'mother_name_en'],
-      ['spouse_name_bn', 'spouse_name_en']
-    ]) {
-      if (out[enK]) out[enK] = normalizeEnglishHonorificPrefix(out[enK], out[bnK]);
-    }
     ['name_bn', 'father_name_bn', 'mother_name_bn', 'spouse_name_bn'].forEach((k) => {
       if (out[k] && typeof out[k] === 'string') out[k] = normalizeBn(out[k]);
     });
@@ -623,15 +622,15 @@
       let bnV = String(out[bnK] || '').trim();
       let enV = String(out[enK] || '').trim();
       if (bnV && !hasBengaliScript(bnV) && /[A-Za-z]/.test(bnV) && enV && hasBengaliScript(enV)) {
-        out[bnK] = enV;
+        out[bnK] = normalizeBn(enV);
         out[enK] = bnV.toUpperCase();
         bnV = out[bnK];
         enV = out[enK];
       } else {
         if (!bnV && hasBengaliScript(enV)) {
-          out[bnK] = enV;
+          out[bnK] = normalizeBn(enV);
           out[enK] = '';
-          bnV = enV;
+          bnV = out[bnK];
           enV = '';
         }
         if (bnV && !hasBengaliScript(bnV) && /[A-Za-z]/.test(bnV)) {
@@ -640,10 +639,11 @@
           bnV = '';
         }
         if (enV && hasBengaliScript(enV)) {
-          if (!bnV) out[bnK] = enV;
+          if (!bnV) out[bnK] = normalizeBn(enV);
           out[enK] = '';
         }
       }
+      if (out[enK]) out[enK] = normalizeEnglishHonorificPrefix(out[enK], out[bnK]);
     }
 
     // Prevent married women's "স্বামী:" from polluting Father's name
@@ -2759,7 +2759,9 @@
           canvas.width = width;
           canvas.height = height;
           const ctx = canvas.getContext('2d');
-          if ('filter' in ctx) ctx.filter = 'contrast(1.08) brightness(1.03)';
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillRect(0, 0, width, height);
+          if ('filter' in ctx) ctx.filter = 'contrast(1.06) brightness(1.02)';
           ctx.drawImage(img, 0, 0, width, height);
           resolve(canvas.toDataURL('image/jpeg', quality));
         };
@@ -4222,14 +4224,21 @@
     });
   }
 
-  function isValidCalendarDate(d, m, y) {
+  function isValidCalendarDate(d, m, y, allowFuture = false) {
     const day = Number(d);
     const month = Number(m);
     const year = Number(y);
     if (!Number.isInteger(day) || !Number.isInteger(month) || !Number.isInteger(year)) return false;
-    if (year < 1850 || year > 2100 || month < 1 || month > 12 || day < 1) return false;
+    const now = new Date();
+    const maxYear = allowFuture ? 2100 : now.getFullYear();
+    if (year < 1850 || year > maxYear || month < 1 || month > 12 || day < 1) return false;
     const maxDays = [31, (year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
-    return day <= maxDays;
+    if (day > maxDays) return false;
+    if (!allowFuture) {
+      const dt = new Date(year, month - 1, day);
+      if (dt.getTime() > now.getTime() + 86400000) return false;
+    }
+    return true;
   }
 
   // Helper to standardize Date of Birth (supports English & Bengali months/digits/ordinals) to DD/MM/YYYY
@@ -4255,16 +4264,26 @@
         : '';
     }
 
-    // English month names: 15 Aug 1985
+    // English month names: 15 Aug 1985 / Aug 15, 1985
     const months = {
       jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
       jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12'
     };
-    const monthMatch = str.match(/(?:^|\s)(\d{1,2})[\s\-,.]+([a-zA-Z]{3,})[\s\-,.]+(\d{4})(?:\b|$)/i);
+    const monthMatch = str.match(/(?:^|\s)(\d{1,2})[\s\-,.]+([a-zA-Z]{3,})\.?[\s\-,.]+(\d{4})(?:\b|$)/i);
     if (monthMatch) {
       const d = parseInt(monthMatch[1], 10);
       const mStr = months[monthMatch[2].toLowerCase().substring(0, 3)] || '';
       const y = parseInt(monthMatch[3], 10);
+      if (mStr && isValidCalendarDate(d, parseInt(mStr, 10), y)) {
+        return `${String(d).padStart(2, '0')}/${mStr}/${y}`;
+      }
+      if (mStr) return '';
+    }
+    const monthFirstMatch = str.match(/(?:^|\s)([a-zA-Z]{3,})\.?[\s\-,.]+(\d{1,2})[\s\-,.]+(\d{4})(?:\b|$)/i);
+    if (monthFirstMatch) {
+      const mStr = months[monthFirstMatch[1].toLowerCase().substring(0, 3)] || '';
+      const d = parseInt(monthFirstMatch[2], 10);
+      const y = parseInt(monthFirstMatch[3], 10);
       if (mStr && isValidCalendarDate(d, parseInt(mStr, 10), y)) {
         return `${String(d).padStart(2, '0')}/${mStr}/${y}`;
       }

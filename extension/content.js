@@ -154,7 +154,13 @@
 
   function transliterateBnWordToEn(word) {
     if (!word) return '';
-    const nfc = String(word).normalize('NFC').replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+    const nfc = String(word)
+      .normalize('NFC')
+      .replace(/ড\u09BC/g, 'ড়')
+      .replace(/ঢ\u09BC/g, 'ঢ়')
+      .replace(/য\u09BC/g, 'য়')
+      .replace(/[\u200B-\u200D\uFEFF]/g, '')
+      .trim();
     if (!nfc) return '';
     if (BN_NAME_WORD_MAP[nfc]) return BN_NAME_WORD_MAP[nfc];
     const bare = nfc.replace(/[।,;:!?'"()\[\]]+/g, '');
@@ -168,21 +174,72 @@
       'প': 'P', 'ফ': 'F', 'ব': 'B', 'ভ': 'BH', 'ম': 'M', 'য': 'J', 'র': 'R', 'ল': 'L', 'শ': 'SH', 'ষ': 'SH', 'স': 'S', 'হ': 'H',
       'ড়': 'R', 'ঢ়': 'RH', 'য়': 'Y', 'ৎ': 'T'
     };
+    const jukto5 = {
+      'ক্ষ্ম': 'KSHM', 'স্ত্র': 'STR', 'ন্ত্র': 'NTR', 'ন্দ্র': 'NDR', 'ন্দ্ব': 'NDW',
+      'ম্প্র': 'MPR', 'ম্ব্র': 'MBR', 'ষ্ট্র': 'SHTR', 'স্ক্র': 'SKR', 'স্প্র': 'SPR',
+      'ঙ্ক্ষ': 'NGKSH', 'ঞ্জ্য': 'NJY', 'চ্ছ্ব': 'CHHW', 'ত্ত্ব': 'TTW', 'দ্ধ্ব': 'DDHW',
+      'জ্জ্ব': 'JJW', 'ঙ্গ্য': 'NGGY'
+    };
+    const jukto3 = {
+      'হ্ম': 'HM', 'ঞ্চ': 'NCH', 'ঞ্জ': 'NJ', 'ঞ্ছ': 'NCHH', 'ঙ্গ': 'NG', 'ঙ্ক': 'NK',
+      'ঙ্খ': 'NKH', 'ঙ্ঘ': 'NGH', 'ষ্ণ': 'SHN', 'ষ্ট': 'SHT', 'ষ্ঠ': 'SHTH', 'শ্চ': 'SHCH',
+      'শ্র': 'SHR', 'ক্ত': 'KT', 'ত্ত': 'TT', 'ত্র': 'TR', 'দ্দ': 'DD', 'দ্ধ': 'DDH',
+      'দ্র': 'DR', 'ব্দ': 'BD', 'ণ্ড': 'ND', 'ন্ড': 'ND', 'ন্ত': 'NT', 'ন্দ': 'ND',
+      'ন্ধ': 'NDH', 'ন্ন': 'NN', 'ন্স': 'NS', 'ম্প': 'MP', 'ম্ব': 'MB', 'ম্ভ': 'MBH',
+      'ম্ম': 'MM', 'স্ত': 'ST', 'স্থ': 'STH', 'স্প': 'SP', 'স্ম': 'SM', 'স্ব': 'SW', 'শ্ব': 'SHW',
+      'ল্ল': 'LL', 'ল্প': 'LP', 'চ্ছ': 'CHH', 'জ্জ': 'JJ', 'ট্ট': 'TT', 'ত্ম': 'TM',
+      'দ্ভ': 'DBH', 'হ্ণ': 'HN', 'হ্ন': 'HN', 'হ্য': 'HY'
+    };
+    const finalAJukto = new Set(['স্ত্র', 'ন্ত্র', 'ন্দ্র', 'ষ্ণ', 'ষ্ঠ', 'ক্ত', 'ত্ত', 'ত্র', 'দ্ধ', 'দ্র', 'ন্ত', 'ন্দ', 'ন্ধ', 'স্থ']);
     let out = '', i = 0, lastConsStartIdx = 0, lastWasVowel = true;
     while (i < bare.length) {
       const ch = bare[i];
-      if (bare.slice(i, i + 3) === 'ক্ষ') {
+      if (ch >= '০' && ch <= '৯') {
+        out += String(ch.charCodeAt(0) - 0x09E6);
+        lastWasVowel = false;
+        i++;
+        continue;
+      }
+      const s5 = bare.slice(i, i + 5);
+      if (jukto5[s5]) {
+        out += jukto5[s5];
+        i += 5;
+        const nc = bare[i] || '';
+        if ((!kars[nc] && nc !== '্' && nc !== 'ং' && nc !== 'ঃ' && i < bare.length && cons[nc])
+            || (i === bare.length && finalAJukto.has(s5))) {
+          out += 'A';
+          lastWasVowel = true;
+        } else {
+          lastWasVowel = Boolean(kars[nc]);
+        }
+        continue;
+      }
+      const s3 = bare.slice(i, i + 3);
+      if (s3 === 'ক্ষ') {
         out += i === 0 ? 'KH' : 'KSH';
         i += 3;
         const nc = bare[i] || '';
-        if (!kars[nc] && nc !== '্' && i < bare.length && cons[nc]) { out += 'A'; lastWasVowel = true; } else { lastWasVowel = Boolean(kars[nc]); }
+        if (!kars[nc] && nc !== '্' && nc !== 'ং' && nc !== 'ঃ' && i < bare.length && cons[nc]) { out += 'A'; lastWasVowel = true; } else { lastWasVowel = Boolean(kars[nc]); }
         continue;
       }
-      if (bare.slice(i, i + 3) === 'জ্ঞ') {
+      if (s3 === 'জ্ঞ') {
         out += 'GY';
         i += 3;
         const nc = bare[i] || '';
-        if (!kars[nc] && nc !== '্' && i < bare.length && cons[nc]) { out += 'A'; lastWasVowel = true; } else { lastWasVowel = Boolean(kars[nc]); }
+        if (!kars[nc] && nc !== '্' && nc !== 'ং' && nc !== 'ঃ' && i < bare.length && cons[nc]) { out += 'A'; lastWasVowel = true; } else { lastWasVowel = Boolean(kars[nc]); }
+        continue;
+      }
+      if (jukto3[s3]) {
+        out += jukto3[s3];
+        i += 3;
+        const nc = bare[i] || '';
+        if ((!kars[nc] && nc !== '্' && nc !== 'ং' && nc !== 'ঃ' && i < bare.length && cons[nc])
+            || (i === bare.length && finalAJukto.has(s3))) {
+          out += 'A';
+          lastWasVowel = true;
+        } else {
+          lastWasVowel = Boolean(kars[nc]);
+        }
         continue;
       }
       if (indVowels[ch]) { out += indVowels[ch]; lastWasVowel = true; i++; continue; }
@@ -226,7 +283,7 @@
           out += 'R' + cons[bare[i + 2]];
           i += 3;
           const afterC = bare[i] || '';
-          if (!kars[afterC] && afterC !== '্' && i < bare.length && cons[afterC]) { out += 'A'; lastWasVowel = true; } else { lastWasVowel = false; }
+          if (!kars[afterC] && afterC !== '্' && afterC !== 'ং' && afterC !== 'ঃ' && i < bare.length && cons[afterC]) { out += 'A'; lastWasVowel = true; } else { lastWasVowel = false; }
           continue;
         }
         lastConsStartIdx = i;
@@ -337,9 +394,11 @@
     const s = bare.replace(/[^A-Z]/g, '');
     if (!s) return raw;
     const consRules = [
-      ['CHH', 'ছ'], ['KSH', 'ক্ষ'], ['SHR', 'শ্র'],
+      ['KSHM', 'ক্ষ্ম'], ['SHTH', 'ষ্ঠ'], ['SHCH', 'শ্চ'],
+      ['CHH', 'ছ'], ['KSH', 'ক্ষ'], ['SHR', 'শ্র'], ['STR', 'স্ত্র'], ['NTR', 'ন্ত্র'], ['NDR', 'ন্দ্র'],
+      ['SHT', 'ষ্ট'], ['SHN', 'ষ্ণ'], ['NCH', 'ঞ্চ'],
       ['BH', 'ভ'], ['PH', 'ফ'], ['TH', 'থ'], ['DH', 'ধ'], ['KH', 'খ'], ['GH', 'ঘ'],
-      ['JH', 'ঝ'], ['CH', 'চ'], ['SH', 'শ'], ['NG', 'ং'],
+      ['JH', 'ঝ'], ['CH', 'চ'], ['SH', 'শ'], ['NG', 'ং'], ['GY', 'জ্ঞ'], ['NJ', 'ঞ্জ'], ['HM', 'হ্ম'],
       ['K', 'ক'], ['G', 'গ'], ['C', 'স'], ['J', 'জ'], ['Z', 'জ'],
       ['T', 'ত'], ['D', 'দ'], ['N', 'ন'], ['P', 'প'], ['F', 'ফ'],
       ['B', 'ব'], ['V', 'ভ'], ['M', 'ম'], ['R', 'র'], ['L', 'ল'],

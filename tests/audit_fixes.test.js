@@ -1938,3 +1938,318 @@ test('Map system & GPS tracking audit fixes: ghost prevention, pagination, lossl
     assert.ok(patchUrls.some(u => u.includes('/surveyed_houses/fid_retry_1?') && u.includes('currentDocument.exists=true')), `${label}: must PATCH surveyed_houses only if exists`);
   }
 });
+
+test('Bilingual preserve-existing rules, missing-only API completion & Bangla juktoborno accuracy across all modules', async () => {
+  // 1. Bangla character, NFC-decomposed nukta (ড়/ঢ়/য়), digits (০-৯), and juktoborno (যুক্তবর্ণ) accuracy across ALL 5 codebases
+  const translitFiles = [
+    ['cloudflare/worker.js', 'module'],
+    ['server/server.js', 'module'],
+    ['extension/background.js', 'script'],
+    ['bookmarklet/bookmarklet.js', 'script'],
+    ['extension/content.js', 'script'],
+  ];
+
+  const juktoCases = [
+    ['প\u09BEড\u09BC\u09BE', 'PARA'],           // NFC decomposed ড় (ড + \u09BC)
+    ['আষ\u09BEঢ\u09BC', 'ASHARH'],               // NFC decomposed ঢ় (ঢ + \u09BC)
+    ['ন\u09BEর\u09BEয\u09BCণ', 'NARAYAN'],       // NFC decomposed য় (য + \u09BC)
+    ['০৫', '05'],                                 // Bangla digits only
+    ['ওয়ার্ড-০৫', 'OYARD-05'],                    // Mixed Bangla word + Bangla digits
+    ['লক্ষ্মী', 'LAKSHMI'],                       // 3-consonant jukto ক্ষ্ম
+    ['স্ত্রী', 'STRI'],                           // 3-consonant jukto স্ত্র
+    ['নরেন্দ্র', 'NARENDRA'],                    // 3-consonant jukto ন্দ্র
+    ['মঞ্জুর', 'MANJUR'],                         // জুক্ট ঞ্জ
+    ['সঞ্জয়', 'SANJAY'],                          // ঞ্জ + য়
+    ['আহ্মদ', 'AHMAD'],                           // হ্ম
+    ['ব্রহ্মপুত্র', 'BRAHMAPUTRA'],               // ব্র + হ্ম + ত্র
+    ['শ্রীমতী', 'SRIMOTI'],                       // BN_NAME_WORD_MAP honorific
+    ['শ্রেষ্ঠ', 'SHRESHTHA'],                     // শ্র + ষ্ঠ juktobornos
+    ['শ্রাবণ', 'SHRABAN'],                        // শ্র juktoborno (algorithmic)
+    ['কৃষ্ণ', 'KRISHNA'],                         // ষ্ণ
+    ['মুক্তা', 'MUKTA'],                          // ক্ত
+    ['জ্ঞান', 'GYAN'],                            // জ্ঞ
+    ['ক্ষমা', 'KHAMA'],                           // ক্ষ (initial)
+    ['রক্ষা', 'RAKSHA'],                          // ক্ষ (medial)
+    ['পঞ্চগড়', 'PANCHAGAR'],                      // ঞ্চ + ড়
+    ['চট্টগ্রাম', 'CHATTAGRAM'],                  // ট্ট + গ্র
+    ['সন্ধ্যা', 'SANDHYA'],                       // ন্ধ + য-ফলা
+    ['জান্নাত', 'JANNAT'],                        // ন্ন
+    ['উত্তম', 'UTTAM'],                           // ত্ত
+    ['স্বপন', 'SWAPAN'],                          // স্ব (existing invariant)
+    ['প্রধান', 'PRADHAN'],                        // প্র (existing invariant)
+  ];
+
+  for (const [rel, sourceType] of translitFiles) {
+    const src = readRepoFile(rel);
+    const code = extractDeclCode(src, [
+      'normalizeDigits', 'hasBengaliScript', 'BN_NAME_WORD_MAP', 'transliterateBnWordToEn',
+    ], sourceType);
+    const ctx = createSandbox();
+    vm.runInContext(code, ctx, { filename: rel });
+    for (const [bnInput, expectedEn] of juktoCases) {
+      assert.equal(
+        ctx.transliterateBnWordToEn(bnInput),
+        expectedEn,
+        `${rel}: transliterateBnWordToEn(${JSON.stringify(bnInput)}) expected ${expectedEn}`,
+      );
+    }
+  }
+
+  // 2. Missing-only bilingual prompt & preserve-existing enforcement across server.js, background.js, bookmarklet.js
+  const classicNidPartial = {
+    doc_type: 'nid',
+    detected_language: 'bilingual',
+    name_bn: 'মোঃ করিম উদ্দিন',
+    name_en: 'MOHAMMAD KARIM UDDIN',
+    father_name_bn: 'আব্দুল জব্বার',
+    father_name_en: '',
+    mother_name_bn: 'মঞ্জুয়ারা খাতুন',
+    mother_name_en: '',
+    spouse_name_bn: '',
+    spouse_name_en: '',
+  };
+  const englishOnlyDoc = {
+    doc_type: 'birth_certificate',
+    detected_language: 'en_only',
+    name_bn: '',
+    name_en: 'SANJOY KUMAR',
+    father_name_bn: '',
+    father_name_en: '',
+    mother_name_bn: '',
+    mother_name_en: '',
+    spouse_name_bn: '',
+    spouse_name_en: '',
+  };
+  const fullyBilingualDoc = {
+    doc_type: 'birth_certificate',
+    detected_language: 'bilingual',
+    name_bn: 'আকাশ দাস',
+    name_en: 'AKASH DAS',
+    father_name_bn: 'স্বপন দাস',
+    father_name_en: 'SWAPAN DAS',
+    mother_name_bn: 'মুক্তা রানী',
+    mother_name_en: 'MUKTA RANI',
+    spouse_name_bn: '',
+    spouse_name_en: '',
+  };
+
+  for (const [rel, sourceType] of [
+    ['server/server.js', 'module'],
+    ['extension/background.js', 'script'],
+    ['bookmarklet/bookmarklet.js', 'script'],
+  ]) {
+    const src = readRepoFile(rel);
+    const code = extractDeclCode(src, [
+      'hasBengaliScript', 'cleanOcrFieldText', 'needsIntelligentCompletion',
+      'buildBilingualCompletionPrompt', 'applyBilingualCompletionResult', 'buildGeminiPrompt',
+    ], sourceType);
+    const ctx = createSandbox();
+    vm.runInContext(code, ctx, { filename: rel });
+
+    // Vision prompt must explicitly state preserve-existing & juktoborno rules
+    const visionPrompt = ctx.buildGeminiPrompt('auto');
+    assert.match(visionPrompt, /PRESERVE EXISTING VALUES/i, `${rel}: Vision prompt must include PRESERVE EXISTING VALUES`);
+    assert.match(visionPrompt, /যুক্তবর্ণ/, `${rel}: Vision prompt must explicitly include জুক্টবর্ণ (যুক্তবর্ণ)`);
+
+    // Classic NID: applicant already bilingual -> MUST NOT be sent in completion prompt!
+    assert.equal(ctx.needsIntelligentCompletion(classicNidPartial), true, `${rel}: classic NID with Bangla-only parents needs completion`);
+    const nidPrompt = ctx.buildBilingualCompletionPrompt(classicNidPartial);
+    assert.ok(!nidPrompt.includes('MOHAMMAD KARIM UDDIN'), `${rel}: already-bilingual name_en must NOT be sent to completion API`);
+    assert.ok(!nidPrompt.includes('"name_bn"'), `${rel}: already-bilingual name_bn must NOT be sent to completion API`);
+    assert.ok(nidPrompt.includes('"father_name_bn":"আব্দুল জব্বার"'), `${rel}: Bangla-only father_name_bn must be sent`);
+    assert.ok(nidPrompt.includes('"mother_name_bn":"মঞ্জুয়ারা খাতুন"'), `${rel}: Bangla-only mother_name_bn must be sent`);
+    assert.ok(nidPrompt.includes('father_name_en, mother_name_en'), `${rel}: must request ONLY missing target keys`);
+
+    // Even if AI attempts to overwrite existing printed MOHAMMAD KARIM UDDIN, applyBilingualCompletionResult must preserve it!
+    const mergedNid = ctx.applyBilingualCompletionResult(classicNidPartial, {
+      name_en: 'MD. KARIM UDDIN',
+      name_bn: 'মোঃ করিম উদ্দীন',
+      father_name_en: 'ABDUL JABBAR',
+      mother_name_en: 'MANJUARA KHATUN',
+      spouse_name_en: 'IMAGINARY SPOUSE',
+    }, null, 'gemini');
+    assert.equal(mergedNid.name_en, 'MOHAMMAD KARIM UDDIN', `${rel}: printed name_en must NEVER be overwritten`);
+    assert.equal(mergedNid.name_bn, 'মোঃ করিম উদ্দিন', `${rel}: printed name_bn must NEVER be overwritten`);
+    assert.equal(mergedNid.father_name_en, 'ABDUL JABBAR', `${rel}: missing father_name_en must be populated`);
+    assert.equal(mergedNid.mother_name_en, 'MANJUARA KHATUN', `${rel}: missing mother_name_en must be populated`);
+    assert.equal(mergedNid.spouse_name_en, '', `${rel}: empty spouse pair must stay empty`);
+
+    // English-only doc: requests ONLY name_bn and preserves name_en untouched
+    assert.equal(ctx.needsIntelligentCompletion(englishOnlyDoc), true, `${rel}: English-only doc needs missing Bangla`);
+    const enPrompt = ctx.buildBilingualCompletionPrompt(englishOnlyDoc);
+    assert.ok(enPrompt.includes('"name_en":"SANJOY KUMAR"'), `${rel}: English-only name_en must be source`);
+    assert.ok(enPrompt.includes('ONLY these keys: name_bn'), `${rel}: must request ONLY name_bn`);
+    const mergedEn = ctx.applyBilingualCompletionResult(englishOnlyDoc, {
+      name_en: 'OVERWRITTEN NAME',
+      name_bn: 'সঞ্জয় কুমার',
+    }, null, 'gemini');
+    assert.equal(mergedEn.name_en, 'SANJOY KUMAR', `${rel}: existing English name_en must stay untouched`);
+    assert.equal(mergedEn.name_bn, 'সঞ্জয় কুমার', `${rel}: missing name_bn must be populated`);
+
+    // Fully bilingual doc: needsIntelligentCompletion=false and prompt=''
+    assert.equal(ctx.needsIntelligentCompletion(fullyBilingualDoc), false, `${rel}: fully bilingual doc must NOT trigger completion API`);
+    assert.equal(ctx.buildBilingualCompletionPrompt(fullyBilingualDoc), '', `${rel}: fully bilingual doc must produce empty completion prompt`);
+  }
+
+  // 3. End-to-end Cloudflare Worker /api/ocr-nid test: classic NID calls completion ONLY for parents; fully bilingual BRC makes ZERO completion calls
+  const workerSrc = readRepoFile('cloudflare/worker.js');
+  const modBody = workerSrc.replace(/export\s+default\s+\{/, 'var __workerExport = {');
+  const workerFetchLog = [];
+  let workerScenario = 'nid_missing_parents';
+  const wCtx = createSandbox({
+    fetch: async (url, init = {}) => {
+      const u = String(url);
+      if (u.includes('firestore.googleapis.com')) {
+        return new Response('{}', { status: 200 });
+      }
+      const parsedBody = init.body ? JSON.parse(init.body) : {};
+      workerFetchLog.push({ url: u, body: parsedBody });
+      if (workerFetchLog.length === 1) {
+        const visionPayload = workerScenario === 'nid_missing_parents'
+          ? {
+            doc_type: 'nid',
+            detected_language: 'bilingual',
+            nid_number: '5551234567',
+            doc_number: '5551234567',
+            name_bn: 'মোঃ করিম উদ্দিন',
+            name_en: 'MOHAMMAD KARIM UDDIN',
+            father_name_bn: 'আব্দুল জব্বার',
+            father_name_en: '',
+            mother_name_bn: 'মঞ্জুয়ারা খাতুন',
+            mother_name_en: '',
+            dob: '12/05/1988',
+            confidence: 'high',
+          }
+          : {
+            doc_type: 'birth_certificate',
+            detected_language: 'bilingual',
+            birth_reg_no: '19952691234567890',
+            doc_number: '19952691234567890',
+            name_bn: 'আকাশ দাস',
+            name_en: 'AKASH DAS',
+            father_name_bn: 'স্বপন দাস',
+            father_name_en: 'SWAPAN DAS',
+            mother_name_bn: 'মুক্তা রানী',
+            mother_name_en: 'MUKTA RANI',
+            dob: '10/04/1995',
+            gender: 'পুরুষ',
+            confidence: 'high',
+          };
+        return new Response(JSON.stringify({
+          candidates: [{ content: { parts: [{ text: JSON.stringify(visionPayload) }] } }],
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      // 2nd call: missing-only completion (intentionally tries to overwrite name_en to verify preservation!)
+      return new Response(JSON.stringify({
+        candidates: [{ content: { parts: [{ text: JSON.stringify({
+          name_en: 'MD. KARIM UDDIN',
+          father_name_en: 'ABDUL JABBAR',
+          mother_name_en: 'MANJUARA KHATUN',
+        }) }] } }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    },
+    Request,
+    Response,
+    Headers,
+  });
+  vm.runInContext(modBody, wCtx);
+
+  // Scenario A: Classic NID (bilingual applicant + Bangla-only parents)
+  const nidReq = new Request('https://familycard-10n.pages.dev/api/ocr-nid', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      imageBase64: 'data:image/jpeg;base64,/9j/4AAQSkZJRg==',
+      apiKey: 'AIza-worker-test',
+      aiProvider: 'gemini_lite',
+      docType: 'nid',
+    }),
+  });
+  const nidRes = await wCtx.__workerExport.fetch(nidReq, {}, { waitUntil() {} });
+  const nidJson = await nidRes.json();
+  assert.equal(nidJson.success, true);
+  assert.equal(workerFetchLog.length, 2, 'Worker must make 1 Vision call + 1 missing-only completion call');
+  const workerCompPrompt = workerFetchLog[1].body.contents[0].parts[0].text;
+  assert.ok(!workerCompPrompt.includes('MOHAMMAD KARIM UDDIN'), 'Worker completion prompt must NOT include already-bilingual name_en');
+  assert.ok(!workerCompPrompt.includes('"name_bn"'), 'Worker completion prompt must NOT include already-bilingual name_bn');
+  assert.ok(workerCompPrompt.includes('"father_name_bn":"আব্দুল জব্বার"'));
+  assert.ok(workerCompPrompt.includes('"mother_name_bn":"মঞ্জুয়ারা খাতুন"'));
+  assert.equal(nidJson.data.name_en, 'MOHAMMAD KARIM UDDIN', 'Worker must preserve printed applicant name_en verbatim');
+  assert.equal(nidJson.data.father_name_en, 'ABDUL JABBAR', 'Worker must fill missing father_name_en');
+  assert.equal(nidJson.data.mother_name_en, 'MANJUARA KHATUN', 'Worker must fill missing mother_name_en');
+
+  // Scenario B: Fully bilingual BRC -> ZERO completion calls!
+  workerFetchLog.length = 0;
+  workerScenario = 'fully_bilingual_brc';
+  const brcReq = new Request('https://familycard-10n.pages.dev/api/ocr-nid', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      imageBase64: 'data:image/jpeg;base64,/9j/4AAQSkZJRg==',
+      apiKey: 'AIza-worker-test',
+      aiProvider: 'gemini_lite',
+      docType: 'birth_certificate',
+    }),
+  });
+  const brcRes = await wCtx.__workerExport.fetch(brcReq, {}, { waitUntil() {} });
+  const brcJson = await brcRes.json();
+  assert.equal(brcJson.success, true);
+  assert.equal(workerFetchLog.length, 1, 'Fully bilingual BRC must make ZERO extra completion API calls');
+  assert.equal(brcJson.data.name_en, 'AKASH DAS');
+
+  // 4. End-to-end app.js runDirectWebBrowserOcrFallback missing-only bilingual completion test
+  const appSrc = readRepoFile('app.js');
+  const appCode = extractDeclCode(appSrc, [
+    'normalizeDigits', 'DEFAULT_GEMINI_MODEL', 'normalizeDirectWebPrefix',
+    'standardizeWebDate', 'runDirectWebBrowserOcrFallback',
+  ], 'script');
+  const appCalls = [];
+  const appCtx = createSandbox({
+    fetch: async (_url, init = {}) => {
+      const body = JSON.parse(init.body);
+      appCalls.push(body);
+      if (appCalls.length === 1) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            candidates: [{ content: { parts: [{ text: JSON.stringify({
+              doc_type: 'nid',
+              nid_number: '5551234567',
+              name_bn: 'মোঃ করিম উদ্দিন',
+              name_en: 'MOHAMMAD KARIM UDDIN',
+              father_name_bn: 'আব্দুল জব্বার',
+              father_name_en: '',
+              mother_name_bn: 'মঞ্জুয়ারা খাতুন',
+              mother_name_en: '',
+              dob: '12/05/1988',
+            }) }] } }],
+          }),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          candidates: [{ content: { parts: [{ text: JSON.stringify({
+            name_en: 'MD. KARIM UDDIN',
+            father_name_en: 'ABDUL JABBAR',
+            mother_name_en: 'MANJUARA KHATUN',
+          }) }] } }],
+        }),
+      };
+    },
+  });
+  vm.runInContext(appCode, appCtx, { filename: 'app.js' });
+  const webOut = await appCtx.runDirectWebBrowserOcrFallback({
+    imageBase64: 'data:image/jpeg;base64,/9j/4AAQSkZJRg==',
+    apiKey: 'AIza-web-test',
+  });
+  assert.equal(appCalls.length, 2, 'app.js must run 1 Vision OCR + 1 missing-only completion call for Bangla-only parents');
+  const appCompPrompt = appCalls[1].contents[0].parts[0].text;
+  assert.ok(!appCompPrompt.includes('MOHAMMAD KARIM UDDIN'), 'app.js completion prompt must NOT send already-bilingual name_en');
+  assert.ok(!appCompPrompt.includes('"name_bn"'), 'app.js completion prompt must NOT send already-bilingual name_bn');
+  assert.equal(webOut.data.name_en, 'MOHAMMAD KARIM UDDIN', 'app.js must preserve printed MOHAMMAD KARIM UDDIN verbatim');
+  assert.equal(webOut.data.father_name_en, 'ABDUL JABBAR', 'app.js must fill missing father_name_en');
+  assert.equal(webOut.data.mother_name_en, 'MANJUARA KHATUN', 'app.js must fill missing mother_name_en');
+});

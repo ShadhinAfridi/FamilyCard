@@ -372,7 +372,13 @@ const BN_NAME_WORD_MAP = {
 
 function transliterateBnWordToEn(word) {
   if (!word) return '';
-  const nfc = String(word).normalize('NFC').replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+  const nfc = String(word)
+    .normalize('NFC')
+    .replace(/ড\u09BC/g, 'ড়')
+    .replace(/ঢ\u09BC/g, 'ঢ়')
+    .replace(/য\u09BC/g, 'য়')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .trim();
   if (!nfc) return '';
   if (BN_NAME_WORD_MAP[nfc]) return BN_NAME_WORD_MAP[nfc];
   const bare = nfc.replace(/[।,;:!?'"()\[\]]+/g, '');
@@ -387,24 +393,75 @@ function transliterateBnWordToEn(word) {
     'প':'P', 'ফ':'F', 'ব':'B', 'ভ':'BH', 'ম':'M', 'য':'J', 'র':'R', 'ল':'L', 'শ':'SH', 'ষ':'SH', 'স':'S', 'হ':'H',
     'ড়':'R', 'ঢ়':'RH', 'য়':'Y', 'ৎ':'T'
   };
+  const jukto5 = {
+    'ক্ষ্ম':'KSHM', 'স্ত্র':'STR', 'ন্ত্র':'NTR', 'ন্দ্র':'NDR', 'ন্দ্ব':'NDW',
+    'ম্প্র':'MPR', 'ম্ব্র':'MBR', 'ষ্ট্র':'SHTR', 'স্ক্র':'SKR', 'স্প্র':'SPR',
+    'ঙ্ক্ষ':'NGKSH', 'ঞ্জ্য':'NJY', 'চ্ছ্ব':'CHHW', 'ত্ত্ব':'TTW', 'দ্ধ্ব':'DDHW',
+    'জ্জ্ব':'JJW', 'ঙ্গ্য':'NGGY'
+  };
+  const jukto3 = {
+    'হ্ম':'HM', 'ঞ্চ':'NCH', 'ঞ্জ':'NJ', 'ঞ্ছ':'NCHH', 'ঙ্গ':'NG', 'ঙ্ক':'NK',
+    'ঙ্খ':'NKH', 'ঙ্ঘ':'NGH', 'ষ্ণ':'SHN', 'ষ্ট':'SHT', 'ষ্ঠ':'SHTH', 'শ্চ':'SHCH',
+    'শ্র':'SHR', 'ক্ত':'KT', 'ত্ত':'TT', 'ত্র':'TR', 'দ্দ':'DD', 'দ্ধ':'DDH',
+    'দ্র':'DR', 'ব্দ':'BD', 'ণ্ড':'ND', 'ন্ড':'ND', 'ন্ত':'NT', 'ন্দ':'ND',
+    'ন্ধ':'NDH', 'ন্ন':'NN', 'ন্স':'NS', 'ম্প':'MP', 'ম্ব':'MB', 'ম্ভ':'MBH',
+    'ম্ম':'MM', 'স্ত':'ST', 'স্থ':'STH', 'স্প':'SP', 'স্ম':'SM', 'স্ব':'SW', 'শ্ব':'SHW',
+    'ল্ল':'LL', 'ল্প':'LP', 'চ্ছ':'CHH', 'জ্জ':'JJ', 'ট্ট':'TT', 'ত্ম':'TM',
+    'দ্ভ':'DBH', 'হ্ণ':'HN', 'হ্ন':'HN', 'হ্য':'HY'
+  };
+  const finalAJukto = new Set(['স্ত্র', 'ন্ত্র', 'ন্দ্র', 'ষ্ণ', 'ষ্ঠ', 'ক্ত', 'ত্ত', 'ত্র', 'দ্ধ', 'দ্র', 'ন্ত', 'ন্দ', 'ন্ধ', 'স্থ']);
   let out = '';
   let i = 0;
   let lastConsStartIdx = 0;
   let lastWasVowel = true;
   while (i < bare.length) {
     const ch = bare[i];
-    if (bare.slice(i, i + 3) === 'ক্ষ') {
+    if (ch >= '০' && ch <= '৯') {
+      out += String(ch.charCodeAt(0) - 0x09E6);
+      lastWasVowel = false;
+      i++;
+      continue;
+    }
+    const s5 = bare.slice(i, i + 5);
+    if (jukto5[s5]) {
+      out += jukto5[s5];
+      i += 5;
+      const nextCh = bare[i] || '';
+      if ((!kars[nextCh] && nextCh !== '্' && nextCh !== 'ং' && nextCh !== 'ঃ' && i < bare.length && cons[nextCh])
+          || (i === bare.length && finalAJukto.has(s5))) {
+        out += 'A';
+        lastWasVowel = true;
+      } else {
+        lastWasVowel = Boolean(kars[nextCh]);
+      }
+      continue;
+    }
+    const s3 = bare.slice(i, i + 3);
+    if (s3 === 'ক্ষ') {
       out += i === 0 ? 'KH' : 'KSH';
       i += 3;
       const nextCh = bare[i] || '';
-      if (!kars[nextCh] && nextCh !== '্' && i < bare.length && cons[nextCh]) { out += 'A'; lastWasVowel = true; } else { lastWasVowel = Boolean(kars[nextCh]); }
+      if (!kars[nextCh] && nextCh !== '্' && nextCh !== 'ং' && nextCh !== 'ঃ' && i < bare.length && cons[nextCh]) { out += 'A'; lastWasVowel = true; } else { lastWasVowel = Boolean(kars[nextCh]); }
       continue;
     }
-    if (bare.slice(i, i + 3) === 'জ্ঞ') {
+    if (s3 === 'জ্ঞ') {
       out += 'GY';
       i += 3;
       const nextCh = bare[i] || '';
-      if (!kars[nextCh] && nextCh !== '্' && i < bare.length && cons[nextCh]) { out += 'A'; lastWasVowel = true; } else { lastWasVowel = Boolean(kars[nextCh]); }
+      if (!kars[nextCh] && nextCh !== '্' && nextCh !== 'ং' && nextCh !== 'ঃ' && i < bare.length && cons[nextCh]) { out += 'A'; lastWasVowel = true; } else { lastWasVowel = Boolean(kars[nextCh]); }
+      continue;
+    }
+    if (jukto3[s3]) {
+      out += jukto3[s3];
+      i += 3;
+      const nextCh = bare[i] || '';
+      if ((!kars[nextCh] && nextCh !== '্' && nextCh !== 'ং' && nextCh !== 'ঃ' && i < bare.length && cons[nextCh])
+          || (i === bare.length && finalAJukto.has(s3))) {
+        out += 'A';
+        lastWasVowel = true;
+      } else {
+        lastWasVowel = Boolean(kars[nextCh]);
+      }
       continue;
     }
     if (indVowels[ch]) { out += indVowels[ch]; lastWasVowel = true; i++; continue; }
@@ -448,7 +505,7 @@ function transliterateBnWordToEn(word) {
         out += 'R' + cons[bare[i + 2]];
         i += 3;
         const afterCluster = bare[i] || '';
-        if (!kars[afterCluster] && afterCluster !== '্' && i < bare.length && cons[afterCluster]) { out += 'A'; lastWasVowel = true; } else { lastWasVowel = false; }
+        if (!kars[afterCluster] && afterCluster !== '্' && afterCluster !== 'ং' && afterCluster !== 'ঃ' && i < bare.length && cons[afterCluster]) { out += 'A'; lastWasVowel = true; } else { lastWasVowel = false; }
         continue;
       }
       lastConsStartIdx = i;
@@ -646,8 +703,12 @@ function transliterateEnWordToBn(word) {
     ['OA', 'ো'], ['OY', 'য়'], ['A', 'া'], ['E', 'ে'], ['I', 'ি'], ['O', 'ো'], ['U', 'ু'], ['Y', 'ি']
   ];
   const cMap = [
-    ['CHH', 'ছ'], ['CH', 'চ'], ['SH', 'শ'], ['KH', 'খ'], ['GH', 'ঘ'], ['TH', 'থ'],
+    ['KSHM', 'ক্ষ্ম'], ['SHTH', 'ষ্ঠ'], ['SHCH', 'শ্চ'],
+    ['CHH', 'ছ'], ['KSH', 'ক্ষ'], ['SHR', 'শ্র'], ['STR', 'স্ত্র'], ['NTR', 'ন্ত্র'], ['NDR', 'ন্দ্র'],
+    ['SHT', 'ষ্ট'], ['SHN', 'ষ্ণ'], ['NCH', 'ঞ্চ'],
+    ['CH', 'চ'], ['SH', 'শ'], ['KH', 'খ'], ['GH', 'ঘ'], ['TH', 'থ'],
     ['DH', 'ধ'], ['PH', 'ফ'], ['BH', 'ভ'], ['JH', 'ঝ'], ['RH', 'ঢ়'], ['NG', 'ং'],
+    ['GY', 'জ্ঞ'], ['NJ', 'ঞ্জ'], ['HM', 'হ্ম'],
     ['K', 'ক'], ['C', 'ক'], ['G', 'গ'], ['J', 'জ'], ['Z', 'জ'], ['T', 'ত'],
     ['D', 'দ'], ['N', 'ন'], ['P', 'প'], ['F', 'ফ'], ['B', 'ব'], ['V', 'ভ'],
     ['M', 'ম'], ['R', 'র'], ['L', 'ল'], ['S', 'স'], ['H', 'হ'], ['Q', 'ক'],
@@ -724,7 +785,7 @@ function stripPersonPrefixes(str) {
 
 function cleanOcrFieldText(val) {
   if (val === null || val === undefined) return '';
-  let s = String(val).normalize('NFC').replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/\s+/g, ' ').trim();
+  let s = String(val).normalize('NFC').replace(/ড\u09BC/g, 'ড়').replace(/ঢ\u09BC/g, 'ঢ়').replace(/য\u09BC/g, 'য়').replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/\s+/g, ' ').trim();
   if (!s || /^(?:null|none|nil|n\/a|na|undefined|unknown|unreadable|illegible|blurry|unclear|blank|empty|missing|redacted|sample|example|placeholder|dummy|not\s+(?:available|printed|found|visible|clear|legible|applicable|provided|specified)|[-—–_.?*]+|x{3,}|নেই|নাই|অজানা|অস্পষ্ট|খালি|পা[ওো](?:য়া|য\u09BCা)\s*যা(?:য়|য\u09BC)নি|প(?:ড়|ড\u09BC|র)া\s*যা(?:য়|য\u09BC)নি|প্রযোজ্য\s*ন(?:য়|য\u09BC|য))$/i.test(s)) {
     return '';
   }
@@ -822,7 +883,7 @@ function normalizeOcrKeyAliases(rawObj) {
 function needsIntelligentCompletion(data = {}) {
   if (!data || typeof data !== 'object') return false;
   // Strictly transliterate ONLY already-extracted non-empty names missing their paired language script.
-  // Never call a text-only LLM to guess blank DOB, gender, marital status, or missing parent names!
+  // Never call AI for a field that already has BOTH valid Bangla & English, or when both are empty.
   return [
     ['name_bn', 'name_en'],
     ['father_name_bn', 'father_name_en'],
@@ -831,7 +892,9 @@ function needsIntelligentCompletion(data = {}) {
   ].some(([bnK, enK]) => {
     const bn = cleanOcrFieldText(data[bnK] || '');
     const en = cleanOcrFieldText(data[enK] || '');
-    return (Boolean(bn) && (!en || hasBengaliScript(en))) || (Boolean(en) && (!bn || !hasBengaliScript(bn)));
+    const hasValidBn = Boolean(bn && hasBengaliScript(bn));
+    const hasValidEn = Boolean(en && !hasBengaliScript(en));
+    return (hasValidBn && !hasValidEn) || (hasValidEn && !hasValidBn);
   });
 }
 
@@ -1067,34 +1130,35 @@ function buildGeminiPrompt(docTypeHint = 'auto') {
       : 'Detect automatically whether this is a Bangladeshi NID Card or a Birth Registration Certificate.';
 
   return `
-You are an ultra-precise OCR engine specializing in Bangladeshi identity documents:
+You are a high-precision bilingual (Bangla and English) document OCR and data-extraction assistant specializing in Bangladeshi identity documents:
 1. Bangladeshi National Identity (NID) Cards (Smart Cards and classic laminated paper NID cards).
 2. Bangladeshi Birth Registration Certificates (জন্ম নিবন্ধন সনদপত্র / BRC — bilingual, Bangla-only, or English-only).
 
 ${hintLine}
 
-STRICT VERBATIM ZERO-CORRECTION & ZERO-HALLUCINATION DIRECTIVE (CRITICAL):
-- Extract ONLY characters, spellings, names, and numbers physically visible in the document image.
-- NEVER invent, fabricate, guess, pad, or synthesize ANY field or digit! If a field is not printed, cut off, or unreadable, return "".
-- If the image is blank, dark, blurry, or NOT a Bangladeshi NID / Birth Registration Certificate, return "" for all person/number/date fields and set "confidence": "low".
-- NEVER output placeholder strings like "unknown", "unreadable", "N/A", "null", or sequential dummy digits.
-- NEVER alter printed Bengali spelling:
-  - Keep "মন্ডল" vs "মণ্ডল", "মোসাঃ" vs "মোছাঃ", "আঃ", "নুর" vs "নূর", "আলী" vs "আলি", "হোসেন" vs "হোসাইন" EXACTLY as printed.
-- ENGLISH NAME RULES:
-  - If English text is physically printed on the document, extract the EXACT printed English text verbatim (e.g. keep printed "MOHAMMAD" or "MOSAMMAT" as printed; NEVER overwrite printed English!).
-  - ONLY if a name is printed exclusively in Bengali and English is physically absent on the card, provide accurate ALL-CAPS English transliteration ("মোছাঃ" -> "MST.", "মোঃ" -> "MD.", "মোসাঃ" -> "MOSA.").
-  - Set "detected_language" to "bilingual", "bn_only", "en_only", or "unknown".
-  - NEVER put Bengali characters in *_en fields or Latin letters in *_bn fields.
-- DOCUMENT NUMBERS:
-  - Birth Registration Certificates: strictly 17 digits starting with the 4-digit birth year (YYYY...). Put Father's/Mother's NID ONLY into "father_nid" and "mother_nid", NEVER into "birth_reg_no"/"doc_number".
-  - NID Cards: 10 digits (Smart NID) or 13/17 digits (Classic NID). Extract ONLY clearly visible digits; NEVER pad or guess missing digits.
-- DATES:
-  - Extract "dob" in strict ASCII DD/MM/YYYY format.
-  - On Birth Certificates, put Date of Birth in "dob" and Date of Registration in "registration_date" (NEVER copy registration_date into dob).
-- GENDER & SPOUSE:
-  - Set "gender" to "পুরুষ", "নারী", or "হিজড়া" ONLY if printed or clearly evident; otherwise return "".
-  - If classic laminated NID prints "স্বামী:" (Husband), put that name into "spouse_name_bn" and "spouse_name_en". NEVER copy husband's name into father fields!
-  - Leave "relation_suggestion" and "marital_status_suggestion" as "" unless directly evidenced on the document (e.g. "স্বামী:" implies "বিবাহিত").
+STRICT EXTRACTION & PRESERVATION RULES (CRITICAL):
+1. PRESERVE EXISTING VALUES (NEVER OVERWRITE):
+   - Extract ONLY characters, spellings, names, and numbers physically visible in the document image.
+   - If a field ALREADY contains BOTH English and Bangla values printed on the document (e.g., Applicant Name on an NID, or a bilingual BRC), keep BOTH exact OCR-extracted values verbatim as-is. NEVER translate, transliterate, rewrite, or alter either existing value!
+   - Keep exact printed Bengali spellings unchanged ("মন্ডল" vs "মণ্ডল", "মোসাঃ" vs "মোছাঃ", "আঃ", "নুর" vs "নূর", "আলী" vs "আলি", "হোসেন" vs "হোসাইন") and exact printed English unchanged ("MOHAMMAD", "MOSAMMAT", etc.).
+2. CONDITIONAL BILINGUAL EXTRACTION (MISSING LANGUAGE ONLY):
+   - If a field has ONLY a Bangla value printed on the document (e.g., Father's Name, Mother's Name, or Husband's Name on an NID, or Bangla-only BRC) and NO English value is printed: keep the exact Bangla OCR text in *_bn and return "" for *_en (missing English will be transliterated separately without touching existing fields).
+   - If a field has ONLY an English value printed on the document (e.g., English-only BRC) and NO Bangla value is printed: keep the exact English OCR text in *_en and return "" for *_bn.
+   - NEVER invent, fabricate, guess, pad, or synthesize ANY field or digit! If a field is not printed, cut off, or unreadable, return "".
+   - If the image is blank, dark, blurry, or NOT a Bangladeshi NID / Birth Registration Certificate, return "" for all person/number/date fields and set "confidence": "low".
+   - NEVER output placeholder strings like "unknown", "unreadable", "N/A", "null", or sequential dummy digits.
+   - Set "detected_language" to "bilingual", "bn_only", "en_only", or "unknown".
+   - NEVER put Bengali characters in *_en fields or Latin letters in *_bn fields.
+3. STRICT CHARACTER, DIGIT & JUKTOBORNO (যুক্তবর্ণ) ACCURACY:
+   - Accurately recognize and preserve ALL Bangla vowels (স্বরবর্ণ: অ, আ, ই, ঈ, উ, ঊ, ঋ, এ, ঐ, ও, ঔ), consonants (ব্যঞ্জনবর্ণ: ক–হ, ড়, ঢ়, য়), diacritics/signs (কার: া ি ী ু ূ ৃ ে ৈ ো ৌ; ফলা: ্য ্র ্ব ্ল ্ম ্ন ্ণ; রেফ: র্; ং ঃ ঁ ৎ), Bangla digits (০–৯), English alphanumerics (A–Z, 0–9), and complex Bangla conjunct consonants (যুক্তবর্ণ: ক্ষ, ক্ষ্ম, জ্ঞ, ঞ্জ, ঞ্চ, ঞ্ছ, ঙ্গ, ঙ্ক, ঙ্ঘ, হ্ম, ত্ত, ত্র, দ্দ, দ্ধ, দ্র, ব্দ, শ্র, প্র, স্ত, স্থ, স্প, স্ম, স্ব, স্ত্র, ন্ত্র, ন্দ্র, ক্ত, ষ্ট, ষ্ঠ, ষ্ণ, ণ্ড, ন্ড, ন্ত, ন্দ, ন্ধ, ন্ন, ন্স, ম্প, ম্ব, ম্ভ, ম্ম, ল্ল, ল্প, শ্চ, চ্ছ, জ্জ, ট্ট, ত্ম, দ্ভ) without breaking or substituting characters.
+   - Always use standard phonetic transliteration (NEVER literal meaning translation) for personal names, villages, and addresses.
+4. DOCUMENT NUMBERS, DATES, GENDER & SPOUSE:
+   - Birth Registration Certificates: strictly 17 digits starting with the 4-digit birth year (YYYY...). Put Father's/Mother's NID ONLY into "father_nid" and "mother_nid", NEVER into "birth_reg_no"/"doc_number".
+   - NID Cards: 10 digits (Smart NID) or 13/17 digits (Classic NID). Extract ONLY clearly visible digits; NEVER pad or guess missing digits.
+   - Extract "dob" in strict ASCII DD/MM/YYYY format. On Birth Certificates, put Date of Birth in "dob" and Date of Registration in "registration_date" (NEVER copy registration_date into dob).
+   - Set "gender" to "পুরুষ", "নারী", or "হিজড়া" ONLY if printed or clearly evident; otherwise return "".
+   - If classic laminated NID prints "স্বামী:" (Husband), put that name into "spouse_name_bn" (and "spouse_name_en" only if printed). NEVER copy husband's name into father fields!
+   - Leave "relation_suggestion" and "marital_status_suggestion" as "" unless directly evidenced on the document (e.g. "স্বামী:" implies "বিবাহিত").
 
 Return strictly ONE valid minified JSON object with ONLY these keys (use "" for any absent or unreadable field):
 doc_type, detected_language, doc_number, nid_number, birth_reg_no, father_nid, mother_nid, registration_date, name_bn, name_en, dob, gender, father_name_bn, father_name_en, mother_name_bn, mother_name_en, spouse_name_bn, spouse_name_en, relation_suggestion, marital_status_suggestion, confidence.
@@ -1722,24 +1786,36 @@ export default {
         }
 
         function buildWorkerBilingualPrompt(partialData) {
-          return `You are a STRICT bilingual transliteration helper for Bangladeshi NID / Birth Certificate JSON.
-RULES (ZERO HALLUCINATION):
-1. BANGLA -> ENGLISH (*_bn to *_en): ONLY if *_bn is non-empty Bengali AND *_en is blank/Bengali, provide accurate ALL-CAPS English transliteration ("মোছাঃ" -> "MST.", "মোঃ" -> "MD.", "মোসাঃ" -> "MOSA.").
-2. ENGLISH -> BANGLA (*_en to *_bn): ONLY if *_en is non-empty English AND *_bn is blank/Latin, provide accurate Bangladeshi Bengali Unicode transliteration.
-3. NEVER invent, fabricate, or fill ANY field whose opposite-language source is empty! If both *_bn and *_en are "", BOTH MUST stay "".
-4. PRESERVE ORIGINAL BENGALI & PRINTED ENGLISH: NEVER alter existing non-empty spellings (keep "মন্ডল", "মোসাঃ", "আঃ", "নুর", "MOHAMMAD", "MOSAMMAT" unchanged).
-5. NEVER invent or change "dob", "gender", "doc_type", "marital_status_suggestion", or "relation_suggestion". Return ONLY one valid JSON object with keys: name_bn, name_en, father_name_bn, father_name_en, mother_name_bn, mother_name_en, spouse_name_bn, spouse_name_en.
-Input JSON:
-${JSON.stringify({
-            name_bn: partialData.name_bn || '',
-            name_en: partialData.name_en || '',
-            father_name_bn: partialData.father_name_bn || '',
-            father_name_en: partialData.father_name_en || '',
-            mother_name_bn: partialData.mother_name_bn || '',
-            mother_name_en: partialData.mother_name_en || '',
-            spouse_name_bn: partialData.spouse_name_bn || '',
-            spouse_name_en: partialData.spouse_name_en || ''
-          })}`;
+          const sourceOnly = {};
+          const missingTargets = [];
+          for (const [bnK, enK] of [
+            ['name_bn', 'name_en'],
+            ['father_name_bn', 'father_name_en'],
+            ['mother_name_bn', 'mother_name_en'],
+            ['spouse_name_bn', 'spouse_name_en']
+          ]) {
+            const bn = cleanOcrFieldText(partialData[bnK] || '');
+            const en = cleanOcrFieldText(partialData[enK] || '');
+            const hasValidBn = Boolean(bn && hasBengaliScript(bn));
+            const hasValidEn = Boolean(en && !hasBengaliScript(en));
+            if (hasValidBn && hasValidEn) continue; // Already bilingual: never send or alter!
+            if (hasValidBn && !hasValidEn) {
+              sourceOnly[bnK] = bn;
+              missingTargets.push(enK);
+            } else if (hasValidEn && !hasValidBn) {
+              sourceOnly[enK] = en;
+              missingTargets.push(bnK);
+            }
+          }
+          if (!missingTargets.length) return '';
+          return `You are a high-precision bilingual (Bangla and English) phonetic transliteration assistant for Bangladeshi identity documents.
+STRICT RULES:
+1. GENERATE ONLY THE MISSING TARGET KEYS: ${missingTargets.join(', ')}. Already-complete bilingual fields are intentionally excluded — never invent or return unrequested keys.
+2. BANGLA -> ENGLISH (*_bn to *_en): Keep source Bangla untouched and output ONLY standard ALL-CAPS Bangladeshi phonetic English transliteration ("মোছাঃ" -> "MST.", "মোঃ" -> "MD.", "মোসাঃ" -> "MOSA."). NEVER do literal meaning translation (e.g. "আকাশ" -> "AKASH", not "SKY"; "মুক্তা" -> "MUKTA", not "PEARL").
+3. ENGLISH -> BANGLA (*_en to *_bn): Keep source English untouched and output ONLY accurate Bangladeshi Bengali Unicode phonetic transliteration preserving proper vowels (স্বরবর্ণ), consonants (ব্যঞ্জনবর্ণ, ড়, ঢ়, য়), diacritics (কার/ফলা/রেফ), digits (০–৯), and conjuncts (যুক্তবর্ণ: ক্ষ, ক্ষ্ম, জ্ঞ, ঞ্জ, ঞ্চ, হ্ম, ত্ত, ত্র, দ্দ, দ্ধ, ব্দ, শ্র, স্ত্র, ন্দ্র, ষ্ণ, ষ্ট, ষ্ঠ, ণ্ড, ন্ড, ন্ত, ন্দ, ম্প, ম্ব, স্ত, স্ব, ল্ল).
+4. Return strictly ONE valid JSON object containing ONLY these keys: ${missingTargets.join(', ')}.
+Source fields (READ-ONLY):
+${JSON.stringify(sourceOnly)}`;
         }
 
         function applyWorkerBilingualCompletion(partialData, completed, addCost, tagKey) {
@@ -1783,6 +1859,7 @@ ${JSON.stringify({
         async function completeWorkerBilingualWithGemini(partialData) {
           if (!gKey || !partialData || !needsIntelligentCompletion(partialData)) return partialData;
           const compPrompt = buildWorkerBilingualPrompt(partialData);
+          if (!compPrompt) return partialData;
           const compModels = Array.from(new Set(['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', prefGemModel || DEFAULT_GEMINI_MODEL])).filter(Boolean);
           for (const model of compModels) {
             const controller = new AbortController();
@@ -1863,6 +1940,7 @@ ${JSON.stringify({
             ? ['deepseek-flash', 'deepseek-chat']
             : ['deepseek-chat', 'deepseek-flash'];
           const compPrompt = buildWorkerBilingualPrompt(partialData);
+          if (!compPrompt) return partialData;
           const dsBase = (env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/+$/, '');
           const attemptModes = [
             { disableThinking: true, useJsonMode: true, maxTokens: 2048 },
@@ -1877,7 +1955,7 @@ ${JSON.stringify({
                   model,
                   temperature: 0,
                   messages: [
-                    { role: 'system', content: 'You are an expert Bangladeshi identity document specialist. Fill only missing English fields faithfully without changing or altering any existing Bengali spelling. Output strictly one valid JSON object.' },
+                    { role: 'system', content: 'You are a high-precision bilingual (Bangla & English) phonetic transliteration assistant for Bangladeshi identity documents. Fill ONLY the requested missing target-language keys using accurate Bangla letters, digits, and juktoborno (যুক্তবর্ণ) phonetic transliteration (never literal meaning translation). Never alter existing values or invent empty pairs. Output strictly one valid JSON object.' },
                     { role: 'user', content: compPrompt }
                   ],
                   max_tokens: cfg.maxTokens

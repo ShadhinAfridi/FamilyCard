@@ -2353,14 +2353,20 @@ async function runDirectWebBrowserOcrFallback({
     throw new Error('ছবি বা ডকুমেন্ট ডেটা সঠিক নয়। অনুগ্রহ করে আবার স্পষ্ট ছবি তুলুন।');
   }
 
-  const prompt = `You are an ultra-precise OCR engine for Bangladeshi NID and Birth Registration Certificates.
-STRICT ZERO-HALLUCINATION & VERBATIM RULES:
-- Return ONLY text clearly visible in THIS image. NEVER invent, assume, or complete missing/blurry fields.
-- If a field is NOT printed or unreadable, return "" (empty string). NEVER write "unknown", "unreadable", "N/A", or dummy numbers.
-- If the image is blank, unreadable, or NOT an identity document, set doc_type="unknown", confidence=0, and return "" for all fields.
-- NEVER alter printed Bengali or English spelling ("মন্ডল" stays "মন্ডল", "মোসাঃ" stays "মোসাঃ", "আঃ" stays "আঃ", "MOHAMMAD" stays "MOHAMMAD").
-- NEVER invent, guess, or pad digits (10/13/17-digit NID or 17-digit BRC starting with YYYY). Put parent NIDs into father_nid/mother_nid only.
-- Date of Birth "dob" MUST be strict DD/MM/YYYY (ignore registration_date).
+  const prompt = `You are a high-precision bilingual (Bangla and English) document OCR and data-extraction assistant for Bangladeshi NID and Birth Registration Certificates.
+STRICT EXTRACTION & PRESERVATION RULES:
+1. PRESERVE EXISTING VALUES (NEVER OVERWRITE):
+   - Return ONLY text clearly visible in THIS image. NEVER invent, assume, or complete missing/blurry fields.
+   - If a field ALREADY contains BOTH English and Bangla values printed on the document (e.g., Applicant Name on an NID or bilingual BRC), keep BOTH exact OCR-extracted values verbatim as-is. NEVER translate, transliterate, rewrite, or alter either value ("মন্ডল" stays "মন্ডল", "মোসাঃ" stays "মোসাঃ", "আঃ" stays "আঃ", "MOHAMMAD" stays "MOHAMMAD").
+2. CONDITIONAL BILINGUAL EXTRACTION (MISSING LANGUAGE ONLY):
+   - If a field has ONLY a Bangla value printed (e.g., Father's/Mother's/Husband's Name on an NID) and NO English value is printed: keep the exact Bangla text in *_bn and return "" for *_en.
+   - If a field has ONLY an English value printed and NO Bangla value is printed: keep the exact English text in *_en and return "" for *_bn.
+   - If a field is NOT printed or unreadable, return "". NEVER write "unknown", "unreadable", "N/A", or dummy numbers.
+   - If the image is blank, unreadable, or NOT an identity document, set doc_type="unknown", confidence=0, and return "" for all fields.
+3. STRICT CHARACTER, DIGIT & JUKTOBORNO (যুক্তবর্ণ) ACCURACY:
+   - Accurately recognize and preserve ALL Bangla vowels (স্বরবর্ণ: অ–ঔ), consonants (ব্যঞ্জনবর্ণ: ক–হ, ড়, ঢ়, য়), diacritics (কার/ফলা/রেফ, ং ঃ ঁ ৎ), Bangla digits (০–৯), English alphanumerics (A–Z, 0–9), and complex conjuncts (যুক্তবর্ণ: ক্ষ, ক্ষ্ম, জ্ঞ, ঞ্জ, ঞ্চ, ঞ্ছ, ঙ্গ, ঙ্ক, হ্ম, ত্ত, ত্র, দ্দ, দ্ধ, দ্র, ব্দ, শ্র, প্র, স্ত, স্থ, স্প, স্ম, স্ব, স্ত্র, ন্ত্র, ন্দ্র, ক্ত, ষ্ট, ষ্ঠ, ষ্ণ, ণ্ড, ন্ড, ন্ত, ন্দ, ন্ধ, ন্ন, ম্প, ম্ব, ম্ভ, ম্ম, ল্ল, ল্প, শ্চ) without breaking characters.
+   - NEVER invent, guess, or pad digits (10/13/17-digit NID or 17-digit BRC starting with YYYY). Put parent NIDs into father_nid/mother_nid only.
+   - Date of Birth "dob" MUST be strict DD/MM/YYYY (ignore registration_date).
 Return strictly ONE JSON object with keys: doc_type, doc_number, nid_number, birth_reg_no, father_nid, mother_nid, registration_date, name_bn, name_en, dob, gender, father_name_bn, father_name_en, mother_name_bn, mother_name_en, spouse_name_bn, spouse_name_en, relation_suggestion, marital_status_suggestion, confidence.`;
 
   const webOcrSchema = {
@@ -2393,7 +2399,7 @@ Return strictly ONE JSON object with keys: doc_type, doc_number, nid_number, bir
   const placeholderRe = /^(?:null|undefined|none|n\/?a|nan|nil|unknown|unreadable|illegible|blurry|unclear|blank|empty|missing|redacted|sample|example|placeholder|dummy|not\s+(?:visible|clear|legible|available|applicable|provided|specified|found|printed|given)|cannot\s+read|can't\s+read|no\s+data|অজানা|অস্পষ্ট|খালি|প্রযোজ্য\s*ন(?:য়|য\u09BC|য)|নেই|নাই|প(?:ড়|ড\u09BC|র)া\s*যা(?:য়|য\u09BC)নি|পা[ওো](?:য়া|য\u09BCা)\s*যা(?:য়|য\u09BC)নি|[-_./\\?؟*#]+|x{3,})$/i;
   const cleanField = (val) => {
     if (val == null) return '';
-    let s = String(val).normalize('NFC').replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/\s+/g, ' ').trim();
+    let s = String(val).normalize('NFC').replace(/ড\u09BC/g, 'ড়').replace(/ঢ\u09BC/g, 'ঢ়').replace(/য\u09BC/g, 'য়').replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/\s+/g, ' ').trim();
     if (!s || placeholderRe.test(s)) return '';
     s = s.replace(/^(?:নাম|Name|পিতা|Father(?:'s Name)?|মাতা|Mother(?:'s Name)?|স্বামী|স্ত্রী|Spouse(?:'s Name)?|Husband(?:'s Name)?|ID\s*NO|NID\s*NO)\s*[:：\-]?\s*/i, '').trim();
     if (!s || placeholderRe.test(s)) return '';
@@ -2586,6 +2592,96 @@ Return strictly ONE JSON object with keys: doc_type, doc_number, nid_number, bir
   if (parsed) {
     for (const k of ['name_bn', 'name_en', 'father_name_bn', 'father_name_en', 'mother_name_bn', 'mother_name_en', 'spouse_name_bn', 'spouse_name_en', 'gender', 'relation_suggestion', 'marital_status_suggestion']) {
       parsed[k] = cleanField(parsed[k]);
+    }
+    const hasBnRe = /[\u0980-\u09FF]/;
+    const namePairs = [
+      ['name_bn', 'name_en'],
+      ['father_name_bn', 'father_name_en'],
+      ['mother_name_bn', 'mother_name_en'],
+      ['spouse_name_bn', 'spouse_name_en']
+    ];
+    const sourceOnly = {};
+    const missingTargets = [];
+    for (const [bnK, enK] of namePairs) {
+      const bnV = parsed[bnK] || '';
+      const enV = parsed[enK] || '';
+      const hasValidBn = Boolean(bnV && hasBnRe.test(bnV));
+      const hasValidEn = Boolean(enV && !hasBnRe.test(enV));
+      if (hasValidBn && hasValidEn) continue; // Already bilingual: preserve untouched, never call API!
+      if (hasValidBn && !hasValidEn) {
+        sourceOnly[bnK] = bnV;
+        missingTargets.push(enK);
+      } else if (hasValidEn && !hasValidBn) {
+        sourceOnly[enK] = enV;
+        missingTargets.push(bnK);
+      }
+    }
+    if (missingTargets.length > 0 && (gKey || dKey)) {
+      const missingPrompt = `You are a high-precision bilingual (Bangla and English) phonetic transliteration assistant for Bangladeshi identity documents.
+STRICT RULES:
+1. GENERATE ONLY THE MISSING TARGET KEYS: ${missingTargets.join(', ')}. Already-complete bilingual fields are intentionally excluded — never return or alter unrequested keys.
+2. BANGLA -> ENGLISH (*_bn to *_en): Keep source Bangla untouched and output standard ALL-CAPS Bangladeshi phonetic English transliteration ("মোছাঃ" -> "MST.", "মোঃ" -> "MD.", "মোসাঃ" -> "MOSA."). NEVER do literal meaning translation (e.g. "আকাশ" -> "AKASH", not "SKY").
+3. ENGLISH -> BANGLA (*_en to *_bn): Keep source English untouched and output accurate Bangladeshi Bengali Unicode phonetic transliteration preserving proper vowels (স্বরবর্ণ), consonants (ব্যঞ্জনবর্ণ, ড়, ঢ়, য়), diacritics (কার/ফলা/রেফ), digits (০–৯), and conjuncts (যুক্তবর্ণ: ক্ষ, ক্ষ্ম, জ্ঞ, ঞ্জ, ঞ্চ, হ্ম, ত্ত, ত্র, দ্দ, দ্ধ, ব্দ, শ্র, স্ত্র, ন্দ্র, ষ্ণ, ষ্ট, ষ্ঠ, ণ্ড, ন্ড, ন্ত, ন্দ, ম্প, ম্ব, স্ত, স্ব, ল্ল).
+4. Return strictly ONE valid JSON object containing ONLY these keys: ${missingTargets.join(', ')}.
+Source fields (READ-ONLY):
+${JSON.stringify(sourceOnly)}`;
+      let completedObj = null;
+      if (gKey && (!preferDs || !dKey)) {
+        try {
+          const mdl = geminiModel || DEFAULT_GEMINI_MODEL;
+          const cRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${mdl}:generateContent`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-goog-api-key': gKey },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: missingPrompt }] }],
+              generationConfig: { response_mime_type: 'application/json' }
+            })
+          });
+          if (cRes.ok) {
+            const cj = await cRes.json().catch(() => ({}));
+            const cTxt = (cj?.candidates?.[0]?.content?.parts || []).map(p => p?.text || '').join('').trim();
+            if (cTxt) completedObj = extractJsonObj(cTxt);
+          }
+        } catch (_) {}
+      }
+      if (!completedObj && dKey) {
+        try {
+          const cRes = await fetch('https://api.deepseek.com/chat/completions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${dKey}` },
+            body: JSON.stringify({
+              model: deepseekModel === 'deepseek-chat' ? 'deepseek-chat' : 'deepseek-flash',
+              temperature: 0,
+              thinking: { type: 'disabled' },
+              response_format: { type: 'json_object' },
+              messages: [
+                { role: 'system', content: 'You are a high-precision bilingual (Bangla & English) phonetic transliteration assistant. Fill ONLY the requested missing target-language keys using accurate phonetic transliteration and Bangla juktoborno. Never alter existing values. Output strictly one valid JSON object.' },
+                { role: 'user', content: missingPrompt }
+              ],
+              max_tokens: 1024
+            })
+          });
+          if (cRes.ok) {
+            const cj = await cRes.json().catch(() => ({}));
+            const cTxt = extractDsText(cj);
+            if (cTxt) completedObj = extractJsonObj(cTxt);
+          }
+        } catch (_) {}
+      }
+      if (completedObj && typeof completedObj === 'object') {
+        for (const [bnK, enK] of namePairs) {
+          const curBn = parsed[bnK] || '';
+          const curEn = parsed[enK] || '';
+          const candEn = cleanField(completedObj[enK]);
+          const candBn = cleanField(completedObj[bnK]);
+          if (curBn && hasBnRe.test(curBn) && (!curEn || hasBnRe.test(curEn)) && candEn && !hasBnRe.test(candEn)) {
+            parsed[enK] = candEn.toUpperCase();
+          }
+          if (curEn && !hasBnRe.test(curEn) && (!curBn || !hasBnRe.test(curBn)) && candBn && hasBnRe.test(candBn)) {
+            parsed[bnK] = candBn;
+          }
+        }
+      }
     }
     parsed.dob = parsed.dob ? standardizeWebDate(parsed.dob) : '';
     const regDateNorm = parsed.registration_date ? standardizeWebDate(parsed.registration_date, true) : '';
